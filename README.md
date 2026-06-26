@@ -1,33 +1,28 @@
-# Confirmation DB Only
+# Confirmation React + DB Simple
 
-This is a fresh minimal project.
+Fresh simple version.
 
-Purpose: prove that the app can insert data into PostgreSQL and read it back.
+No Docker.
+No client/server folders.
+One React app plus one small Express API in the same folder.
 
-No camera.
-No facial recognition.
-No image storage.
-No old tables required.
-
-## Folder structure
+The form saves to PostgreSQL:
 
 ```txt
-confirmation-db-only/
-├─ package.json
-├─ Dockerfile
-├─ client/
-└─ server/
+mydatabase -> Schemas -> app -> confirmation_test_records
 ```
 
-## 1. Create backend env
+## 1. Create `.env`
 
-Create this file:
+Copy:
 
-```txt
-server/.env
+```powershell
+copy .env.example .env
 ```
 
-Use this template:
+Then edit `.env` with the real DB username/password.
+
+Example:
 
 ```env
 PORT=5057
@@ -45,22 +40,15 @@ DB_SSL=false
 
 ```powershell
 npm.cmd install
-npm.cmd run install:all
 ```
 
-## 3. Create/check DB table
+## 3. Make/check DB table
 
 ```powershell
 npm.cmd run make-db
 ```
 
-This creates:
-
-```txt
-mydatabase -> Schemas -> app -> confirmation_test_records
-```
-
-## 4. Run locally
+## 4. Run
 
 ```powershell
 npm.cmd run dev
@@ -72,28 +60,7 @@ Open:
 http://localhost:5173
 ```
 
-Backend:
-
-```txt
-http://localhost:5057
-```
-
-## 5. Docker
-
-Build:
-
-```powershell
-docker build -t confirmation-db-only .
-```
-
-Run:
-
-```powershell
-docker rm -f confirmation-db-only
-docker run --env-file .\server\.env -p 5057:5057 --name confirmation-db-only confirmation-db-only
-```
-
-Open:
+The backend API runs at:
 
 ```txt
 http://localhost:5057
@@ -105,15 +72,4 @@ http://localhost:5057
 GET  /api/health
 GET  /api/records
 POST /api/records
-```
-
-Sample POST body:
-
-```json
-{
-  "operator_name": "Justin",
-  "machine_name": "Machine 1",
-  "reading_value": 123.45,
-  "remarks": "DB test"
-}
 ```

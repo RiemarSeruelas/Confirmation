@@ -1,4 +1,0 @@
-DB Not Connected
-API returned empty response. Status 500. Backend may be down, proxy may have failed, or DB connection failed.
-
-main.jsx:87  POST http://10.156.116.17:5173/api/records 500 (Internal Server Error)

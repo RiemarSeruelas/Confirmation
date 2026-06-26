@@ -9,9 +9,19 @@ export async function makeDatabase() {
       operator_name TEXT NOT NULL,
       machine_name TEXT NOT NULL,
       reading_value NUMERIC,
-      remarks TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      product TEXT DEFAULT '',
+      batch_number TEXT DEFAULT '',
+      shift_name TEXT NOT NULL,
+      remarks TEXT DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE app.confirmation_test_records
+      ADD COLUMN IF NOT EXISTS product TEXT DEFAULT '',
+      ADD COLUMN IF NOT EXISTS batch_number TEXT DEFAULT '',
+      ADD COLUMN IF NOT EXISTS shift_name TEXT DEFAULT 'Unknown Shift',
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
     CREATE INDEX IF NOT EXISTS idx_confirmation_test_records_created_at
     ON app.confirmation_test_records(created_at DESC);

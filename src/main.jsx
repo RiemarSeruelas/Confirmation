@@ -1,29 +1,24 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
-const API_BASE = "";
-
-async function readJsonResponse(response) {
+async function readApi(response) {
   const text = await response.text();
 
   if (!text) {
-    throw new Error(
-      `API returned empty response. Status ${response.status}. Backend may be down, proxy may have failed, or DB connection failed.`
-    );
+    throw new Error(`Empty API response. Status ${response.status}`);
   }
 
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(
-      `API returned non-JSON response. Status ${response.status}. Response: ${text.slice(0, 250)}`
-    );
+    throw new Error(`Non-JSON API response. Status ${response.status}: ${text.slice(0, 200)}`);
   }
 }
 
 function formatDate(value) {
   if (!value) return "-";
+
   return new Intl.DateTimeFormat("en-PH", {
     timeZone: "Asia/Manila",
     year: "numeric",
@@ -36,32 +31,52 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function getCurrentShift(date = new Date()) {
+  const manilaNow = new Date(
+    date.toLocaleString("en-US", { timeZone: "Asia/Manila" })
+  );
+
+  const hour = manilaNow.getHours();
+
+  if (hour >= 6 && hour < 14) return "1st Shift";
+  if (hour >= 14 && hour < 22) return "2nd Shift";
+  return "3rd Shift";
+}
+
 function App() {
   const [health, setHealth] = useState(null);
   const [records, setRecords] = useState([]);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
   const [form, setForm] = useState({
     operator_name: "",
     machine_name: "",
     reading_value: "",
+    product: "",
+    batch_number: "",
     remarks: ""
   });
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+
+  const currentShift = useMemo(() => getCurrentShift(), []);
 
   async function loadHealth() {
     try {
-      const response = await fetch(`${API_BASE}/api/health`);
-      const data = await readJsonResponse(response);
+      const response = await fetch("/api/health");
+      const data = await readApi(response);
       setHealth(data);
     } catch (error) {
-      setHealth({ ok: false, message: error.message });
+      setHealth({
+        ok: false,
+        message: error.message
+      });
     }
   }
 
   async function loadRecords() {
     try {
-      const response = await fetch(`${API_BASE}/api/records`);
-      const data = await readJsonResponse(response);
+      const response = await fetch("/api/records");
+      const data = await readApi(response);
 
       if (!response.ok) {
         throw new Error(data.message || data.error || "Failed to load records");
@@ -73,9 +88,13 @@ function App() {
     }
   }
 
+  async function refreshAll() {
+    await loadHealth();
+    await loadRecords();
+  }
+
   useEffect(() => {
-    loadHealth();
-    loadRecords();
+    refreshAll();
   }, []);
 
   async function handleSubmit(event) {
@@ -84,7 +103,7 @@ function App() {
     setMessage("");
 
     try {
-      const response = await fetch(`${API_BASE}/api/records`, {
+      const response = await fetch("/api/records", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -92,22 +111,24 @@ function App() {
         body: JSON.stringify(form)
       });
 
-      const data = await readJsonResponse(response);
+      const data = await readApi(response);
 
       if (!response.ok) {
-        throw new Error(data.message || data.error || "Insert failed");
+        throw new Error(data.message || data.error || "Failed to save record");
       }
 
-      setMessage(`Saved record #${data.record.id} to PostgreSQL.`);
+      setMessage(`Saved to PostgreSQL. Record ID: ${data.record.id}`);
+
       setForm({
         operator_name: "",
         machine_name: "",
         reading_value: "",
+        product: "",
+        batch_number: "",
         remarks: ""
       });
 
-      await loadHealth();
-      await loadRecords();
+      await refreshAll();
     } catch (error) {
       setMessage(`Save failed: ${error.message}`);
     } finally {
@@ -119,10 +140,10 @@ function App() {
     <main className="page">
       <section className="hero">
         <div>
-          <p className="eyebrow">Fresh start</p>
-          <h1>Confirmation DB Only</h1>
+          <p className="eyebrow">Simple DB version</p>
+          <h1>Confirmation Form</h1>
           <p className="subtitle">
-            This page only inserts a record into PostgreSQL and reads it back.
+            This saves directly to PostgreSQL through a tiny API in the same project folder.
           </p>
         </div>
 
@@ -135,9 +156,21 @@ function App() {
         </div>
       </section>
 
+      <section className="shift-row">
+        <div className="shift-card">
+          <span>Current Shift</span>
+          <strong>{currentShift}</strong>
+          <small>1st: 6AM-2PM | 2nd: 2PM-10PM | 3rd: 10PM-6AM</small>
+        </div>
+
+        <button type="button" className="secondary" onClick={refreshAll}>
+          Refresh DB
+        </button>
+      </section>
+
       <section className="grid">
-        <form className="card form" onSubmit={handleSubmit}>
-          <h2>Add Test Record</h2>
+        <form className="card form-card" onSubmit={handleSubmit}>
+          <h2>New DB Record</h2>
 
           <label>
             Operator Name
@@ -150,11 +183,11 @@ function App() {
           </label>
 
           <label>
-            Machine Name
+            Machine Operating
             <input
               value={form.machine_name}
               onChange={(event) => setForm({ ...form, machine_name: event.target.value })}
-              placeholder="Example: Mixer Tank 1"
+              placeholder="Example: Machine 1"
               required
             />
           </label>
@@ -171,31 +204,46 @@ function App() {
           </label>
 
           <label>
+            Product / SKU
+            <input
+              value={form.product}
+              onChange={(event) => setForm({ ...form, product: event.target.value })}
+              placeholder="Example: Mayo 220ml"
+            />
+          </label>
+
+          <label>
+            Batch Number
+            <input
+              value={form.batch_number}
+              onChange={(event) => setForm({ ...form, batch_number: event.target.value })}
+              placeholder="Example: BATCH-001"
+            />
+          </label>
+
+          <label>
             Remarks
             <textarea
               value={form.remarks}
               onChange={(event) => setForm({ ...form, remarks: event.target.value })}
-              placeholder="Example: DB test only"
+              placeholder="Type notes here..."
               rows={4}
             />
           </label>
 
-          <button disabled={loading} type="submit">
-            {loading ? "Saving..." : "Save to DB"}
+          <button type="submit" disabled={loading}>
+            {loading ? "Saving..." : "Save to PostgreSQL"}
           </button>
 
           {message && <p className="message">{message}</p>}
         </form>
 
-        <section className="card table-card">
-          <div className="table-header">
+        <section className="card summary-card">
+          <div className="card-title-row">
             <div>
-              <h2>Latest Records</h2>
-              <p>Shows the latest 50 rows from app.confirmation_test_records.</p>
+              <h2>Latest DB Records</h2>
+              <p>Showing rows from app.confirmation_test_records.</p>
             </div>
-            <button className="secondary" type="button" onClick={loadRecords}>
-              Refresh
-            </button>
           </div>
 
           <div className="table-wrap">
@@ -206,15 +254,19 @@ function App() {
                   <th>Operator</th>
                   <th>Machine</th>
                   <th>Value</th>
+                  <th>Shift</th>
+                  <th>Product</th>
+                  <th>Batch</th>
                   <th>Remarks</th>
-                  <th>Created</th>
+                  <th>Saved</th>
                 </tr>
               </thead>
+
               <tbody>
                 {records.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="empty">
-                      No records yet.
+                    <td colSpan="9" className="empty">
+                      No DB records yet.
                     </td>
                   </tr>
                 ) : (
@@ -224,6 +276,9 @@ function App() {
                       <td>{record.operator_name}</td>
                       <td>{record.machine_name}</td>
                       <td>{record.reading_value ?? "-"}</td>
+                      <td>{record.shift_name}</td>
+                      <td>{record.product || "-"}</td>
+                      <td>{record.batch_number || "-"}</td>
                       <td>{record.remarks || "-"}</td>
                       <td>{formatDate(record.created_at)}</td>
                     </tr>
