@@ -1,6 +1,4 @@
 DB Not Connected
-Failed to execute 'json' on 'Response': Unexpected end of JSON input
+API returned empty response. Status 500. Backend may be down, proxy may have failed, or DB connection failed.
 
-Save failed: Failed to execute 'json' on 'Response': Unexpected end of JSON input
-
-main.jsx:65  POST http://10.156.116.17:5173/api/records 500 (Internal Server Error)
+main.jsx:87  POST http://10.156.116.17:5173/api/records 500 (Internal Server Error)
