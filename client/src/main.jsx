@@ -4,6 +4,24 @@ import "./styles.css";
 
 const API_BASE = "";
 
+async function readJsonResponse(response) {
+  const text = await response.text();
+
+  if (!text) {
+    throw new Error(
+      `API returned empty response. Status ${response.status}. Backend may be down, proxy may have failed, or DB connection failed.`
+    );
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      `API returned non-JSON response. Status ${response.status}. Response: ${text.slice(0, 250)}`
+    );
+  }
+}
+
 function formatDate(value) {
   if (!value) return "-";
   return new Intl.DateTimeFormat("en-PH", {
@@ -33,7 +51,7 @@ function App() {
   async function loadHealth() {
     try {
       const response = await fetch(`${API_BASE}/api/health`);
-      const data = await response.json();
+      const data = await readJsonResponse(response);
       setHealth(data);
     } catch (error) {
       setHealth({ ok: false, message: error.message });
@@ -43,8 +61,12 @@ function App() {
   async function loadRecords() {
     try {
       const response = await fetch(`${API_BASE}/api/records`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Failed to load records");
+      const data = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || "Failed to load records");
+      }
+
       setRecords(data.records || []);
     } catch (error) {
       setMessage(`Load failed: ${error.message}`);
@@ -70,8 +92,11 @@ function App() {
         body: JSON.stringify(form)
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Insert failed");
+      const data = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || "Insert failed");
+      }
 
       setMessage(`Saved record #${data.record.id} to PostgreSQL.`);
       setForm({
@@ -80,6 +105,8 @@ function App() {
         reading_value: "",
         remarks: ""
       });
+
+      await loadHealth();
       await loadRecords();
     } catch (error) {
       setMessage(`Save failed: ${error.message}`);
