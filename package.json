@@ -1,0 +1,17 @@
+{
+  "name": "confirmation-db-only",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal React + Express + PostgreSQL app to test inserting and reading DB records.",
+  "scripts": {
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "make-db": "npm run make-db --prefix server",
+    "server": "npm run dev --prefix server",
+    "client": "npm run dev --prefix client",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build": "npm run build --prefix client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
