@@ -9,6 +9,7 @@ app.confirmation_test_records
 ## What it does
 
 - Connects to PostgreSQL using `.env`
+- Creates the PostgreSQL database if it does not exist
 - Creates/updates the `app.confirmation_test_records` table
 - Adds `record_timestamp` as the main timestamp for every saved test record
 - Keeps `created_at` and `updated_at` as audit timestamps
@@ -55,7 +56,7 @@ Then edit `.env` and put your PostgreSQL details.
 You can use `DATABASE_URL`:
 
 ```env
-DATABASE_URL=postgres://postgres:your_password@localhost:5432/your_database
+DATABASE_URL=postgres://postgres:your_password@localhost:5432/confirmation_test_db
 PGSSL=false
 PORT=5178
 ```
@@ -65,25 +66,43 @@ Or separate values:
 ```env
 PGHOST=localhost
 PGPORT=5432
-PGDATABASE=your_database
+PGDATABASE=confirmation_test_db
 PGUSER=postgres
 PGPASSWORD=your_password
+PGMAINTENANCE_DATABASE=postgres
 PGSSL=false
 PORT=5178
 ```
 
-### 3. Create/update the database table
+### 3. Create/update the database and table
 
 ```bash
 npm run setup-db
 ```
 
-You should see:
+This now does three things:
+
+1. Connects first to `PGMAINTENANCE_DATABASE`, usually `postgres`
+2. Creates your app database from `PGDATABASE` if it does not exist
+3. Connects to that app database and creates/updates `app.confirmation_test_records`
+
+You should see something like:
 
 ```text
-✅ Connected to PostgreSQL
+🔎 Checking database: confirmation_test_db
+✅ Database already exists: confirmation_test_db
+✅ Connected to app database: ...
 ✅ Database schema is ready: app.confirmation_test_records
 ```
+
+If the database is missing, you should see:
+
+```text
+🛠️ Creating database: confirmation_test_db
+✅ Created database: confirmation_test_db
+```
+
+Important: the PostgreSQL user in `.env` needs permission to create a database. If it does not, use `postgres` or another admin user for `npm run setup-db`.
 
 ### 4. Run the app
 
