@@ -36,8 +36,8 @@ AI_FACE_REGISTER_PATH=/register
 AI_FACE_SEARCH_PATH=/search
 AI_FACE_IMAGE_FIELD=file
 AI_FACE_NAME_FIELD=name
-AI_FACE_PAYLOAD_MODE=auto
 AI_FACE_TIMEOUT_MS=30000
+AI_FACE_PAYLOAD_MODE=auto
 ```
 
 Use this only when the app runs inside Docker but PostgreSQL is on your PC:
@@ -79,29 +79,57 @@ The browser does not send the image directly to the AI workstation.
 ```text
 Camera frame
 ↓
-Canvas converts the center face area to 640x640 JPEG base64
+Canvas JPEG base64
 ↓
 /api/face/search or /api/face/register
 ↓
-Express converts base64 to binary image data
+Express converts base64 to binary file/blob
 ↓
-Backend sends to AI as multipart/form-data. If rejected with 400/415/422, auto mode tries common fields like file, image, face, photo, then JSON base64, then raw JPEG
+multipart/form-data POST to AI workstation
 ↓
 AI response returns name/match
 ```
 
-The backend starts with this image field name:
+The backend now uses this default mode:
+
+```env
+AI_FACE_PAYLOAD_MODE=auto
+```
+
+In auto mode, it tries the common formats until the Face AI accepts one:
+
+```text
+multipart/form-data: file, image, face, photo, upload
+register name fields: name, person_name, operator_name, username, label
+JSON base64: image, file, face, imageDataUrl
+raw JPEG body
+```
+
+Keep these defaults first:
 
 ```env
 AI_FACE_IMAGE_FIELD=file
+AI_FACE_NAME_FIELD=name
+AI_FACE_PAYLOAD_MODE=auto
 ```
 
-With `AI_FACE_PAYLOAD_MODE=auto`, it also tries common formats if the AI returns 400/415/422. So the app itself captures your face, converts it, and tries to match what the Face AI accepts. If you already know the exact format, set `AI_FACE_PAYLOAD_MODE=multipart` and set `AI_FACE_IMAGE_FIELD=file` or `image`.
-
-For register, the backend sends the name using:
+If you already know the exact Flask format, you can force it:
 
 ```env
+AI_FACE_PAYLOAD_MODE=multipart
+AI_FACE_IMAGE_FIELD=image
 AI_FACE_NAME_FIELD=name
+```
+
+
+## Face AI HTTP 400
+
+HTTP 400 means the app reached the AI workstation, but the AI rejected the request format. The updated backend will try multiple image/name formats automatically. If all formats fail, the app shows which formats were tried and the last AI response message.
+
+You can also check the current face config here while the backend is running:
+
+```text
+http://localhost:5178/api/face/config
 ```
 
 ## Camera note for LAN hosting

@@ -20,17 +20,35 @@ const AI_FACE_REGISTER_PATH = process.env.AI_FACE_REGISTER_PATH || "/register";
 const AI_FACE_SEARCH_PATH = process.env.AI_FACE_SEARCH_PATH || "/search";
 const AI_FACE_IMAGE_FIELD = process.env.AI_FACE_IMAGE_FIELD || "file";
 const AI_FACE_NAME_FIELD = process.env.AI_FACE_NAME_FIELD || "name";
-const AI_FACE_PAYLOAD_MODE = process.env.AI_FACE_PAYLOAD_MODE || "auto";
 const AI_FACE_TIMEOUT_MS = Number(process.env.AI_FACE_TIMEOUT_MS || 30000);
+const AI_FACE_PAYLOAD_MODE = process.env.AI_FACE_PAYLOAD_MODE || "auto";
 
 let schemaReadyPromise = null;
+let lastWorkingFaceFormat = {
+  register: null,
+  search: null,
+};
 
 app.use(cors());
-app.use(express.json({ limit: "12mb" }));
+app.use(express.json({ limit: "15mb" }));
 
 function cleanText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
   return String(value).trim();
+}
+
+function uniqueValues(values) {
+  const seen = new Set();
+  const output = [];
+
+  for (const value of values) {
+    const cleaned = cleanText(value);
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    output.push(cleaned);
+  }
+
+  return output;
 }
 
 function toNullableNumber(value) {
@@ -104,24 +122,8 @@ function parseImageDataUrl(imageDataUrl) {
     buffer,
     mimeType,
     base64Data,
-    dataUrl: `data:${mimeType};base64,${base64Data}`,
+    dataUrl: input.startsWith("data:") ? input : `data:${mimeType};base64,${base64Data}`,
   };
-}
-
-function uniqueList(values) {
-  return [...new Set(values.map((value) => cleanText(value)).filter(Boolean))];
-}
-
-function getImageFieldCandidates() {
-  return uniqueList([AI_FACE_IMAGE_FIELD, "file", "image", "face", "photo", "upload"]);
-}
-
-function getNameFieldCandidates() {
-  return uniqueList([AI_FACE_NAME_FIELD, "name", "operator_name", "person_name", "label"]);
-}
-
-function shouldTryNextAiFormat(status) {
-  return status === 400 || status === 415 || status === 422;
 }
 
 function firstNonEmpty(...values) {
@@ -132,6 +134,14 @@ function firstNonEmpty(...values) {
   }
 
   return "";
+}
+
+function normalizeBoolean(value) {
+  if (typeof value === "boolean") return value;
+  const text = cleanText(value).toLowerCase();
+  if (["true", "yes", "1", "matched", "found", "success"].includes(text)) return true;
+  if (["false", "no", "0", "unmatched", "not found", "failed"].includes(text)) return false;
+  return Boolean(value);
 }
 
 function normalizeFaceResult(rawResult) {
@@ -149,12 +159,17 @@ function normalizeFaceResult(rawResult) {
         rawResult.employee_name,
         rawResult.identity,
         rawResult.user,
+        rawResult.username,
+        rawResult.label,
         nestedResult?.name,
         nestedResult?.person,
+        nestedResult?.person_name,
         firstMatch?.name,
         firstMatch?.person,
+        firstMatch?.person_name,
         firstResult?.name,
-        firstResult?.person
+        firstResult?.person,
+        firstResult?.person_name
       )
     );
 
@@ -162,7 +177,9 @@ function normalizeFaceResult(rawResult) {
       rawResult.confidence,
       rawResult.score,
       rawResult.similarity,
+      rawResult.distance,
       nestedResult?.confidence,
+      nestedResult?.score,
       firstMatch?.confidence,
       firstMatch?.score,
       firstResult?.confidence,
@@ -171,7 +188,7 @@ function normalizeFaceResult(rawResult) {
 
     const explicitMatched = firstNonEmpty(rawResult.matched, rawResult.found, rawResult.success, nestedResult?.matched);
     const matchedByName = Boolean(name) && !["unknown", "not found", "none", "null"].includes(name.toLowerCase());
-    const matched = explicitMatched === "" ? matchedByName : Boolean(explicitMatched) && explicitMatched !== "false";
+    const matched = explicitMatched === "" ? matchedByName : normalizeBoolean(explicitMatched);
 
     return {
       matched: matched || matchedByName,
@@ -207,136 +224,157 @@ async function readAiPayload(response) {
   return response.text();
 }
 
-function getAiErrorMessage(payload, status) {
-  if (typeof payload === "string") {
-    return payload.trim() || `Face AI returned HTTP ${status}`;
+function compactPayload(payload) {
+  if (payload === null || payload === undefined) return "";
+  if (typeof payload === "string") return payload.slice(0, 350);
+
+  try {
+    return JSON.stringify(payload).slice(0, 350);
+  } catch {
+    return String(payload).slice(0, 350);
+  }
+}
+
+function makeImageBlob(image) {
+  return new Blob([image.buffer], { type: image.mimeType });
+}
+
+function createFaceCandidates({ endpointType, image, operatorName }) {
+  const imageFields = uniqueValues([AI_FACE_IMAGE_FIELD, "file", "image", "face", "photo", "upload"]);
+  const nameFields = uniqueValues([AI_FACE_NAME_FIELD, "name", "person_name", "operator_name", "username", "label"]);
+  const candidates = [];
+  const isRegister = endpointType === "register";
+
+  function addMultipart(imageField, nameField = null) {
+    candidates.push({
+      label: nameField ? `multipart ${imageField}+${nameField}` : `multipart ${imageField}`,
+      run: async (signal) => {
+        const formData = new FormData();
+        formData.append(imageField, makeImageBlob(image), `face-capture-${Date.now()}.jpg`);
+
+        if (isRegister && operatorName && nameField) {
+          formData.append(nameField, operatorName);
+        }
+
+        return fetch(buildAiUrl(isRegister ? AI_FACE_REGISTER_PATH : AI_FACE_SEARCH_PATH), {
+          method: "POST",
+          body: formData,
+          signal,
+        });
+      },
+    });
   }
 
-  return payload?.error || payload?.message || payload?.detail || `Face AI returned HTTP ${status}`;
-}
+  function addJson(label, body) {
+    candidates.push({
+      label,
+      run: async (signal) => {
+        return fetch(buildAiUrl(isRegister ? AI_FACE_REGISTER_PATH : AI_FACE_SEARCH_PATH), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal,
+        });
+      },
+    });
+  }
 
-async function sendAiRequest({ endpointPath, body, headers, signal }) {
-  const response = await fetch(buildAiUrl(endpointPath), {
-    method: "POST",
-    body,
-    headers,
-    signal,
-  });
-
-  const payload = await readAiPayload(response);
-
-  return {
-    ok: response.ok,
-    status: response.status,
-    payload,
-    error: response.ok ? "" : getAiErrorMessage(payload, response.status),
-  };
-}
-
-async function tryMultipartAiRequest({ endpointPath, image, operatorName, imageField, signal }) {
-  const formData = new FormData();
-  const blob = new Blob([image.buffer], { type: image.mimeType });
-
-  formData.append(imageField, blob, `face-capture-${Date.now()}.jpg`);
-
-  if (operatorName) {
-    for (const nameField of getNameFieldCandidates()) {
-      formData.append(nameField, operatorName);
+  if (AI_FACE_PAYLOAD_MODE !== "json") {
+    if (isRegister) {
+      for (const imageField of imageFields) {
+        for (const nameField of nameFields) {
+          addMultipart(imageField, nameField);
+        }
+      }
+    } else {
+      for (const imageField of imageFields) {
+        addMultipart(imageField);
+      }
     }
   }
 
-  return sendAiRequest({ endpointPath, body: formData, signal });
-}
+  if (AI_FACE_PAYLOAD_MODE !== "multipart") {
+    const nameBody = isRegister ? { [AI_FACE_NAME_FIELD]: operatorName, name: operatorName } : {};
 
-async function tryJsonBase64AiRequest({ endpointPath, image, operatorName, signal }) {
-  const body = {
-    image: image.base64Data,
-    image_base64: image.base64Data,
-    imageDataUrl: image.dataUrl,
-    mime_type: image.mimeType,
-  };
-
-  if (operatorName) {
-    for (const nameField of getNameFieldCandidates()) {
-      body[nameField] = operatorName;
-    }
+    addJson("json image base64", { ...nameBody, image: image.base64Data });
+    addJson("json file base64", { ...nameBody, file: image.base64Data });
+    addJson("json face base64", { ...nameBody, face: image.base64Data });
+    addJson("json imageDataUrl", { ...nameBody, imageDataUrl: image.dataUrl });
+    addJson("json image data-url", { ...nameBody, image: image.dataUrl });
   }
 
-  return sendAiRequest({
-    endpointPath,
-    body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
-    signal,
-  });
+  if (AI_FACE_PAYLOAD_MODE === "raw" || AI_FACE_PAYLOAD_MODE === "auto") {
+    candidates.push({
+      label: "raw image/jpeg",
+      run: async (signal) => {
+        const url = new URL(buildAiUrl(isRegister ? AI_FACE_REGISTER_PATH : AI_FACE_SEARCH_PATH));
+        if (isRegister && operatorName) {
+          url.searchParams.set(AI_FACE_NAME_FIELD, operatorName);
+          url.searchParams.set("name", operatorName);
+        }
+
+        return fetch(url.toString(), {
+          method: "POST",
+          headers: { "Content-Type": image.mimeType },
+          body: image.buffer,
+          signal,
+        });
+      },
+    });
+  }
+
+  if (AI_FACE_PAYLOAD_MODE !== "auto") {
+    return candidates.filter((candidate) => candidate.label.startsWith(AI_FACE_PAYLOAD_MODE));
+  }
+
+  const preferredFormat = lastWorkingFaceFormat[endpointType];
+  if (!preferredFormat) return candidates;
+
+  return [
+    ...candidates.filter((candidate) => candidate.label === preferredFormat),
+    ...candidates.filter((candidate) => candidate.label !== preferredFormat),
+  ];
 }
 
-async function tryRawImageAiRequest({ endpointPath, image, signal }) {
-  return sendAiRequest({
-    endpointPath,
-    body: image.buffer,
-    headers: { "Content-Type": image.mimeType },
-    signal,
-  });
-}
-
-async function postFaceImageToAi({ endpointPath, imageDataUrl, operatorName }) {
+async function postFaceImageToAi({ endpointType, imageDataUrl, operatorName }) {
   const image = parseImageDataUrl(imageDataUrl);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AI_FACE_TIMEOUT_MS);
+  const candidates = createFaceCandidates({ endpointType, image, operatorName });
   const attempts = [];
 
   try {
-    const mode = AI_FACE_PAYLOAD_MODE.toLowerCase();
+    for (const candidate of candidates) {
+      const response = await candidate.run(controller.signal);
+      const payload = await readAiPayload(response);
 
-    if (mode === "multipart" || mode === "auto") {
-      for (const imageField of getImageFieldCandidates()) {
-        attempts.push({ type: "multipart/form-data", imageField });
-      }
-    }
-
-    if (mode === "json_base64" || mode === "auto") {
-      attempts.push({ type: "json_base64" });
-    }
-
-    if (mode === "raw" || mode === "auto") {
-      attempts.push({ type: "raw_image" });
-    }
-
-    if (!attempts.length) {
-      attempts.push({ type: "multipart/form-data", imageField: AI_FACE_IMAGE_FIELD });
-    }
-
-    let lastError = "Face AI rejected the image payload.";
-
-    for (const attempt of attempts) {
-      let result;
-
-      if (attempt.type === "multipart/form-data") {
-        result = await tryMultipartAiRequest({
-          endpointPath,
-          image,
-          operatorName,
-          imageField: attempt.imageField,
-          signal: controller.signal,
-        });
-      } else if (attempt.type === "json_base64") {
-        result = await tryJsonBase64AiRequest({ endpointPath, image, operatorName, signal: controller.signal });
-      } else {
-        result = await tryRawImageAiRequest({ endpointPath, image, signal: controller.signal });
+      if (response.ok) {
+        lastWorkingFaceFormat[endpointType] = candidate.label;
+        const normalized = normalizeFaceResult(payload);
+        return {
+          ...normalized,
+          faceFormat: candidate.label,
+        };
       }
 
-      if (result.ok) {
-        return normalizeFaceResult(result.payload);
-      }
+      attempts.push({
+        format: candidate.label,
+        status: response.status,
+        response: compactPayload(payload),
+      });
 
-      lastError = result.error || lastError;
-
-      if (!shouldTryNextAiFormat(result.status)) {
+      if (![400, 404, 415, 422].includes(response.status)) {
         break;
       }
     }
 
-    throw new Error(`${lastError} Check the expected image field/name format on the Face AI endpoint.`);
+    const firstAttempt = attempts[0];
+    const lastAttempt = attempts[attempts.length - 1];
+    const triedFormats = attempts.map((attempt) => `${attempt.format}=${attempt.status}`).join(", ");
+    const serverMessage = compactPayload(lastAttempt?.response || firstAttempt?.response);
+    const suffix = serverMessage ? ` Last AI message: ${serverMessage}` : "";
+
+    throw new Error(`Face AI rejected the image format/name fields. Tried: ${triedFormats}.${suffix}`);
   } catch (error) {
     if (error.name === "AbortError") {
       throw new Error("Face AI request timed out. Check the AI workstation connection.");
@@ -371,10 +409,23 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
+app.get("/api/face/config", (_req, res) => {
+  res.json({
+    ok: true,
+    baseUrl: AI_FACE_BASE_URL,
+    registerPath: AI_FACE_REGISTER_PATH,
+    searchPath: AI_FACE_SEARCH_PATH,
+    imageField: AI_FACE_IMAGE_FIELD,
+    nameField: AI_FACE_NAME_FIELD,
+    payloadMode: AI_FACE_PAYLOAD_MODE,
+    lastWorkingFaceFormat,
+  });
+});
+
 app.post("/api/face/search", async (req, res) => {
   try {
     const result = await postFaceImageToAi({
-      endpointPath: AI_FACE_SEARCH_PATH,
+      endpointType: "search",
       imageDataUrl: req.body?.imageDataUrl,
     });
 
@@ -393,7 +444,7 @@ app.post("/api/face/register", async (req, res) => {
     }
 
     const result = await postFaceImageToAi({
-      endpointPath: AI_FACE_REGISTER_PATH,
+      endpointType: "register",
       imageDataUrl: req.body?.imageDataUrl,
       operatorName,
     });
