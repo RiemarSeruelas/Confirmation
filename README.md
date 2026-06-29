@@ -36,6 +36,7 @@ AI_FACE_REGISTER_PATH=/register
 AI_FACE_SEARCH_PATH=/search
 AI_FACE_IMAGE_FIELD=file
 AI_FACE_NAME_FIELD=name
+AI_FACE_PAYLOAD_MODE=auto
 AI_FACE_TIMEOUT_MS=30000
 ```
 
@@ -78,28 +79,24 @@ The browser does not send the image directly to the AI workstation.
 ```text
 Camera frame
 ↓
-Canvas JPEG base64
+Canvas converts the center face area to 640x640 JPEG base64
 ↓
 /api/face/search or /api/face/register
 ↓
-Express converts base64 to binary file/blob
+Express converts base64 to binary image data
 ↓
-multipart/form-data POST to AI workstation
+Backend sends to AI as multipart/form-data. If rejected with 400/415/422, auto mode tries common fields like file, image, face, photo, then JSON base64, then raw JPEG
 ↓
 AI response returns name/match
 ```
 
-The backend sends the file using this field name:
+The backend starts with this image field name:
 
 ```env
 AI_FACE_IMAGE_FIELD=file
 ```
 
-If your AI Flask app expects `image` instead, change it to:
-
-```env
-AI_FACE_IMAGE_FIELD=image
-```
+With `AI_FACE_PAYLOAD_MODE=auto`, it also tries common formats if the AI returns 400/415/422. So the app itself captures your face, converts it, and tries to match what the Face AI accepts. If you already know the exact format, set `AI_FACE_PAYLOAD_MODE=multipart` and set `AI_FACE_IMAGE_FIELD=file` or `image`.
 
 For register, the backend sends the name using:
 

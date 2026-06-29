@@ -137,14 +137,19 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
       throw new Error("Camera is not ready yet.");
     }
 
+    const outputSize = 640;
+    const sourceSize = Math.min(video.videoWidth, video.videoHeight);
+    const sourceX = Math.max(0, (video.videoWidth - sourceSize) / 2);
+    const sourceY = Math.max(0, (video.videoHeight - sourceSize) / 2);
+
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = outputSize;
+    canvas.height = outputSize;
 
     const context = canvas.getContext("2d");
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    context.drawImage(video, sourceX, sourceY, sourceSize, sourceSize, 0, 0, outputSize, outputSize);
 
-    return canvas.toDataURL("image/jpeg", 0.9);
+    return canvas.toDataURL("image/jpeg", 0.88);
   }
 
   async function handleCapture() {
@@ -155,7 +160,7 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
 
     try {
       setBusy(true);
-      setStatus("Capturing and sending to AI workstation...");
+      setStatus("Capturing, converting to JPEG, and sending to AI workstation...");
 
       const imageDataUrl = captureImageDataUrl();
       const response = await fetch(isRegister ? "/api/face/register" : "/api/face/search", {
