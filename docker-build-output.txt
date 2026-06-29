@@ -44,3 +44,26 @@
 #8 DONE 24.6s
 
 #9 [5/7] RUN npm install --include=dev
+#9 1163.2 npm error code ECONNRESET
+#9 1163.2 npm error errno ECONNRESET
+#9 1163.2 npm error network request to https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/yargs-parser/-/yargs-parser-22.0.0.tgz failed, reason: Client network socket disconnected before secure TLS connection was established
+#9 1163.2 npm error network This is a problem related to network connectivity.
+#9 1163.2 npm error network In most cases you are behind a proxy or have bad network settings.
+#9 1163.2 npm error network
+#9 1163.2 npm error network If you are behind a proxy, please make sure that the 'proxy' config is set properly.  See: 'npm help config'
+#9 1163.2 npm error A complete log of this run can be found in: /root/.npm/_logs/2026-06-29T07_32_50_492Z-debug-0.log
+#9 ERROR: process "/bin/sh -c npm install --include=dev" did not complete successfully: exit code: 1
+------
+ > [5/7] RUN npm install --include=dev:
+1163.2 npm error code ECONNRESET
+1163.2 npm error errno ECONNRESET
+1163.2 npm error network request to https://packages.applied-caas-gateway1.internal.api.openai.org/artifactory/api/npm/npm-public/yargs-parser/-/yargs-parser-22.0.0.tgz failed, reason: Client network socket disconnected before secure TLS connection was established
+1163.2 npm error network This is a problem related to network connectivity.
+1163.2 npm error network In most cases you are behind a proxy or have bad network settings.
+1163.2 npm error network
+1163.2 npm error network If you are behind a proxy, please make sure that the 'proxy' config is set properly.  See: 'npm help config'
+1163.2 npm error A complete log of this run can be found in: /root/.npm/_logs/2026-06-29T07_32_50_492Z-debug-0.log
+------
+ERROR: failed to build: failed to solve: process "/bin/sh -c npm install --include=dev" did not complete successfully: exit code: 1
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/bf7ucyjt5a74qn7iv0oxeoq2g
