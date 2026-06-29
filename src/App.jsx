@@ -12,6 +12,18 @@ const emptyForm = {
 
 const shiftOptions = ["1st Shift", "2nd Shift", "3rd Shift", "Unknown Shift"];
 
+const demoRecord = {
+  id: "demo",
+  operator_name: "Demo Operator",
+  machine_name: "Selo 3 Cooker 2",
+  reading_value: 31.3,
+  product: "BFWM_DE_OBLX_PREPARATION_UP",
+  batch_number: "TEMP-BATCH-001",
+  shift_name: "1st Shift",
+  remarks: "Idle",
+  record_timestamp: new Date().toISOString(),
+};
+
 function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
@@ -28,7 +40,127 @@ function formatDateTime(value) {
   }).format(date);
 }
 
-function App() {
+function formatNumber(value, decimals = 2) {
+  if (value === null || value === undefined || value === "") return "0.00";
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return "0.00";
+  return numberValue.toFixed(decimals);
+}
+
+function buildMachineMetrics(record, records) {
+  const reading = Number(record?.reading_value ?? 0);
+  const safeReading = Number.isFinite(reading) ? reading : 0;
+  const healthBase = Math.max(0, Math.min(100, 100 - Math.abs(safeReading - 30) * 1.2));
+
+  return {
+    assetName: record?.machine_name || "Selo 3 Cooker 2",
+    status: record?.remarks || "Idle",
+    totalRecords: records.length || 0,
+    sealHealth: healthBase.toFixed(1),
+    motorHealth: Math.max(0, healthBase - 1.4).toFixed(1),
+    alarms: safeReading > 60 ? 1 : 0,
+    lastOperator: record?.operator_name || "—",
+    runningVariant: record?.product || "Temporary Product",
+    batchNumber: record?.batch_number || "—",
+    shiftName: record?.shift_name || "—",
+    timestamp: record?.record_timestamp,
+    temperature: safeReading,
+  };
+}
+
+function AuthPage({ onLogin, onRegister }) {
+  const [operator, setOperator] = useState("");
+  const [password, setPassword] = useState("");
+
+  function handleLogin(event) {
+    event.preventDefault();
+    onLogin();
+  }
+
+  return (
+    <main className="auth-page">
+      <section className="auth-panel">
+        <div className="brand-mark">U</div>
+        <p className="eyebrow">Confirmation System</p>
+        <h1>Login / Register</h1>
+        <p className="subtitle">
+          Login opens the record input page. Register opens the machine interface preview page.
+        </p>
+
+        <form className="login-card" onSubmit={handleLogin}>
+          <label>
+            Operator Name
+            <input
+              value={operator}
+              onChange={(event) => setOperator(event.target.value)}
+              placeholder="Enter operator name"
+              autoComplete="username"
+            />
+          </label>
+
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Temporary only"
+              autoComplete="current-password"
+            />
+          </label>
+
+          <button type="submit">Login</button>
+          <button className="secondary-button full-width" type="button" onClick={onRegister}>
+            Register / Machine View
+          </button>
+        </form>
+      </section>
+
+      <section className="auth-preview">
+        <div className="preview-topline" />
+        <div className="preview-card large" />
+        <div className="preview-grid">
+          <div className="preview-card" />
+          <div className="preview-card" />
+          <div className="preview-card" />
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function TopNav({ page, setPage, onLogout }) {
+  return (
+    <header className="top-nav">
+      <div>
+        <p className="nav-kicker">Cavite Factory</p>
+        <strong>Confirmation Test App</strong>
+      </div>
+
+      <nav>
+        <button
+          className={page === "records" ? "nav-button active" : "nav-button"}
+          type="button"
+          onClick={() => setPage("records")}
+        >
+          Record Input
+        </button>
+        <button
+          className={page === "register" ? "nav-button active" : "nav-button"}
+          type="button"
+          onClick={() => setPage("register")}
+        >
+          Register View
+        </button>
+        <button className="nav-button" type="button" onClick={onLogout}>
+          Logout
+        </button>
+      </nav>
+    </header>
+  );
+}
+
+function RecordInputPage() {
   const [form, setForm] = useState(emptyForm);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -263,6 +395,198 @@ function App() {
         </section>
       </section>
     </main>
+  );
+}
+
+function InfoRow({ label, value, action }) {
+  return (
+    <div className="asset-info-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {action && <button type="button">{action}</button>}
+    </div>
+  );
+}
+
+function Callout({ className = "", title, value, unit, timestamp, children }) {
+  return (
+    <article className={`machine-callout ${className}`}>
+      <h3>{title}</h3>
+      {value !== undefined && (
+        <p className="callout-reading">
+          {value} <span>{unit}</span>
+        </p>
+      )}
+      {children}
+      <small>{formatDateTime(timestamp)}</small>
+    </article>
+  );
+}
+
+function MachineDrawing() {
+  return (
+    <div className="machine-drawing" aria-label="Machine illustration">
+      <div className="machine-tank" />
+      <div className="machine-neck" />
+      <div className="machine-body" />
+      <div className="machine-base" />
+      <div className="machine-left-arm" />
+      <div className="machine-right-arm" />
+      <div className="machine-leg left" />
+      <div className="machine-leg right" />
+      <div className="machine-pin temp" />
+      <div className="machine-pin current" />
+      <div className="machine-pin speed" />
+      <div className="machine-pin power" />
+    </div>
+  );
+}
+
+function RegisterViewPage() {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState("Loading latest values...");
+
+  const latestRecord = records[0] || demoRecord;
+  const metrics = useMemo(() => buildMachineMetrics(latestRecord, records), [latestRecord, records]);
+
+  async function loadRegisterValues() {
+    try {
+      setLoading(true);
+      const response = await fetch("/api/records?limit=20");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to load records");
+      }
+
+      setRecords(data.records || []);
+      setStatus(data.records?.length ? "Live DB values" : "Temporary values");
+    } catch (error) {
+      setStatus(`Temporary values • ${error.message}`);
+      setRecords([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadRegisterValues();
+  }, []);
+
+  return (
+    <main className="monitor-shell">
+      <section className="monitor-toolbar">
+        <div>
+          <span className="live-dot" />
+          <strong>{status}</strong>
+          <small>{loading ? "Refreshing..." : `${formatDateTime(metrics.timestamp)} (PHT)`}</small>
+        </div>
+        <button className="secondary-button" type="button" onClick={loadRegisterValues} disabled={loading}>
+          {loading ? "Refreshing..." : "Refresh"}
+        </button>
+      </section>
+
+      <section className="process-header">
+        <button type="button" className="square-button">☰</button>
+        <button type="button" className="square-button">←</button>
+        <button type="button" className="square-button">→</button>
+        <h1>Cavite - Home &gt; SELO-3 Process View &gt; {metrics.assetName}</h1>
+      </section>
+
+      <section className="monitor-grid">
+        <aside className="asset-panel">
+          <InfoRow label="Asset Name" value={metrics.assetName} />
+          <InfoRow label="Pasteurization Status" value={metrics.status} />
+          <InfoRow label="Total Records" value={metrics.totalRecords} />
+          <InfoRow label="Seal Health Score" value={metrics.sealHealth} action="View" />
+          <InfoRow label="Motor Health Score" value={metrics.motorHealth} action="View" />
+          <InfoRow label="Active Alarms" value={metrics.alarms} action="View" />
+          <InfoRow label="Last Operator" value={metrics.lastOperator} />
+          <InfoRow label="Shift" value={metrics.shiftName} />
+          <InfoRow label="Batch Number" value={metrics.batchNumber} />
+          <InfoRow label="Running Variant" value={metrics.runningVariant} />
+          <InfoRow label="Current Reading" value={`${formatNumber(metrics.temperature)} °C`} />
+        </aside>
+
+        <section className="machine-interface-card">
+          <div className="connector-line line-temp" />
+          <div className="connector-line line-current" />
+          <div className="connector-line line-vibration" />
+          <div className="connector-line line-pressure" />
+          <div className="connector-line line-speed" />
+          <div className="connector-line line-power" />
+
+          <Callout
+            className="callout-temp"
+            title="Motor vibration sensor contact temp"
+            value={formatNumber(metrics.temperature)}
+            unit="deg C"
+            timestamp={metrics.timestamp}
+          />
+
+          <Callout
+            className="callout-current"
+            title="Motor Current"
+            value="0.00"
+            unit="A"
+            timestamp={metrics.timestamp}
+          />
+
+          <Callout className="callout-vibration" title="Motor vibration velocity" timestamp={metrics.timestamp}>
+            <div className="mini-reading">
+              <span>Resultant RMS</span>
+              <strong>0 MM/S</strong>
+            </div>
+            <div className="mini-reading">
+              <span>Resultant Peak</span>
+              <strong>0 MM/S</strong>
+            </div>
+          </Callout>
+
+          <Callout
+            className="callout-pressure"
+            title="Inlet Pressure"
+            value="0.00"
+            unit="Pascal"
+            timestamp={metrics.timestamp}
+          />
+
+          <Callout
+            className="callout-speed"
+            title="Motor Speed"
+            value="0.00"
+            unit="RPM"
+            timestamp={metrics.timestamp}
+          />
+
+          <Callout
+            className="callout-power"
+            title="Motor Power"
+            value="0.00"
+            unit="kW"
+            timestamp={metrics.timestamp}
+          />
+
+          <MachineDrawing />
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function App() {
+  const [page, setPage] = useState("auth");
+
+  if (page === "auth") {
+    return <AuthPage onLogin={() => setPage("records")} onRegister={() => setPage("register")} />;
+  }
+
+  return (
+    <>
+      <TopNav page={page} setPage={setPage} onLogout={() => setPage("auth")} />
+      {page === "register" ? <RegisterViewPage /> : <RecordInputPage />}
+    </>
   );
 }
 

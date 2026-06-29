@@ -13,8 +13,12 @@ app.confirmation_test_records
 - Creates/updates the `app.confirmation_test_records` table
 - Adds `record_timestamp` as the main timestamp for every saved test record
 - Keeps `created_at` and `updated_at` as audit timestamps
+- Opens with a temporary Login / Register landing page
+- Login goes to the record input form
+- Register opens a machine-interface style preview page inspired by the provided asset monitor screen
 - Provides a web form for input
 - Shows the latest saved records
+- The machine-interface page fetches the latest DB record and uses `reading_value` as the main live reading callout
 
 ## Database timestamp fields
 
@@ -140,6 +144,13 @@ Open during development:
 http://localhost:5179
 ```
 
+The first screen now has two paths:
+
+- **Login** → opens the record input page
+- **Register / Machine View** → opens the machine-interface preview page
+
+For now, this is temporary frontend navigation only. There is no real user authentication table yet.
+
 Backend API runs on:
 
 ```text
@@ -183,3 +194,15 @@ Content-Type: application/json
   "remarks": "OK"
 }
 ```
+
+
+## Machine interface preview
+
+The Register / Machine View page currently uses this logic:
+
+1. Fetch latest records from `GET /api/records?limit=20`
+2. Use the latest row as the current machine value
+3. Display `reading_value` as the main callout value
+4. Fall back to temporary demo values if the DB has no records yet
+
+Later, this can be connected to a specific machine table, AI workstation result, or live sensor table instead of the temporary confirmation records table.
