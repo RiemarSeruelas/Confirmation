@@ -1,44 +1,74 @@
 # Confirmation Test DB App
 
-Simple React + Express + PostgreSQL app with manual login, AI face login/register, record input, and machine interface preview.
+React + Express + PostgreSQL app for confirmation test input, face registration/login, admin user registration, admin logs, and dashboard feed.
 
-- Login opens the record input page.
-- Face Login captures one camera frame and sends it to the AI workstation through the backend.
-- Register Face captures one camera frame and registers it to the AI workstation through the backend.
-- Machine View opens the machine interface preview page.
-- Records are saved to `app.confirmation_test_records`.
-- Face/profile mapping is saved to `app.face_identities`.
-- The app uses `record_timestamp`, `created_at`, and `updated_at`.
-- The app uses whatever PostgreSQL database name you put in `.env` as `PGDATABASE`.
+## What it uses
 
-## 1. Install
+Use your existing PostgreSQL database from pgAdmin:
 
-```bash
-npm install
+```text
+Servers -> PeopleCounting -> Databases -> mydatabase -> Schemas -> app
 ```
 
-## 2. Setup `.env`
+So your `.env` should use:
 
-Copy `.env.example` to `.env`.
+```env
+PGDATABASE=mydatabase
+```
+
+Inside that database, the app uses these tables:
+
+```text
+app.confirmation_test_records
+app.face_identities
+```
+
+`setup-db` does not create a PostgreSQL database. It only creates or updates the tables inside the database you set in `.env`.
+
+## Main features
+
+- Clean login screen with Login, Register, View Machine, and Admin.
+- Light purple to light blue background.
+- Face login through your Face AI workstation.
+- Register operator with name, site, face, and role defaulting to operator.
+- Admin skip button for now.
+- Admin can register operators or admins.
+- Admin can create a manual account without face, or capture face for face login.
+- Admin can view submission logs and registered people.
+- Record input behaves like a clean input form.
+- Operators can submit or edit only during the selected shift.
+- Machine View/dashboard reads the saved confirmation records.
+
+## Shift edit windows
+
+```text
+1st Shift: 06:00 - 14:00
+2nd Shift: 14:00 - 22:00
+3rd Shift: 22:00 - 06:00
+```
+
+The backend checks Manila time. A response can only be submitted or edited while the selected shift is active.
+
+## Setup
+
+Copy `.env.example` to `.env` and edit it.
 
 Example:
 
 ```env
-PGHOST=localhost
+PORT=5178
+NODE_ENV=development
+
+PGHOST=10.156.119.155
 PGPORT=5432
-PGDATABASE=confirmation_test_db
-PGUSER=postgres
+PGDATABASE=mydatabase
+PGUSER=myuser
 PGPASSWORD=your_password
 PGSSL=false
-PORT=5178
 
 AI_FACE_BASE_URL=http://10.156.119.146:5005
 AI_FACE_REGISTER_PATH=/register
 AI_FACE_SEARCH_PATH=/search
-AI_FACE_IMAGE_FIELD=img
-AI_FACE_NAME_FIELD=name
-AI_FACE_TIMEOUT_MS=30000
-AI_FACE_PAYLOAD_MODE=json
 AI_FACE_MODEL_NAME=SFace
 AI_FACE_DETECTOR_BACKEND=yunet
 AI_FACE_ALIGN=true
@@ -47,61 +77,20 @@ AI_FACE_DISTANCE_METRIC=cosine
 AI_FACE_SEARCH_METHOD=exact
 ```
 
-
-## Exact PostgreSQL names used by the code
-
-Database:
-
-```text
-Whatever you put in `.env` as PGDATABASE
-```
-
-Schema:
-
-```text
-app
-```
-
-Tables:
-
-```text
-app.confirmation_test_records
-app.face_identities
-```
-
-So keep `PGDATABASE` pointed to the existing PostgreSQL database where you want these app tables.
-
-Use this only when the app runs inside Docker but PostgreSQL is on your PC:
-
-```env
-PGHOST=host.docker.internal
-```
-
-## 3. Choose the PostgreSQL database
-
-Use the PostgreSQL database you already have. Put that exact database name in `.env`:
-
-```env
-PGDATABASE=your_existing_database_name
-```
-
-The code does **not** create a PostgreSQL database anymore. It only creates/updates the schema and tables inside the database from `.env`.
-
-## 4. Create/update schema and tables
+Install and prepare DB tables:
 
 ```bash
+npm install
 npm run setup-db
 ```
 
-This does not create the database anymore. It only creates/updates the schema and tables inside the database from `.env`.
-
-## 5. Run
+Run the app:
 
 ```bash
 npm run dev
 ```
 
-Frontend:
+Open:
 
 ```text
 http://localhost:5179
@@ -113,194 +102,38 @@ Backend:
 http://localhost:5178
 ```
 
-## Face recognition body format
+## Important camera note
 
-The AI workstation sample uses JSON, not multipart upload.
+Camera access works on `localhost`. If you open this from another PC using `http://server-ip`, the browser may block camera access because LAN camera access usually needs HTTPS.
 
-Search sends this shape:
+## Useful API checks
 
-```json
-{
-  "model_name": "SFace",
-  "detector_backend": "yunet",
-  "align": true,
-  "l2_normalize": true,
-  "distance_metric": "cosine",
-  "search_method": "exact",
-  "img": "data:image/jpeg;base64,..."
-}
-```
-
-Register sends this shape:
-
-```json
-{
-  "name": "TestUser",
-  "identity": "TestUser",
-  "person_id": "TestUser",
-  "model_name": "SFace",
-  "detector_backend": "yunet",
-  "align": true,
-  "l2_normalize": true,
-  "distance_metric": "cosine",
-  "search_method": "exact",
-  "img": "data:image/jpeg;base64,..."
-}
-```
-
-The browser capture flow is:
+Health:
 
 ```text
-Camera frame
-↓
-Canvas 640x640 JPEG data URL
-↓
-/api/face/search or /api/face/register
-↓
-Express backend sends JSON body to Face AI
-↓
-Face AI returns match/id/hash/img_name
-↓
-App DB checks app.face_identities
-↓
-App returns the operator profile/details
+GET http://localhost:5178/api/health
 ```
 
-## Local face profile table
-
-The Face AI stores the embedding. The application stores the person details.
-
-Table:
+Current shift:
 
 ```text
-app.face_identities
+GET http://localhost:5178/api/shift-status
 ```
 
-Important columns:
+Records:
 
 ```text
-operator_name
-employee_id
-department
-role_name
-email
-ai_face_key
-ai_identifiers
-registered_at
-last_seen_at
+GET http://localhost:5178/api/records
 ```
 
-Register Face now does this:
+Admin users:
 
 ```text
-1. Send image to Face AI /register
-2. Search the same image if needed to get the AI face key/hash/img_name
-3. Save that AI key + operator details in app.face_identities
+GET http://localhost:5178/api/admin/users
 ```
 
-Face Login now does this:
+Dashboard summary:
 
 ```text
-1. Send image to Face AI /search
-2. Extract AI identifiers from the result
-3. Find matching row in app.face_identities
-4. Login as that app profile
+GET http://localhost:5178/api/dashboard/summary
 ```
-
-To see registered local profiles:
-
-```text
-GET http://localhost:5178/api/face/identities
-```
-
-## Face AI HTTP 400
-
-HTTP 400 means the app reached the AI workstation, but the AI rejected the request body.
-
-For this Face AI, keep:
-
-```env
-AI_FACE_PAYLOAD_MODE=json
-AI_FACE_IMAGE_FIELD=img
-AI_FACE_NAME_FIELD=name
-```
-
-You can check the current backend config here while the backend is running:
-
-```text
-http://localhost:5178/api/face/config
-```
-
-## Camera note for LAN hosting
-
-Camera access works on `localhost` during development. For LAN hosting like `http://server-ip:5055`, browser camera access is usually blocked because camera APIs require a secure context. Use HTTPS for the deployed site.
-
-For internal deployment, use a reverse proxy such as Caddy or Nginx with HTTPS. Your frontend/backend can be HTTPS while the backend still calls the AI workstation over HTTP.
-
-## If you get 500 Internal Server Error
-
-Usually it means the old table is missing the new `record_timestamp` column.
-
-Run:
-
-```bash
-npm run setup-db
-npm run dev
-```
-
-The server also auto-checks the schema when `/api/health`, `/api/records`, `/api/face/register`, `/api/face/search`, or save record is called.
-
-## Scripts
-
-```bash
-npm run dev       # run backend + frontend
-npm run server    # backend only
-npm run client    # frontend only
-npm run setup-db  # apply schema/tables inside the DB from .env
-npm run check-db  # test DB connection
-npm run build     # build frontend
-npm start         # run backend for production build
-```
-
-## Git ignore
-
-`.gitignore` is included. It ignores:
-
-```text
-node_modules/
-.env
-dist/
-logs/
-*.log
-.vscode/
-.idea/
-```
-
-## Docker
-
-Build the image:
-
-```bash
-docker build --no-cache -t confirmation-test-app .
-```
-
-Run DB setup once:
-
-```bash
-docker run --rm --env-file .env confirmation-test-app npm run setup-db
-```
-
-Run the app on port 5055:
-
-```bash
-docker rm -f confirmation-test-app
-docker run -d --env-file .env -p 5055:5178 --name confirmation-test-app confirmation-test-app
-```
-
-Open:
-
-```text
-http://localhost:5055
-```
-
-Keep `PORT=5178` inside `.env`. Docker maps outside `5055` to inside `5178`.

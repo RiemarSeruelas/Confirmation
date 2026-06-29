@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-const emptyForm = {
-  operator_name: "",
+const siteOptions = ["Savoury", "Dressings"];
+const roleOptions = ["operator", "admin"];
+const shiftOptions = ["1st Shift", "2nd Shift", "3rd Shift"];
+
+const emptyRecord = {
   machine_name: "",
   reading_value: "",
   product: "",
@@ -10,85 +13,68 @@ const emptyForm = {
   remarks: "",
 };
 
-const shiftOptions = ["1st Shift", "2nd Shift", "3rd Shift", "Unknown Shift"];
-
-const demoRecord = {
-  id: "demo",
-  operator_name: "Demo Operator",
-  machine_name: "Selo 3 Cooker 2",
-  reading_value: 31.3,
-  product: "BFWM_DE_OBLX_PREPARATION_UP",
-  batch_number: "TEMP-BATCH-001",
-  shift_name: "1st Shift",
-  remarks: "Idle",
-  record_timestamp: new Date().toISOString(),
+const emptyUserForm = {
+  operatorName: "",
+  employeeId: "",
+  siteName: "Savoury",
+  department: "",
+  roleName: "operator",
+  email: "",
 };
 
 function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-
   return new Intl.DateTimeFormat("en-PH", {
     year: "numeric",
     month: "short",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     hour12: false,
   }).format(date);
 }
 
 function formatNumber(value, decimals = 2) {
-  if (value === null || value === undefined || value === "") return "0.00";
+  if (value === null || value === undefined || value === "") return "—";
   const numberValue = Number(value);
-  if (!Number.isFinite(numberValue)) return "0.00";
+  if (!Number.isFinite(numberValue)) return "—";
   return numberValue.toFixed(decimals);
 }
 
-function buildMachineMetrics(record, records) {
-  const reading = Number(record?.reading_value ?? 0);
-  const safeReading = Number.isFinite(reading) ? reading : 0;
-  const healthBase = Math.max(0, Math.min(100, 100 - Math.abs(safeReading - 30) * 1.2));
-
-  return {
-    assetName: record?.machine_name || "Selo 3 Cooker 2",
-    status: record?.remarks || "Idle",
-    totalRecords: records.length || 0,
-    sealHealth: healthBase.toFixed(1),
-    motorHealth: Math.max(0, healthBase - 1.4).toFixed(1),
-    alarms: safeReading > 60 ? 1 : 0,
-    lastOperator: record?.operator_name || "—",
-    runningVariant: record?.product || "Temporary Product",
-    batchNumber: record?.batch_number || "—",
-    shiftName: record?.shift_name || "—",
-    timestamp: record?.record_timestamp,
-    temperature: safeReading,
-  };
-}
-
-function getSecureCameraMessage() {
-  if (window.isSecureContext || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-    return "";
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || `Request failed: ${response.status}`);
   }
-
-  return "Camera access needs HTTPS or localhost. For LAN Docker hosting, put this app behind HTTPS first.";
+  return data;
 }
 
-function FaceCaptureModal({ mode, onClose, onSuccess }) {
+function getCameraHelp() {
+  const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  if (window.isSecureContext || isLocalhost) return "";
+  return "Camera needs HTTPS or localhost. Use localhost for testing or add HTTPS for LAN deployment.";
+}
+
+function userDisplayName(user) {
+  return user?.operator_name || user?.name || "Operator";
+}
+
+function userSite(user) {
+  return user?.site_name || "Savoury";
+}
+
+function userRole(user) {
+  return user?.role_name || "operator";
+}
+
+function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapture }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const [profile, setProfile] = useState({
-    operatorName: "",
-    employeeId: "",
-    department: "",
-    roleName: "",
-    email: "",
-  });
   const [status, setStatus] = useState("Starting camera...");
   const [busy, setBusy] = useState(false);
-  const isRegister = mode === "register";
 
   function stopCamera() {
     if (streamRef.current) {
@@ -98,15 +84,14 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
   }
 
   async function startCamera() {
-    const secureMessage = getSecureCameraMessage();
-
-    if (secureMessage) {
-      setStatus(secureMessage);
+    const help = getCameraHelp();
+    if (help) {
+      setStatus(help);
       return;
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      setStatus("Camera API is not available in this browser.");
+      setStatus("Camera is not available in this browser.");
       return;
     }
 
@@ -119,26 +104,16 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
         },
         audio: false,
       });
-
       streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-
-      setStatus(isRegister ? "Camera ready. Enter profile details, then capture." : "Camera ready. Capture your face to login.");
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setStatus("Camera ready. Center your face and capture.");
     } catch (error) {
-      if (error.name === "NotAllowedError") {
-        setStatus("Camera permission was blocked. Allow camera access in browser settings.");
-      } else {
-        setStatus(error.message || "Could not start camera.");
-      }
+      setStatus(error.name === "NotAllowedError" ? "Camera permission was blocked." : error.message || "Could not start camera.");
     }
   }
 
-  function captureImageDataUrl() {
+  function captureImage() {
     const video = videoRef.current;
-
     if (!video || !video.videoWidth || !video.videoHeight) {
       throw new Error("Camera is not ready yet.");
     }
@@ -147,68 +122,23 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
     const sourceSize = Math.min(video.videoWidth, video.videoHeight);
     const sourceX = Math.floor((video.videoWidth - sourceSize) / 2);
     const sourceY = Math.floor((video.videoHeight - sourceSize) / 2);
-
     const canvas = document.createElement("canvas");
     canvas.width = targetSize;
     canvas.height = targetSize;
-
     const context = canvas.getContext("2d");
-    context.drawImage(
-      video,
-      sourceX,
-      sourceY,
-      sourceSize,
-      sourceSize,
-      0,
-      0,
-      targetSize,
-      targetSize
-    );
-
+    context.drawImage(video, sourceX, sourceY, sourceSize, sourceSize, 0, 0, targetSize, targetSize);
     return canvas.toDataURL("image/jpeg", 0.92);
   }
 
   async function handleCapture() {
-    if (isRegister && !profile.operatorName.trim()) {
-      setStatus("Enter the operator name first.");
-      return;
-    }
-
     try {
       setBusy(true);
-      setStatus("Capturing 640x640 JPEG and sending to AI workstation...");
-
-      const imageDataUrl = captureImageDataUrl();
-      const response = await fetch(isRegister ? "/api/face/register" : "/api/face/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageDataUrl,
-          operatorName: profile.operatorName.trim(),
-          employeeId: profile.employeeId.trim(),
-          department: profile.department.trim(),
-          roleName: profile.roleName.trim(),
-          email: profile.email.trim(),
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error || "Face AI request failed.");
-      }
-
-      if (!isRegister && !data.matched) {
-        setStatus("No matching face found.");
-        return;
-      }
-
-      const resolvedName =
-        data.profile?.operator_name || data.name || data.registeredName || profile.operatorName.trim() || "Recognized Operator";
+      setStatus("Capturing image...");
+      const imageDataUrl = captureImage();
+      await onCapture(imageDataUrl);
       stopCamera();
-      onSuccess({ ...data, name: resolvedName });
     } catch (error) {
-      setStatus(error.message || "Face capture failed.");
+      setStatus(error.message || "Capture failed.");
     } finally {
       setBusy(false);
     }
@@ -216,78 +146,20 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
 
   useEffect(() => {
     startCamera();
-
-    return () => {
-      stopCamera();
-    };
+    return stopCamera;
   }, []);
 
   return (
-    <div className="camera-backdrop" role="dialog" aria-modal="true">
-      <section className="camera-modal">
-        <div className="camera-header">
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <section className="camera-modal clean-card">
+        <div className="modal-header">
           <div>
             <p className="eyebrow">AI Facial Recognition</p>
-            <h2>{isRegister ? "Register Face" : "Face Login"}</h2>
+            <h2>{title}</h2>
+            {description && <p>{description}</p>}
           </div>
-          <button className="icon-button" type="button" onClick={onClose} disabled={busy}>
-            ×
-          </button>
+          <button className="icon-button" type="button" onClick={onClose} disabled={busy}>×</button>
         </div>
-
-        {isRegister && (
-          <div className="camera-profile-grid">
-            <label className="camera-name-field">
-              Operator Name
-              <input
-                value={profile.operatorName}
-                onChange={(event) => setProfile((current) => ({ ...current, operatorName: event.target.value }))}
-                placeholder="Name to register"
-                disabled={busy}
-              />
-            </label>
-
-            <label className="camera-name-field">
-              Employee ID
-              <input
-                value={profile.employeeId}
-                onChange={(event) => setProfile((current) => ({ ...current, employeeId: event.target.value }))}
-                placeholder="Optional"
-                disabled={busy}
-              />
-            </label>
-
-            <label className="camera-name-field">
-              Department
-              <input
-                value={profile.department}
-                onChange={(event) => setProfile((current) => ({ ...current, department: event.target.value }))}
-                placeholder="Optional"
-                disabled={busy}
-              />
-            </label>
-
-            <label className="camera-name-field">
-              Role
-              <input
-                value={profile.roleName}
-                onChange={(event) => setProfile((current) => ({ ...current, roleName: event.target.value }))}
-                placeholder="Optional"
-                disabled={busy}
-              />
-            </label>
-
-            <label className="camera-name-field">
-              Email
-              <input
-                value={profile.email}
-                onChange={(event) => setProfile((current) => ({ ...current, email: event.target.value }))}
-                placeholder="Optional"
-                disabled={busy}
-              />
-            </label>
-          </div>
-        )}
 
         <div className="camera-frame">
           <video ref={videoRef} autoPlay playsInline muted />
@@ -296,179 +168,215 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
 
         <p className="camera-status">{status}</p>
 
-        <div className="camera-actions">
-          <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button type="button" onClick={handleCapture} disabled={busy}>
-            {busy ? "Processing..." : isRegister ? "Capture & Register" : "Capture & Login"}
-          </button>
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" onClick={handleCapture} disabled={busy}>{busy ? "Processing..." : "Capture"}</button>
         </div>
       </section>
     </div>
   );
 }
 
-function AuthPage({ onLogin, onRegister }) {
-  const [operator, setOperator] = useState("");
-  const [password, setPassword] = useState("");
-  const [faceMode, setFaceMode] = useState(null);
-  const [faceMessage, setFaceMessage] = useState("");
+function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin }) {
+  const [faceOpen, setFaceOpen] = useState(false);
+  const [message, setMessage] = useState("");
 
-  function handleLogin(event) {
-    event.preventDefault();
-    onLogin(operator.trim());
-  }
+  async function handleLoginCapture(imageDataUrl) {
+    setMessage("Checking face...");
+    const data = await fetchJson("/api/face/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageDataUrl }),
+    });
 
-  function handleFaceSuccess(result) {
-    setFaceMode(null);
-
-    if (faceMode === "register") {
-      setFaceMessage(`Registered local profile for ${result.profile?.operator_name || result.name || result.registeredName}.`);
-      return;
+    if (!data.matched || !data.profile) {
+      throw new Error(data.error || "No matching face found.");
     }
 
-    const loginName = result.profile?.operator_name || result.name;
-    const detailText = result.profile?.department ? ` • ${result.profile.department}` : "";
-    setFaceMessage(`Face matched: ${loginName}${detailText}.`);
-    onLogin(loginName);
+    setFaceOpen(false);
+    setMessage(`Welcome, ${data.profile.operator_name}.`);
+    onFaceLogin(data.profile);
   }
 
   return (
-    <main className="auth-page">
-      <section className="auth-panel">
-        <div className="brand-mark">U</div>
-        <p className="eyebrow">Confirmation System</p>
-        <h1>Login / Register</h1>
-        <p className="subtitle">
-          Login opens the record input page. Face login sends one camera capture to your AI workstation.
-        </p>
+    <main className="landing-page gradient-bg">
+      <section className="login-shell clean-card">
+        <div className="brand-circle">CT</div>
+        <p className="eyebrow">Confirmation Test</p>
+        <h1>Operator Confirmation</h1>
+        <p className="login-subtitle">Clean input, face registration, and shift-based editable responses.</p>
 
-        <form className="login-card" onSubmit={handleLogin}>
-          <label>
-            Operator Name
-            <input
-              value={operator}
-              onChange={(event) => setOperator(event.target.value)}
-              placeholder="Enter operator name"
-              autoComplete="username"
-            />
-          </label>
-
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Temporary only"
-              autoComplete="current-password"
-            />
-          </label>
-
-          <button type="submit">Login</button>
-          <button className="face-button" type="button" onClick={() => setFaceMode("search")}>
-            Face Login
-          </button>
-          <button className="secondary-button full-width" type="button" onClick={() => setFaceMode("register")}>
-            Register Face
-          </button>
-          <button className="secondary-button full-width" type="button" onClick={onRegister}>
-            Machine View
-          </button>
-        </form>
-
-        {faceMessage && <p className="message">{faceMessage}</p>}
-      </section>
-
-      <section className="auth-preview">
-        <div className="preview-topline" />
-        <div className="preview-card large" />
-        <div className="preview-grid">
-          <div className="preview-card" />
-          <div className="preview-card" />
-          <div className="preview-card" />
+        <div className="login-actions">
+          <button type="button" onClick={() => setFaceOpen(true)}>Login</button>
+          <button className="secondary-button" type="button" onClick={onRegister}>Register</button>
+          <button className="secondary-button" type="button" onClick={onMachineView}>View Machine</button>
+          <button className="ghost-button" type="button" onClick={onAdmin}>Admin</button>
         </div>
+
+        {message && <p className="message center-message">{message}</p>}
       </section>
 
-      {faceMode && (
-        <FaceCaptureModal mode={faceMode} onClose={() => setFaceMode(null)} onSuccess={handleFaceSuccess} />
+      {faceOpen && (
+        <FaceCaptureModal
+          title="Face Login"
+          description="Capture your face to open the record input page."
+          onClose={() => setFaceOpen(false)}
+          onCapture={handleLoginCapture}
+        />
       )}
     </main>
   );
 }
 
-function TopNav({ page, setPage, onLogout, currentOperator }) {
-  return (
-    <header className="top-nav">
-      <div>
-        <p className="nav-kicker">Cavite Factory</p>
-        <strong>Confirmation Test App</strong>
-        {currentOperator && <small className="operator-chip">Logged in: {currentOperator}</small>}
-      </div>
-
-      <nav>
-        <button
-          className={page === "records" ? "nav-button active" : "nav-button"}
-          type="button"
-          onClick={() => setPage("records")}
-        >
-          Record Input
-        </button>
-        <button
-          className={page === "register" ? "nav-button active" : "nav-button"}
-          type="button"
-          onClick={() => setPage("register")}
-        >
-          Machine View
-        </button>
-        <button className="nav-button" type="button" onClick={onLogout}>
-          Logout
-        </button>
-      </nav>
-    </header>
-  );
-}
-
-function RecordInputPage({ currentOperator }) {
-  const [form, setForm] = useState({ ...emptyForm, operator_name: currentOperator || "" });
-  const [records, setRecords] = useState([]);
-  const [loading, setLoading] = useState(false);
+function RegisterPage({ onBack, onRegistered }) {
+  const [form, setForm] = useState(emptyUserForm);
+  const [imageDataUrl, setImageDataUrl] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
-  const [dbStatus, setDbStatus] = useState("Checking DB...");
-
-  const latestRecord = useMemo(() => records[0], [records]);
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  async function checkDb() {
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setMessage("");
+
+    if (!imageDataUrl) {
+      setMessage("Capture the face first.");
+      return;
+    }
+
     try {
-      const response = await fetch("/api/health");
-      const data = await response.json();
-
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error || "DB connection failed");
-      }
-
-      setDbStatus(`Connected • ${formatDateTime(data.dbTime)}`);
+      setSaving(true);
+      const data = await fetchJson("/api/face/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, roleName: "operator", imageDataUrl }),
+      });
+      setMessage(`Registered ${data.profile.operator_name}.`);
+      onRegistered(data.profile);
     } catch (error) {
-      setDbStatus(`Not connected • ${error.message}`);
+      setMessage(error.message);
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function loadRecords() {
+  return (
+    <main className="form-page gradient-bg">
+      <section className="form-layout single">
+        <form className="input-form clean-card" onSubmit={handleSubmit}>
+          <div className="form-title-row">
+            <div>
+              <p className="eyebrow">New Operator</p>
+              <h1>Register Profile</h1>
+              <p>Operator role is used by default. Admins can create admin accounts from the admin page.</p>
+            </div>
+            <button className="ghost-button" type="button" onClick={onBack}>Back</button>
+          </div>
+
+          <div className="field-grid two">
+            <label>
+              Name <span>*</span>
+              <input value={form.operatorName} onChange={(event) => updateField("operatorName", event.target.value)} placeholder="Operator name" required />
+            </label>
+            <label>
+              Site <span>*</span>
+              <select value={form.siteName} onChange={(event) => updateField("siteName", event.target.value)} required>
+                {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+              </select>
+            </label>
+            <label>
+              Employee ID
+              <input value={form.employeeId} onChange={(event) => updateField("employeeId", event.target.value)} placeholder="Optional" />
+            </label>
+            <label>
+              Email
+              <input value={form.email} onChange={(event) => updateField("email", event.target.value)} placeholder="Optional" />
+            </label>
+          </div>
+
+          <label>
+            Department
+            <input value={form.department} onChange={(event) => updateField("department", event.target.value)} placeholder="Optional" />
+          </label>
+
+          <div className="face-capture-row">
+            <div>
+              <strong>Facial Recognition</strong>
+              <p>{imageDataUrl ? "Face captured and ready to register." : "Capture the operator face before saving."}</p>
+            </div>
+            <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>
+              {imageDataUrl ? "Retake Face" : "Capture Face"}
+            </button>
+          </div>
+
+          <button type="submit" disabled={saving}>{saving ? "Registering..." : "Register Operator"}</button>
+          {message && <p className="message">{message}</p>}
+        </form>
+      </section>
+
+      {cameraOpen && (
+        <FaceCaptureModal
+          title="Register Face"
+          description="Capture a clear front-facing image."
+          onClose={() => setCameraOpen(false)}
+          onCapture={async (image) => {
+            setImageDataUrl(image);
+            setCameraOpen(false);
+          }}
+        />
+      )}
+    </main>
+  );
+}
+
+function TopBar({ user, page, setPage, onLogout }) {
+  const isAdmin = userRole(user) === "admin";
+
+  return (
+    <header className="topbar">
+      <div>
+        <strong>Confirmation Test</strong>
+        <span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}</span>
+      </div>
+      <nav>
+        {isAdmin && <button className={page === "admin" ? "active" : ""} type="button" onClick={() => setPage("admin")}>Admin</button>}
+        <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Record Input</button>
+        <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>View Machine</button>
+        <button type="button" onClick={onLogout}>Logout</button>
+      </nav>
+    </header>
+  );
+}
+
+function RecordInputPage({ user }) {
+  const [form, setForm] = useState(emptyRecord);
+  const [shiftStatus, setShiftStatus] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const canEditSelectedShift = shiftStatus?.currentShift === form.shift_name;
+
+  function updateField(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function loadShiftStatus() {
+    const data = await fetchJson("/api/shift-status");
+    setShiftStatus(data);
+    setForm((current) => ({ ...current, shift_name: current.shift_name || data.currentShift }));
+  }
+
+  async function loadMyRecords() {
     try {
       setLoading(true);
-      const response = await fetch("/api/records?limit=50");
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to load records");
-      }
-
+      const query = user?.id ? `?operator_id=${user.id}&limit=50` : "?limit=50";
+      const data = await fetchJson(`/api/records${query}`);
       setRecords(data.records || []);
     } catch (error) {
       setMessage(error.message);
@@ -483,22 +391,18 @@ function RecordInputPage({ currentOperator }) {
 
     try {
       setSaving(true);
-      const response = await fetch("/api/records", {
+      const data = await fetchJson("/api/records/upsert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          operator_id: user?.id || null,
+          operator_name: userDisplayName(user),
+          site_name: userSite(user),
+        }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to save record");
-      }
-
-      setForm({ ...emptyForm, operator_name: currentOperator || "" });
-      setMessage("Saved successfully.");
-      setRecords((current) => [data.record, ...current]);
-      checkDb();
+      setMessage(data.action === "updated" ? "Response updated for this shift." : "Response submitted for this shift.");
+      await loadMyRecords();
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -507,345 +411,338 @@ function RecordInputPage({ currentOperator }) {
   }
 
   useEffect(() => {
-    checkDb();
-    loadRecords();
-  }, []);
-
-  useEffect(() => {
-    if (currentOperator) {
-      setForm((current) => ({ ...current, operator_name: current.operator_name || currentOperator }));
-    }
-  }, [currentOperator]);
+    loadShiftStatus().catch((error) => setMessage(error.message));
+    loadMyRecords();
+  }, [user?.id]);
 
   return (
-    <main className="app-shell">
-      <section className="hero-card">
-        <div>
-          <p className="eyebrow">Confirmation Test</p>
-          <h1>Record Input</h1>
-          <p className="subtitle">
-            Input operator, machine, reading, product, batch, shift, and remarks. Each save adds a timestamp automatically.
-          </p>
-        </div>
-        <div className="status-pill">{dbStatus}</div>
-      </section>
+    <main className="form-page gradient-bg soft-page">
+      <section className="form-layout">
+        <form className="input-form clean-card" onSubmit={handleSubmit}>
+          <div className="form-title-row">
+            <div>
+              <p className="eyebrow">Record Input</p>
+              <h1>Confirmation Response</h1>
+              <p>Submit once per shift. You can still edit while the selected shift is active.</p>
+            </div>
+            <span className={canEditSelectedShift ? "shift-badge open" : "shift-badge closed"}>
+              {canEditSelectedShift ? "Editable now" : "Locked for now"}
+            </span>
+          </div>
 
-      <section className="content-grid">
-        <form className="form-card" onSubmit={handleSubmit}>
-          <h2>New Record</h2>
+          <div className="operator-strip">
+            <span>Name: <strong>{userDisplayName(user)}</strong></span>
+            <span>Site: <strong>{userSite(user)}</strong></span>
+            <span>Current Shift: <strong>{shiftStatus?.currentShift || "—"}</strong></span>
+          </div>
 
-          <label>
-            Operator Name <span>*</span>
-            <input
-              value={form.operator_name}
-              onChange={(event) => updateField("operator_name", event.target.value)}
-              placeholder="Enter operator name"
-              required
-            />
-          </label>
-
-          <label>
-            Machine Name <span>*</span>
-            <input
-              value={form.machine_name}
-              onChange={(event) => updateField("machine_name", event.target.value)}
-              placeholder="Enter machine name"
-              required
-            />
-          </label>
-
-          <div className="two-column">
+          <div className="field-grid two">
+            <label>
+              Machine Name <span>*</span>
+              <input value={form.machine_name} onChange={(event) => updateField("machine_name", event.target.value)} placeholder="Machine name" required />
+            </label>
             <label>
               Reading Value
-              <input
-                type="number"
-                step="any"
-                value={form.reading_value}
-                onChange={(event) => updateField("reading_value", event.target.value)}
-                placeholder="0.00"
-              />
+              <input type="number" step="any" value={form.reading_value} onChange={(event) => updateField("reading_value", event.target.value)} placeholder="0.00" />
             </label>
-
-            <label>
-              Shift <span>*</span>
-              <select
-                value={form.shift_name}
-                onChange={(event) => updateField("shift_name", event.target.value)}
-                required
-              >
-                {shiftOptions.map((shift) => (
-                  <option key={shift} value={shift}>
-                    {shift}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="two-column">
             <label>
               Product
-              <input
-                value={form.product}
-                onChange={(event) => updateField("product", event.target.value)}
-                placeholder="Product name"
-              />
+              <input value={form.product} onChange={(event) => updateField("product", event.target.value)} placeholder="Product" />
             </label>
-
             <label>
               Batch Number
-              <input
-                value={form.batch_number}
-                onChange={(event) => updateField("batch_number", event.target.value)}
-                placeholder="Batch number"
-              />
+              <input value={form.batch_number} onChange={(event) => updateField("batch_number", event.target.value)} placeholder="Batch number" />
             </label>
           </div>
+
+          <label>
+            Shift <span>*</span>
+            <select value={form.shift_name} onChange={(event) => updateField("shift_name", event.target.value)} required>
+              {shiftOptions.map((shift) => <option key={shift} value={shift}>{shift}</option>)}
+            </select>
+          </label>
 
           <label>
             Remarks
-            <textarea
-              value={form.remarks}
-              onChange={(event) => updateField("remarks", event.target.value)}
-              placeholder="Optional remarks"
-              rows="4"
-            />
+            <textarea rows="4" value={form.remarks} onChange={(event) => updateField("remarks", event.target.value)} placeholder="Remarks" />
           </label>
 
-          <button type="submit" disabled={saving}>
-            {saving ? "Saving..." : "Save Record"}
-          </button>
-
+          <button type="submit" disabled={saving || !canEditSelectedShift}>{saving ? "Saving..." : "Submit / Update Response"}</button>
+          {!canEditSelectedShift && <p className="hint-text">Editing opens only during the selected shift: 6AM-2PM, 2PM-10PM, or 10PM-6AM.</p>}
           {message && <p className="message">{message}</p>}
         </form>
 
-        <section className="records-card">
-          <div className="records-header">
+        <section className="side-card clean-card">
+          <div className="records-header compact">
             <div>
-              <h2>Latest Records</h2>
-              <p>{latestRecord ? `Latest: ${formatDateTime(latestRecord.record_timestamp)}` : "No records yet"}</p>
+              <p className="eyebrow">My Logs</p>
+              <h2>Recent Responses</h2>
             </div>
-            <button className="secondary-button" type="button" onClick={loadRecords} disabled={loading}>
-              {loading ? "Loading..." : "Refresh"}
-            </button>
+            <button className="secondary-button" type="button" onClick={loadMyRecords} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button>
           </div>
-
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Timestamp</th>
-                  <th>Operator</th>
-                  <th>Machine</th>
-                  <th>Reading</th>
-                  <th>Product</th>
-                  <th>Batch</th>
-                  <th>Shift</th>
-                  <th>Remarks</th>
-                </tr>
-              </thead>
-              <tbody>
-                {records.length === 0 ? (
-                  <tr>
-                    <td colSpan="8" className="empty-row">
-                      No records found.
-                    </td>
-                  </tr>
-                ) : (
-                  records.map((record) => (
-                    <tr key={record.id}>
-                      <td>{formatDateTime(record.record_timestamp)}</td>
-                      <td>{record.operator_name}</td>
-                      <td>{record.machine_name}</td>
-                      <td>{record.reading_value ?? "—"}</td>
-                      <td>{record.product || "—"}</td>
-                      <td>{record.batch_number || "—"}</td>
-                      <td>{record.shift_name}</td>
-                      <td>{record.remarks || "—"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          <RecordList records={records} compact />
         </section>
       </section>
     </main>
   );
 }
 
-function InfoRow({ label, value, action }) {
+function RecordList({ records, compact = false }) {
+  if (!records?.length) return <p className="empty-state">No submissions yet.</p>;
+
   return (
-    <div className="asset-info-row">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {action && <button type="button">{action}</button>}
+    <div className="table-wrap">
+      <table className={compact ? "compact-table" : ""}>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Operator</th>
+            <th>Site</th>
+            <th>Machine</th>
+            <th>Reading</th>
+            <th>Product</th>
+            <th>Batch</th>
+            <th>Shift</th>
+            <th>Remarks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((record) => (
+            <tr key={record.id}>
+              <td>{formatDateTime(record.record_timestamp)}</td>
+              <td>{record.operator_name}</td>
+              <td>{record.site_name || "—"}</td>
+              <td>{record.machine_name}</td>
+              <td>{formatNumber(record.reading_value)}</td>
+              <td>{record.product || "—"}</td>
+              <td>{record.batch_number || "—"}</td>
+              <td>{record.shift_name}</td>
+              <td>{record.remarks || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function Callout({ className = "", title, value, unit, timestamp, children }) {
-  return (
-    <article className={`machine-callout ${className}`}>
-      <h3>{title}</h3>
-      {value !== undefined && (
-        <p className="callout-reading">
-          {value} <span>{unit}</span>
-        </p>
-      )}
-      {children}
-      <small>{formatDateTime(timestamp)}</small>
-    </article>
-  );
-}
-
-function MachineDrawing() {
-  return (
-    <div className="machine-drawing" aria-label="Machine illustration">
-      <div className="machine-tank" />
-      <div className="machine-neck" />
-      <div className="machine-body" />
-      <div className="machine-base" />
-      <div className="machine-left-arm" />
-      <div className="machine-right-arm" />
-      <div className="machine-leg left" />
-      <div className="machine-leg right" />
-      <div className="machine-pin temp" />
-      <div className="machine-pin current" />
-      <div className="machine-pin speed" />
-      <div className="machine-pin power" />
-    </div>
-  );
-}
-
-function RegisterViewPage() {
+function AdminPage({ adminUser }) {
+  const [userForm, setUserForm] = useState({ ...emptyUserForm, roleName: "operator" });
+  const [imageDataUrl, setImageDataUrl] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [users, setUsers] = useState([]);
   const [records, setRecords] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("Loading latest values...");
+  const [summary, setSummary] = useState(null);
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const latestRecord = records[0] || demoRecord;
-  const metrics = useMemo(() => buildMachineMetrics(latestRecord, records), [latestRecord, records]);
+  function updateUserField(field, value) {
+    setUserForm((current) => ({ ...current, [field]: value }));
+  }
 
-  async function loadRegisterValues() {
+  async function loadAdminData() {
+    const [usersData, recordsData, summaryData] = await Promise.all([
+      fetchJson("/api/admin/users"),
+      fetchJson("/api/records?limit=200"),
+      fetchJson("/api/dashboard/summary"),
+    ]);
+    setUsers(usersData.users || []);
+    setRecords(recordsData.records || []);
+    setSummary(summaryData.stats || null);
+  }
+
+  async function handleCreateUser(event) {
+    event.preventDefault();
+    setMessage("");
+
     try {
-      setLoading(true);
-      const response = await fetch("/api/records?limit=20");
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to load records");
-      }
-
-      setRecords(data.records || []);
-      setStatus(data.records?.length ? "Live DB values" : "Temporary values");
+      setSaving(true);
+      const data = await fetchJson("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...userForm, imageDataUrl, registeredBy: userDisplayName(adminUser) }),
+      });
+      setMessage(`Saved ${data.profile.operator_name} as ${data.profile.role_name}.`);
+      setUserForm({ ...emptyUserForm, roleName: "operator" });
+      setImageDataUrl("");
+      await loadAdminData();
     } catch (error) {
-      setStatus(`Temporary values • ${error.message}`);
-      setRecords([]);
+      setMessage(error.message);
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
   useEffect(() => {
-    loadRegisterValues();
+    loadAdminData().catch((error) => setMessage(error.message));
   }, []);
 
   return (
-    <main className="monitor-shell">
-      <section className="monitor-toolbar">
-        <div>
-          <span className="live-dot" />
-          <strong>{status}</strong>
-          <small>{loading ? "Refreshing..." : `${formatDateTime(metrics.timestamp)} (PHT)`}</small>
-        </div>
-        <button className="secondary-button" type="button" onClick={loadRegisterValues} disabled={loading}>
-          {loading ? "Refreshing..." : "Refresh"}
-        </button>
-      </section>
+    <main className="admin-page gradient-bg soft-page">
+      <section className="admin-grid">
+        <form className="input-form clean-card" onSubmit={handleCreateUser}>
+          <p className="eyebrow">Admin</p>
+          <h1>Register Anyone</h1>
+          <p>Add operators or admins. Face capture is optional for manual accounts, but needed for face login.</p>
 
-      <section className="process-header">
-        <button type="button" className="square-button">☰</button>
-        <button type="button" className="square-button">←</button>
-        <button type="button" className="square-button">→</button>
-        <h1>Cavite - Home &gt; SELO-3 Process View &gt; {metrics.assetName}</h1>
-      </section>
+          <div className="field-grid two">
+            <label>
+              Name <span>*</span>
+              <input value={userForm.operatorName} onChange={(event) => updateUserField("operatorName", event.target.value)} placeholder="Person name" required />
+            </label>
+            <label>
+              Role
+              <select value={userForm.roleName} onChange={(event) => updateUserField("roleName", event.target.value)}>
+                {roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
+              </select>
+            </label>
+            <label>
+              Site
+              <select value={userForm.siteName} onChange={(event) => updateUserField("siteName", event.target.value)}>
+                {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+              </select>
+            </label>
+            <label>
+              Employee ID
+              <input value={userForm.employeeId} onChange={(event) => updateUserField("employeeId", event.target.value)} placeholder="Optional" />
+            </label>
+            <label>
+              Department
+              <input value={userForm.department} onChange={(event) => updateUserField("department", event.target.value)} placeholder="Optional" />
+            </label>
+            <label>
+              Email
+              <input value={userForm.email} onChange={(event) => updateUserField("email", event.target.value)} placeholder="Optional" />
+            </label>
+          </div>
 
-      <section className="monitor-grid">
-        <aside className="asset-panel">
-          <InfoRow label="Asset Name" value={metrics.assetName} />
-          <InfoRow label="Pasteurization Status" value={metrics.status} />
-          <InfoRow label="Total Records" value={metrics.totalRecords} />
-          <InfoRow label="Seal Health Score" value={metrics.sealHealth} action="View" />
-          <InfoRow label="Motor Health Score" value={metrics.motorHealth} action="View" />
-          <InfoRow label="Active Alarms" value={metrics.alarms} action="View" />
-          <InfoRow label="Last Operator" value={metrics.lastOperator} />
-          <InfoRow label="Shift" value={metrics.shiftName} />
-          <InfoRow label="Batch Number" value={metrics.batchNumber} />
-          <InfoRow label="Running Variant" value={metrics.runningVariant} />
-          <InfoRow label="Current Reading" value={`${formatNumber(metrics.temperature)} °C`} />
-        </aside>
-
-        <section className="machine-interface-card">
-          <div className="connector-line line-temp" />
-          <div className="connector-line line-current" />
-          <div className="connector-line line-vibration" />
-          <div className="connector-line line-pressure" />
-          <div className="connector-line line-speed" />
-          <div className="connector-line line-power" />
-
-          <Callout
-            className="callout-temp"
-            title="Motor vibration sensor contact temp"
-            value={formatNumber(metrics.temperature)}
-            unit="deg C"
-            timestamp={metrics.timestamp}
-          />
-
-          <Callout
-            className="callout-current"
-            title="Motor Current"
-            value="0.00"
-            unit="A"
-            timestamp={metrics.timestamp}
-          />
-
-          <Callout className="callout-vibration" title="Motor vibration velocity" timestamp={metrics.timestamp}>
-            <div className="mini-reading">
-              <span>Resultant RMS</span>
-              <strong>0 MM/S</strong>
+          <div className="face-capture-row">
+            <div>
+              <strong>Face Login Link</strong>
+              <p>{imageDataUrl ? "Face captured for this account." : "No face captured. Manual admin account only."}</p>
             </div>
-            <div className="mini-reading">
-              <span>Resultant Peak</span>
-              <strong>0 MM/S</strong>
-            </div>
-          </Callout>
+            <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button>
+          </div>
 
-          <Callout
-            className="callout-pressure"
-            title="Inlet Pressure"
-            value="0.00"
-            unit="Pascal"
-            timestamp={metrics.timestamp}
-          />
+          <button type="submit" disabled={saving}>{saving ? "Saving..." : "Save Person"}</button>
+          {message && <p className="message">{message}</p>}
+        </form>
 
-          <Callout
-            className="callout-speed"
-            title="Motor Speed"
-            value="0.00"
-            unit="RPM"
-            timestamp={metrics.timestamp}
-          />
-
-          <Callout
-            className="callout-power"
-            title="Motor Power"
-            value="0.00"
-            unit="kW"
-            timestamp={metrics.timestamp}
-          />
-
-          <MachineDrawing />
+        <section className="clean-card dashboard-summary">
+          <p className="eyebrow">Dashboard Feed</p>
+          <h2>Submission Summary</h2>
+          <div className="summary-grid">
+            <div><strong>{summary?.total_submissions ?? 0}</strong><span>Total</span></div>
+            <div><strong>{summary?.unique_operators ?? 0}</strong><span>Operators</span></div>
+            <div><strong>{summary?.savoury_count ?? 0}</strong><span>Savoury</span></div>
+            <div><strong>{summary?.dressings_count ?? 0}</strong><span>Dressings</span></div>
+          </div>
+          <button className="secondary-button" type="button" onClick={loadAdminData}>Refresh Data</button>
         </section>
+      </section>
+
+      <section className="admin-section clean-card">
+        <div className="records-header">
+          <div>
+            <p className="eyebrow">Logs</p>
+            <h2>Who Submitted What</h2>
+          </div>
+        </div>
+        <RecordList records={records} />
+      </section>
+
+      <section className="admin-section clean-card">
+        <div className="records-header">
+          <div>
+            <p className="eyebrow">Accounts</p>
+            <h2>Registered People</h2>
+          </div>
+        </div>
+        <div className="user-list">
+          {users.map((user) => (
+            <article key={user.id}>
+              <strong>{user.operator_name}</strong>
+              <span>{user.site_name} • {user.role_name}</span>
+              <small>{user.ai_face_key ? "Face linked" : "Manual account"}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {cameraOpen && (
+        <FaceCaptureModal
+          title="Register Face"
+          description="Capture this person's face for future login."
+          onClose={() => setCameraOpen(false)}
+          onCapture={async (image) => {
+            setImageDataUrl(image);
+            setCameraOpen(false);
+          }}
+        />
+      )}
+    </main>
+  );
+}
+
+function MachineViewPage() {
+  const [summary, setSummary] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [message, setMessage] = useState("Loading dashboard feed...");
+
+  async function loadDashboard() {
+    try {
+      const data = await fetchJson("/api/dashboard/summary");
+      setSummary(data.stats || null);
+      setRecords(data.latest || []);
+      setMessage(data.latest?.length ? "Live database feed" : "No submissions yet");
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  useEffect(() => {
+    loadDashboard();
+  }, []);
+
+  const latest = records[0];
+
+  return (
+    <main className="machine-page gradient-bg soft-page">
+      <section className="machine-hero clean-card">
+        <div>
+          <p className="eyebrow">Machine View</p>
+          <h1>Confirmation Dashboard</h1>
+          <p>{message}</p>
+        </div>
+        <button className="secondary-button" type="button" onClick={loadDashboard}>Refresh</button>
+      </section>
+
+      <section className="machine-grid">
+        <article className="clean-card metric-card">
+          <span>Latest Reading</span>
+          <strong>{formatNumber(latest?.reading_value)}</strong>
+          <p>{latest?.machine_name || "No machine yet"}</p>
+        </article>
+        <article className="clean-card metric-card">
+          <span>Total Submissions</span>
+          <strong>{summary?.total_submissions ?? 0}</strong>
+          <p>All logs</p>
+        </article>
+        <article className="clean-card metric-card">
+          <span>Average Reading</span>
+          <strong>{formatNumber(summary?.avg_reading)}</strong>
+          <p>From record inputs</p>
+        </article>
+      </section>
+
+      <section className="admin-section clean-card">
+        <div className="records-header">
+          <div>
+            <p className="eyebrow">Latest Logs</p>
+            <h2>Data Sent to Dashboard</h2>
+          </div>
+        </div>
+        <RecordList records={records} />
       </section>
     </main>
   );
@@ -853,26 +750,49 @@ function RegisterViewPage() {
 
 function App() {
   const [page, setPage] = useState("auth");
-  const [currentOperator, setCurrentOperator] = useState("");
+  const [user, setUser] = useState(null);
 
-  function handleLogin(operatorName = "") {
-    setCurrentOperator(operatorName);
-    setPage("records");
+  function handleAdminSkip() {
+    setUser({ id: null, operator_name: "Temporary Admin", site_name: "Admin", role_name: "admin" });
+    setPage("admin");
   }
 
   function handleLogout() {
-    setCurrentOperator("");
+    setUser(null);
     setPage("auth");
   }
 
   if (page === "auth") {
-    return <AuthPage onLogin={handleLogin} onRegister={() => setPage("register")} />;
+    return (
+      <AuthPage
+        onFaceLogin={(profile) => {
+          setUser(profile);
+          setPage(userRole(profile) === "admin" ? "admin" : "record");
+        }}
+        onRegister={() => setPage("register")}
+        onMachineView={() => setPage("machine")}
+        onAdmin={handleAdminSkip}
+      />
+    );
+  }
+
+  if (page === "register") {
+    return <RegisterPage onBack={() => setPage("auth")} onRegistered={(profile) => { setUser(profile); setPage("record"); }} />;
+  }
+
+  if (page === "machine" && !user) {
+    return (
+      <>
+        <button className="floating-back" type="button" onClick={() => setPage("auth")}>Back</button>
+        <MachineViewPage />
+      </>
+    );
   }
 
   return (
     <>
-      <TopNav page={page} setPage={setPage} onLogout={handleLogout} currentOperator={currentOperator} />
-      {page === "register" ? <RegisterViewPage /> : <RecordInputPage currentOperator={currentOperator} />}
+      <TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} />
+      {page === "admin" ? <AdminPage adminUser={user} /> : page === "machine" ? <MachineViewPage /> : <RecordInputPage user={user} />}
     </>
   );
 }
