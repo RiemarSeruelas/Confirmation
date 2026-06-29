@@ -3,8 +3,8 @@
 Simple React + Express + PostgreSQL app with manual login, AI face login/register, record input, and machine interface preview.
 
 - Login opens the record input page.
-- Face Login captures one camera frame, sends it to the backend, then the backend forwards it to the AI workstation.
-- Register Face captures one camera frame and registers it to the AI workstation.
+- Face Login captures one camera frame and sends it to the AI workstation through the backend.
+- Register Face captures one camera frame and registers it to the AI workstation through the backend.
 - Machine View opens the machine interface preview page.
 - Records are saved to `app.confirmation_test_records`.
 - The app uses `record_timestamp`, `created_at`, and `updated_at`.
@@ -37,7 +37,13 @@ AI_FACE_SEARCH_PATH=/search
 AI_FACE_IMAGE_FIELD=img
 AI_FACE_NAME_FIELD=name
 AI_FACE_TIMEOUT_MS=30000
-AI_FACE_PAYLOAD_MODE=auto
+AI_FACE_PAYLOAD_MODE=json
+AI_FACE_MODEL_NAME=SFace
+AI_FACE_DETECTOR_BACKEND=yunet
+AI_FACE_ALIGN=true
+AI_FACE_L2_NORMALIZE=true
+AI_FACE_DISTANCE_METRIC=cosine
+AI_FACE_SEARCH_METHOD=exact
 ```
 
 Use this only when the app runs inside Docker but PostgreSQL is on your PC:
@@ -72,61 +78,68 @@ Backend:
 http://localhost:5178
 ```
 
-## Face recognition flow
+## Face recognition body format
 
-The browser does not send the image directly to the AI workstation.
+The AI workstation sample uses JSON, not multipart upload.
+
+Search sends this shape:
+
+```json
+{
+  "model_name": "SFace",
+  "detector_backend": "yunet",
+  "align": true,
+  "l2_normalize": true,
+  "distance_metric": "cosine",
+  "search_method": "exact",
+  "img": "data:image/jpeg;base64,..."
+}
+```
+
+Register sends this shape:
+
+```json
+{
+  "name": "TestUser",
+  "identity": "TestUser",
+  "person_id": "TestUser",
+  "model_name": "SFace",
+  "detector_backend": "yunet",
+  "align": true,
+  "l2_normalize": true,
+  "distance_metric": "cosine",
+  "search_method": "exact",
+  "img": "data:image/jpeg;base64,..."
+}
+```
+
+The browser capture flow is:
 
 ```text
 Camera frame
 ↓
-Canvas JPEG base64
+Canvas 640x640 JPEG data URL
 ↓
 /api/face/search or /api/face/register
 ↓
-Express converts base64 to binary file/blob
-↓
-multipart/form-data POST to AI workstation
+Express backend sends JSON body to Face AI
 ↓
 AI response returns name/match
 ```
 
-The backend now uses this default mode:
-
-```env
-AI_FACE_PAYLOAD_MODE=auto
-```
-
-In auto mode, it tries the common formats until the Face AI accepts one:
-
-```text
-multipart/form-data: file, image, face, photo, upload
-register name fields: name, person_name, operator_name, username, label
-JSON base64: image, file, face, imageDataUrl
-raw JPEG body
-```
-
-Keep these defaults first:
-
-```env
-AI_FACE_IMAGE_FIELD=img
-AI_FACE_NAME_FIELD=name
-AI_FACE_PAYLOAD_MODE=auto
-```
-
-If you already know the exact Flask format, you can force it:
-
-```env
-AI_FACE_PAYLOAD_MODE=multipart
-AI_FACE_IMAGE_FIELD=image
-AI_FACE_NAME_FIELD=name
-```
-
-
 ## Face AI HTTP 400
 
-HTTP 400 means the app reached the AI workstation, but the AI rejected the request format. The updated backend will try multiple image/name formats automatically. If all formats fail, the app shows which formats were tried and the last AI response message.
+HTTP 400 means the app reached the AI workstation, but the AI rejected the request body.
 
-You can also check the current face config here while the backend is running:
+For this Face AI, keep:
+
+```env
+AI_FACE_PAYLOAD_MODE=json
+AI_FACE_IMAGE_FIELD=img
+AI_FACE_NAME_FIELD=name
+```
+
+You can check the current backend config here while the backend is running:
 
 ```text
 http://localhost:5178/api/face/config
@@ -163,25 +176,16 @@ npm run build     # build frontend
 npm start         # run backend for production build
 ```
 
+## Git ignore
 
-## Face AI field fix
-
-Your Face AI returned:
-
-```text
-'img' not found in request in either json or form data
-```
-
-So the app now sends the captured face using the `img` field first. Keep this in `.env`:
-
-```env
-AI_FACE_IMAGE_FIELD=img
-AI_FACE_NAME_FIELD=name
-AI_FACE_PAYLOAD_MODE=auto
-```
-
-The capture flow is:
+`.gitignore` is included. It ignores:
 
 ```text
-Browser camera → 640x640 JPEG base64 → backend → multipart/form-data img file → Face AI
+node_modules/
+.env
+dist/
+logs/
+*.log
+.vscode/
+.idea/
 ```

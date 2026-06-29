@@ -21,7 +21,13 @@ const AI_FACE_SEARCH_PATH = process.env.AI_FACE_SEARCH_PATH || "/search";
 const AI_FACE_IMAGE_FIELD = process.env.AI_FACE_IMAGE_FIELD || "img";
 const AI_FACE_NAME_FIELD = process.env.AI_FACE_NAME_FIELD || "name";
 const AI_FACE_TIMEOUT_MS = Number(process.env.AI_FACE_TIMEOUT_MS || 30000);
-const AI_FACE_PAYLOAD_MODE = process.env.AI_FACE_PAYLOAD_MODE || "auto";
+const AI_FACE_PAYLOAD_MODE = process.env.AI_FACE_PAYLOAD_MODE || "json";
+const AI_FACE_MODEL_NAME = process.env.AI_FACE_MODEL_NAME || "SFace";
+const AI_FACE_DETECTOR_BACKEND = process.env.AI_FACE_DETECTOR_BACKEND || "yunet";
+const AI_FACE_ALIGN = process.env.AI_FACE_ALIGN !== "false";
+const AI_FACE_L2_NORMALIZE = process.env.AI_FACE_L2_NORMALIZE !== "false";
+const AI_FACE_DISTANCE_METRIC = process.env.AI_FACE_DISTANCE_METRIC || "cosine";
+const AI_FACE_SEARCH_METHOD = process.env.AI_FACE_SEARCH_METHOD || "exact";
 
 let schemaReadyPromise = null;
 let lastWorkingFaceFormat = {
@@ -239,9 +245,29 @@ function makeImageBlob(image) {
   return new Blob([image.buffer], { type: image.mimeType });
 }
 
+function createDeepFaceJsonBody({ image, operatorName = "", isRegister = false }) {
+  const body = {
+    model_name: AI_FACE_MODEL_NAME,
+    detector_backend: AI_FACE_DETECTOR_BACKEND,
+    align: AI_FACE_ALIGN,
+    l2_normalize: AI_FACE_L2_NORMALIZE,
+    distance_metric: AI_FACE_DISTANCE_METRIC,
+    search_method: AI_FACE_SEARCH_METHOD,
+    img: image.dataUrl,
+  };
+
+  if (isRegister) {
+    body.name = operatorName;
+    body.identity = operatorName;
+    body.person_id = operatorName;
+  }
+
+  return body;
+}
+
 function createFaceCandidates({ endpointType, image, operatorName }) {
   const imageFields = uniqueValues([AI_FACE_IMAGE_FIELD, "img", "file", "image", "face", "photo", "upload"]);
-  const nameFields = uniqueValues([AI_FACE_NAME_FIELD, "name", "person_name", "operator_name", "username", "label"]);
+  const nameFields = uniqueValues([AI_FACE_NAME_FIELD, "name", "identity", "person_id", "person_name", "operator_name", "username", "label"]);
   const candidates = [];
   const isRegister = endpointType === "register";
 
@@ -279,7 +305,31 @@ function createFaceCandidates({ endpointType, image, operatorName }) {
     });
   }
 
-  if (AI_FACE_PAYLOAD_MODE !== "json") {
+  if (AI_FACE_PAYLOAD_MODE !== "multipart" && AI_FACE_PAYLOAD_MODE !== "raw") {
+    addJson(
+      isRegister ? "json deepface register img data-url" : "json deepface search img data-url",
+      createDeepFaceJsonBody({ image, operatorName, isRegister })
+    );
+
+    const nameBody = isRegister
+      ? {
+          [AI_FACE_NAME_FIELD]: operatorName,
+          name: operatorName,
+          identity: operatorName,
+          person_id: operatorName,
+        }
+      : {};
+
+    addJson("json img data-url", { ...nameBody, img: image.dataUrl });
+    addJson("json img base64", { ...nameBody, img: image.base64Data });
+    addJson("json image base64", { ...nameBody, image: image.base64Data });
+    addJson("json file base64", { ...nameBody, file: image.base64Data });
+    addJson("json face base64", { ...nameBody, face: image.base64Data });
+    addJson("json imageDataUrl", { ...nameBody, imageDataUrl: image.dataUrl });
+    addJson("json image data-url", { ...nameBody, image: image.dataUrl });
+  }
+
+  if (AI_FACE_PAYLOAD_MODE !== "json" && AI_FACE_PAYLOAD_MODE !== "raw") {
     if (isRegister) {
       for (const imageField of imageFields) {
         for (const nameField of nameFields) {
@@ -293,18 +343,6 @@ function createFaceCandidates({ endpointType, image, operatorName }) {
     }
   }
 
-  if (AI_FACE_PAYLOAD_MODE !== "multipart") {
-    const nameBody = isRegister ? { [AI_FACE_NAME_FIELD]: operatorName, name: operatorName } : {};
-
-    addJson("json img base64", { ...nameBody, img: image.base64Data });
-    addJson("json img data-url", { ...nameBody, img: image.dataUrl });
-    addJson("json image base64", { ...nameBody, image: image.base64Data });
-    addJson("json file base64", { ...nameBody, file: image.base64Data });
-    addJson("json face base64", { ...nameBody, face: image.base64Data });
-    addJson("json imageDataUrl", { ...nameBody, imageDataUrl: image.dataUrl });
-    addJson("json image data-url", { ...nameBody, image: image.dataUrl });
-  }
-
   if (AI_FACE_PAYLOAD_MODE === "raw" || AI_FACE_PAYLOAD_MODE === "auto") {
     candidates.push({
       label: "raw image/jpeg",
@@ -313,6 +351,8 @@ function createFaceCandidates({ endpointType, image, operatorName }) {
         if (isRegister && operatorName) {
           url.searchParams.set(AI_FACE_NAME_FIELD, operatorName);
           url.searchParams.set("name", operatorName);
+          url.searchParams.set("identity", operatorName);
+          url.searchParams.set("person_id", operatorName);
         }
 
         return fetch(url.toString(), {
@@ -420,6 +460,12 @@ app.get("/api/face/config", (_req, res) => {
     imageField: AI_FACE_IMAGE_FIELD,
     nameField: AI_FACE_NAME_FIELD,
     payloadMode: AI_FACE_PAYLOAD_MODE,
+    modelName: AI_FACE_MODEL_NAME,
+    detectorBackend: AI_FACE_DETECTOR_BACKEND,
+    align: AI_FACE_ALIGN,
+    l2Normalize: AI_FACE_L2_NORMALIZE,
+    distanceMetric: AI_FACE_DISTANCE_METRIC,
+    searchMethod: AI_FACE_SEARCH_METHOD,
     lastWorkingFaceFormat,
   });
 });
