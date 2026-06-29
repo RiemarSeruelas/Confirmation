@@ -874,3 +874,119 @@ td {
     grid-template-columns: 1fr;
   }
 }
+
+.face-button {
+  width: 100%;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+}
+
+.operator-chip {
+  display: inline-block;
+  margin-top: 4px;
+  color: #2563eb;
+  font-weight: 800;
+}
+
+.camera-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.camera-modal {
+  width: min(560px, 100%);
+  border: 1px solid rgba(191, 219, 254, 0.32);
+  border-radius: 24px;
+  padding: 22px;
+  background: linear-gradient(135deg, #0f172a, #1e3a8a);
+  color: #eff6ff;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.42);
+}
+
+.camera-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+.camera-header h2 {
+  margin-bottom: 0;
+  color: #fff;
+}
+
+.icon-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.camera-name-field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: #dbeafe;
+  font-weight: 800;
+}
+
+.camera-frame {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  border: 1px solid rgba(147, 197, 253, 0.4);
+  border-radius: 20px;
+  background: #020617;
+}
+
+.camera-frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.face-guide {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(260px, 54%);
+  aspect-ratio: 0.76;
+  border: 3px solid rgba(219, 234, 254, 0.9);
+  border-radius: 48% 48% 44% 44%;
+  transform: translate(-50%, -50%);
+  box-shadow:
+    0 0 0 999px rgba(15, 23, 42, 0.16),
+    0 0 28px rgba(96, 165, 250, 0.45);
+  pointer-events: none;
+}
+
+.camera-status {
+  min-height: 22px;
+  margin: 14px 0;
+  color: #bfdbfe;
+  font-weight: 750;
+}
+
+.camera-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 560px) {
+  .camera-actions button {
+    flex: 1;
+  }
+}

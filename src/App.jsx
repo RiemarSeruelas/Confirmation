@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const emptyForm = {
   operator_name: "",
@@ -68,13 +68,200 @@ function buildMachineMetrics(record, records) {
   };
 }
 
+function getSecureCameraMessage() {
+  if (window.isSecureContext || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    return "";
+  }
+
+  return "Camera access needs HTTPS or localhost. For LAN Docker hosting, put this app behind HTTPS first.";
+}
+
+function FaceCaptureModal({ mode, onClose, onSuccess }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [operatorName, setOperatorName] = useState("");
+  const [status, setStatus] = useState("Starting camera...");
+  const [busy, setBusy] = useState(false);
+  const isRegister = mode === "register";
+
+  function stopCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+  }
+
+  async function startCamera() {
+    const secureMessage = getSecureCameraMessage();
+
+    if (secureMessage) {
+      setStatus(secureMessage);
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus("Camera API is not available in this browser.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 960 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+
+      setStatus(isRegister ? "Camera ready. Enter name, then capture." : "Camera ready. Capture your face to login.");
+    } catch (error) {
+      if (error.name === "NotAllowedError") {
+        setStatus("Camera permission was blocked. Allow camera access in browser settings.");
+      } else {
+        setStatus(error.message || "Could not start camera.");
+      }
+    }
+  }
+
+  function captureImageDataUrl() {
+    const video = videoRef.current;
+
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      throw new Error("Camera is not ready yet.");
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const context = canvas.getContext("2d");
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    return canvas.toDataURL("image/jpeg", 0.9);
+  }
+
+  async function handleCapture() {
+    if (isRegister && !operatorName.trim()) {
+      setStatus("Enter the operator name first.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setStatus("Capturing and sending to AI workstation...");
+
+      const imageDataUrl = captureImageDataUrl();
+      const response = await fetch(isRegister ? "/api/face/register" : "/api/face/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl,
+          operatorName: operatorName.trim(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "Face AI request failed.");
+      }
+
+      if (!isRegister && !data.matched) {
+        setStatus("No matching face found.");
+        return;
+      }
+
+      const resolvedName = data.name || data.registeredName || operatorName.trim() || "Recognized Operator";
+      stopCamera();
+      onSuccess({ ...data, name: resolvedName });
+    } catch (error) {
+      setStatus(error.message || "Face capture failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    startCamera();
+
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  return (
+    <div className="camera-backdrop" role="dialog" aria-modal="true">
+      <section className="camera-modal">
+        <div className="camera-header">
+          <div>
+            <p className="eyebrow">AI Facial Recognition</p>
+            <h2>{isRegister ? "Register Face" : "Face Login"}</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} disabled={busy}>
+            ×
+          </button>
+        </div>
+
+        {isRegister && (
+          <label className="camera-name-field">
+            Operator Name
+            <input
+              value={operatorName}
+              onChange={(event) => setOperatorName(event.target.value)}
+              placeholder="Name to register"
+              disabled={busy}
+            />
+          </label>
+        )}
+
+        <div className="camera-frame">
+          <video ref={videoRef} autoPlay playsInline muted />
+          <div className="face-guide" />
+        </div>
+
+        <p className="camera-status">{status}</p>
+
+        <div className="camera-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" onClick={handleCapture} disabled={busy}>
+            {busy ? "Processing..." : isRegister ? "Capture & Register" : "Capture & Login"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function AuthPage({ onLogin, onRegister }) {
   const [operator, setOperator] = useState("");
   const [password, setPassword] = useState("");
+  const [faceMode, setFaceMode] = useState(null);
+  const [faceMessage, setFaceMessage] = useState("");
 
   function handleLogin(event) {
     event.preventDefault();
-    onLogin();
+    onLogin(operator.trim());
+  }
+
+  function handleFaceSuccess(result) {
+    setFaceMode(null);
+
+    if (faceMode === "register") {
+      setFaceMessage(`Registered face for ${result.name || result.registeredName}.`);
+      return;
+    }
+
+    setFaceMessage(`Face matched: ${result.name}.`);
+    onLogin(result.name);
   }
 
   return (
@@ -84,7 +271,7 @@ function AuthPage({ onLogin, onRegister }) {
         <p className="eyebrow">Confirmation System</p>
         <h1>Login / Register</h1>
         <p className="subtitle">
-          Login opens the record input page. Register opens the machine interface preview page.
+          Login opens the record input page. Face login sends one camera capture to your AI workstation.
         </p>
 
         <form className="login-card" onSubmit={handleLogin}>
@@ -110,10 +297,18 @@ function AuthPage({ onLogin, onRegister }) {
           </label>
 
           <button type="submit">Login</button>
+          <button className="face-button" type="button" onClick={() => setFaceMode("search")}>
+            Face Login
+          </button>
+          <button className="secondary-button full-width" type="button" onClick={() => setFaceMode("register")}>
+            Register Face
+          </button>
           <button className="secondary-button full-width" type="button" onClick={onRegister}>
-            Register / Machine View
+            Machine View
           </button>
         </form>
+
+        {faceMessage && <p className="message">{faceMessage}</p>}
       </section>
 
       <section className="auth-preview">
@@ -125,16 +320,21 @@ function AuthPage({ onLogin, onRegister }) {
           <div className="preview-card" />
         </div>
       </section>
+
+      {faceMode && (
+        <FaceCaptureModal mode={faceMode} onClose={() => setFaceMode(null)} onSuccess={handleFaceSuccess} />
+      )}
     </main>
   );
 }
 
-function TopNav({ page, setPage, onLogout }) {
+function TopNav({ page, setPage, onLogout, currentOperator }) {
   return (
     <header className="top-nav">
       <div>
         <p className="nav-kicker">Cavite Factory</p>
         <strong>Confirmation Test App</strong>
+        {currentOperator && <small className="operator-chip">Logged in: {currentOperator}</small>}
       </div>
 
       <nav>
@@ -150,7 +350,7 @@ function TopNav({ page, setPage, onLogout }) {
           type="button"
           onClick={() => setPage("register")}
         >
-          Register View
+          Machine View
         </button>
         <button className="nav-button" type="button" onClick={onLogout}>
           Logout
@@ -160,8 +360,8 @@ function TopNav({ page, setPage, onLogout }) {
   );
 }
 
-function RecordInputPage() {
-  const [form, setForm] = useState(emptyForm);
+function RecordInputPage({ currentOperator }) {
+  const [form, setForm] = useState({ ...emptyForm, operator_name: currentOperator || "" });
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -225,7 +425,7 @@ function RecordInputPage() {
         throw new Error(data.error || "Failed to save record");
       }
 
-      setForm(emptyForm);
+      setForm({ ...emptyForm, operator_name: currentOperator || "" });
       setMessage("Saved successfully.");
       setRecords((current) => [data.record, ...current]);
       checkDb();
@@ -240,6 +440,12 @@ function RecordInputPage() {
     checkDb();
     loadRecords();
   }, []);
+
+  useEffect(() => {
+    if (currentOperator) {
+      setForm((current) => ({ ...current, operator_name: current.operator_name || currentOperator }));
+    }
+  }, [currentOperator]);
 
   return (
     <main className="app-shell">
@@ -577,15 +783,26 @@ function RegisterViewPage() {
 
 function App() {
   const [page, setPage] = useState("auth");
+  const [currentOperator, setCurrentOperator] = useState("");
+
+  function handleLogin(operatorName = "") {
+    setCurrentOperator(operatorName);
+    setPage("records");
+  }
+
+  function handleLogout() {
+    setCurrentOperator("");
+    setPage("auth");
+  }
 
   if (page === "auth") {
-    return <AuthPage onLogin={() => setPage("records")} onRegister={() => setPage("register")} />;
+    return <AuthPage onLogin={handleLogin} onRegister={() => setPage("register")} />;
   }
 
   return (
     <>
-      <TopNav page={page} setPage={setPage} onLogout={() => setPage("auth")} />
-      {page === "register" ? <RegisterViewPage /> : <RecordInputPage />}
+      <TopNav page={page} setPage={setPage} onLogout={handleLogout} currentOperator={currentOperator} />
+      {page === "register" ? <RegisterViewPage /> : <RecordInputPage currentOperator={currentOperator} />}
     </>
   );
 }

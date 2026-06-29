@@ -1,9 +1,11 @@
 # Confirmation Test DB App
 
-Simple React + Express + PostgreSQL app.
+Simple React + Express + PostgreSQL app with manual login, AI face login/register, record input, and machine interface preview.
 
 - Login opens the record input page.
-- Register / Machine View opens the machine interface preview page.
+- Face Login captures one camera frame, sends it to the backend, then the backend forwards it to the AI workstation.
+- Register Face captures one camera frame and registers it to the AI workstation.
+- Machine View opens the machine interface preview page.
 - Records are saved to `app.confirmation_test_records`.
 - The app uses `record_timestamp`, `created_at`, and `updated_at`.
 
@@ -28,6 +30,13 @@ PGPASSWORD=your_password
 PGMAINTENANCE_DATABASE=postgres
 PGSSL=false
 PORT=5178
+
+AI_FACE_BASE_URL=http://10.156.119.146:5005
+AI_FACE_REGISTER_PATH=/register
+AI_FACE_SEARCH_PATH=/search
+AI_FACE_IMAGE_FIELD=file
+AI_FACE_NAME_FIELD=name
+AI_FACE_TIMEOUT_MS=30000
 ```
 
 Use this only when the app runs inside Docker but PostgreSQL is on your PC:
@@ -62,6 +71,48 @@ Backend:
 http://localhost:5178
 ```
 
+## Face recognition flow
+
+The browser does not send the image directly to the AI workstation.
+
+```text
+Camera frame
+↓
+Canvas JPEG base64
+↓
+/api/face/search or /api/face/register
+↓
+Express converts base64 to binary file/blob
+↓
+multipart/form-data POST to AI workstation
+↓
+AI response returns name/match
+```
+
+The backend sends the file using this field name:
+
+```env
+AI_FACE_IMAGE_FIELD=file
+```
+
+If your AI Flask app expects `image` instead, change it to:
+
+```env
+AI_FACE_IMAGE_FIELD=image
+```
+
+For register, the backend sends the name using:
+
+```env
+AI_FACE_NAME_FIELD=name
+```
+
+## Camera note for LAN hosting
+
+Camera access works on `localhost` during development. For LAN hosting like `http://server-ip:5055`, browser camera access is usually blocked because camera APIs require a secure context. Use HTTPS for the deployed site.
+
+For internal deployment, use a reverse proxy such as Caddy or Nginx with HTTPS. Your frontend/backend can be HTTPS while the backend still calls the AI workstation over HTTP.
+
 ## If you get 500 Internal Server Error
 
 Usually it means the old table is missing the new `record_timestamp` column.
@@ -73,7 +124,7 @@ npm run setup-db
 npm run dev
 ```
 
-The server also now auto-checks the schema when `/api/health`, `/api/records`, or save record is called.
+The server also auto-checks the schema when `/api/health`, `/api/records`, or save record is called.
 
 ## Scripts
 

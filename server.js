@@ -15,10 +15,17 @@ const app = express();
 const PORT = Number(process.env.PORT || 5178);
 const isProduction = process.env.NODE_ENV === "production";
 
+const AI_FACE_BASE_URL = process.env.AI_FACE_BASE_URL || "http://10.156.119.146:5005";
+const AI_FACE_REGISTER_PATH = process.env.AI_FACE_REGISTER_PATH || "/register";
+const AI_FACE_SEARCH_PATH = process.env.AI_FACE_SEARCH_PATH || "/search";
+const AI_FACE_IMAGE_FIELD = process.env.AI_FACE_IMAGE_FIELD || "file";
+const AI_FACE_NAME_FIELD = process.env.AI_FACE_NAME_FIELD || "name";
+const AI_FACE_TIMEOUT_MS = Number(process.env.AI_FACE_TIMEOUT_MS || 30000);
+
 let schemaReadyPromise = null;
 
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "12mb" }));
 
 function cleanText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
@@ -76,6 +83,140 @@ function getFriendlyDbError(error) {
   return error.message || "Database error.";
 }
 
+function parseImageDataUrl(imageDataUrl) {
+  const input = cleanText(imageDataUrl);
+
+  if (!input) {
+    throw new Error("No face image was received.");
+  }
+
+  const dataUrlMatch = input.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  const mimeType = dataUrlMatch?.[1] || "image/jpeg";
+  const base64Data = dataUrlMatch?.[2] || input;
+  const buffer = Buffer.from(base64Data, "base64");
+
+  if (!buffer.length) {
+    throw new Error("Face image conversion failed.");
+  }
+
+  return { buffer, mimeType };
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function normalizeFaceResult(rawResult) {
+  if (rawResult && typeof rawResult === "object") {
+    const firstMatch = Array.isArray(rawResult.matches) ? rawResult.matches[0] : null;
+    const firstResult = Array.isArray(rawResult.results) ? rawResult.results[0] : null;
+    const nestedResult = rawResult.result && typeof rawResult.result === "object" ? rawResult.result : null;
+
+    const name = cleanText(
+      firstNonEmpty(
+        rawResult.name,
+        rawResult.operator_name,
+        rawResult.person,
+        rawResult.person_name,
+        rawResult.employee_name,
+        rawResult.identity,
+        rawResult.user,
+        nestedResult?.name,
+        nestedResult?.person,
+        firstMatch?.name,
+        firstMatch?.person,
+        firstResult?.name,
+        firstResult?.person
+      )
+    );
+
+    const confidence = firstNonEmpty(
+      rawResult.confidence,
+      rawResult.score,
+      rawResult.similarity,
+      nestedResult?.confidence,
+      firstMatch?.confidence,
+      firstMatch?.score,
+      firstResult?.confidence,
+      firstResult?.score
+    );
+
+    const explicitMatched = firstNonEmpty(rawResult.matched, rawResult.found, rawResult.success, nestedResult?.matched);
+    const matchedByName = Boolean(name) && !["unknown", "not found", "none", "null"].includes(name.toLowerCase());
+    const matched = explicitMatched === "" ? matchedByName : Boolean(explicitMatched) && explicitMatched !== "false";
+
+    return {
+      matched: matched || matchedByName,
+      name,
+      confidence: confidence === "" ? null : confidence,
+      raw: rawResult,
+    };
+  }
+
+  const text = cleanText(rawResult);
+
+  return {
+    matched: Boolean(text),
+    name: text,
+    confidence: null,
+    raw: rawResult,
+  };
+}
+
+function buildAiUrl(endpointPath) {
+  const base = AI_FACE_BASE_URL.endsWith("/") ? AI_FACE_BASE_URL : `${AI_FACE_BASE_URL}/`;
+  const cleanPath = endpointPath.startsWith("/") ? endpointPath.slice(1) : endpointPath;
+  return new URL(cleanPath, base).toString();
+}
+
+async function postFaceImageToAi({ endpointPath, imageDataUrl, operatorName }) {
+  const { buffer, mimeType } = parseImageDataUrl(imageDataUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_FACE_TIMEOUT_MS);
+
+  try {
+    const formData = new FormData();
+    const blob = new Blob([buffer], { type: mimeType });
+
+    formData.append(AI_FACE_IMAGE_FIELD, blob, `face-capture-${Date.now()}.jpg`);
+
+    if (operatorName) {
+      formData.append(AI_FACE_NAME_FIELD, operatorName);
+      formData.append("operator_name", operatorName);
+    }
+
+    const response = await fetch(buildAiUrl(endpointPath), {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+
+    if (!response.ok) {
+      const errorMessage = typeof payload === "string" ? payload : payload?.error || payload?.message;
+      throw new Error(errorMessage || `Face AI returned HTTP ${response.status}`);
+    }
+
+    return normalizeFaceResult(payload);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Face AI request timed out. Check the AI workstation connection.");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function ensureSchemaReady() {
   if (!schemaReadyPromise) {
     schemaReadyPromise = (async () => {
@@ -96,6 +237,39 @@ app.get("/api/health", async (_req, res) => {
   } catch (error) {
     schemaReadyPromise = null;
     res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
+app.post("/api/face/search", async (req, res) => {
+  try {
+    const result = await postFaceImageToAi({
+      endpointPath: AI_FACE_SEARCH_PATH,
+      imageDataUrl: req.body?.imageDataUrl,
+    });
+
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "Face search failed." });
+  }
+});
+
+app.post("/api/face/register", async (req, res) => {
+  try {
+    const operatorName = cleanText(req.body?.operatorName || req.body?.name);
+
+    if (!operatorName) {
+      return res.status(400).json({ ok: false, error: "Name is required for face registration." });
+    }
+
+    const result = await postFaceImageToAi({
+      endpointPath: AI_FACE_REGISTER_PATH,
+      imageDataUrl: req.body?.imageDataUrl,
+      operatorName,
+    });
+
+    res.json({ ok: true, registeredName: operatorName, ...result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || "Face registration failed." });
   }
 });
 
@@ -191,7 +365,7 @@ if (isProduction) {
   const distPath = path.join(__dirname, "dist");
   app.use(express.static(distPath));
 
-  app.get("*", (_req, res) => {
+  app.get(/.*/, (_req, res) => {
     res.sendFile(path.join(distPath, "index.html"));
   });
 }
