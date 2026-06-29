@@ -6,7 +6,7 @@ dotenv.config();
 
 const { Pool } = pg;
 
-const DEFAULT_APP_DATABASE = "Confirmation_confirmation_app";
+const DEFAULT_APP_DATABASE = "confirmation_test_db";
 const DEFAULT_MAINTENANCE_DATABASE = "postgres";
 
 function shouldUseSsl() {

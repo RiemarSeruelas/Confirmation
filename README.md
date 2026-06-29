@@ -6,11 +6,10 @@ Simple React + Express + PostgreSQL app with manual login, AI face login/registe
 - Face Login captures one camera frame and sends it to the AI workstation through the backend.
 - Register Face captures one camera frame and registers it to the AI workstation through the backend.
 - Machine View opens the machine interface preview page.
-- Records are saved to `app."Confirmation_confirmation_test_records"`.
-- Face/profile mapping is saved to `app."Confirmation_face_identities"`.
+- Records are saved to `app.confirmation_test_records`.
+- Face/profile mapping is saved to `app.face_identities`.
 - The app uses `record_timestamp`, `created_at`, and `updated_at`.
-- The app database default is `Confirmation_confirmation_app`.
-- Tables use the `Confirmation_*` naming pattern so they are easy to separate in pgAdmin.
+- The app database default is `confirmation_test_db`.
 
 ## 1. Install
 
@@ -27,10 +26,9 @@ Example:
 ```env
 PGHOST=localhost
 PGPORT=5432
-PGDATABASE=Confirmation_confirmation_app
+PGDATABASE=confirmation_test_db
 PGUSER=postgres
 PGPASSWORD=your_password
-PGMAINTENANCE_DATABASE=postgres
 PGSSL=false
 PORT=5178
 
@@ -49,21 +47,61 @@ AI_FACE_DISTANCE_METRIC=cosine
 AI_FACE_SEARCH_METHOD=exact
 ```
 
+
+## Exact PostgreSQL names used by the code
+
+Default database:
+
+```text
+confirmation_test_db
+```
+
+Schema:
+
+```text
+app
+```
+
+Tables:
+
+```text
+app.confirmation_test_records
+app.face_identities
+```
+
+So if you manually create the database as `confirmation_test_db`, the app code and `.env` will match.
+
 Use this only when the app runs inside Docker but PostgreSQL is on your PC:
 
 ```env
 PGHOST=host.docker.internal
 ```
 
-## 3. Create database if missing
+## 3. Create the database manually once
+
+The code expects this default database name:
+
+```text
+confirmation_test_db
+```
+
+Create it manually in pgAdmin, DBeaver, or psql. Example SQL:
+
+```sql
+CREATE DATABASE confirmation_test_db OWNER myuser;
+```
+
+If you want a different database name, create that database manually and set the same name in `.env` under `PGDATABASE`. The table names stay fixed.
+
+## 4. Create/update schema and tables
 
 ```bash
 npm run setup-db
 ```
 
-This creates the database if missing, then creates/updates the schema and tables.
+This does not create the database anymore. It only creates/updates the schema and tables inside the database from `.env`.
 
-## 4. Run
+## 5. Run
 
 ```bash
 npm run dev
@@ -129,7 +167,7 @@ Express backend sends JSON body to Face AI
 ↓
 Face AI returns match/id/hash/img_name
 ↓
-App DB checks app."Confirmation_face_identities"
+App DB checks app.face_identities
 ↓
 App returns the operator profile/details
 ```
@@ -141,7 +179,7 @@ The Face AI stores the embedding. The application stores the person details.
 Table:
 
 ```text
-app."Confirmation_face_identities"
+app.face_identities
 ```
 
 Important columns:
@@ -163,7 +201,7 @@ Register Face now does this:
 ```text
 1. Send image to Face AI /register
 2. Search the same image if needed to get the AI face key/hash/img_name
-3. Save that AI key + operator details in app."Confirmation_face_identities"
+3. Save that AI key + operator details in app.face_identities
 ```
 
 Face Login now does this:
@@ -171,7 +209,7 @@ Face Login now does this:
 ```text
 1. Send image to Face AI /search
 2. Extract AI identifiers from the result
-3. Find matching row in app."Confirmation_face_identities"
+3. Find matching row in app.face_identities
 4. Login as that app profile
 ```
 

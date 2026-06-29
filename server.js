@@ -403,7 +403,7 @@ async function findFaceIdentityByIdentifiers(identifiers) {
         ai_face_key,
         registered_at,
         last_seen_at
-      FROM app."Confirmation_face_identities"
+      FROM app.face_identities
       WHERE ai_face_key = ANY($1::text[])
          OR ai_identifiers ?| $1::text[]
       ORDER BY last_seen_at DESC NULLS LAST, id DESC
@@ -426,7 +426,7 @@ async function upsertFaceIdentity({ profile, identifiers, aiFaceKey, registerPay
 
   const result = await pool.query(
     `
-      INSERT INTO app."Confirmation_face_identities" (
+      INSERT INTO app.face_identities (
         operator_name,
         employee_id,
         department,
@@ -480,7 +480,7 @@ async function upsertFaceIdentity({ profile, identifiers, aiFaceKey, registerPay
 async function updateFaceIdentitySeen(identityId, matchPayload) {
   const result = await pool.query(
     `
-      UPDATE app."Confirmation_face_identities"
+      UPDATE app.face_identities
       SET last_seen_at = NOW(), ai_last_match_payload = $2::jsonb
       WHERE id = $1
       RETURNING
@@ -747,7 +747,7 @@ app.get("/api/face/identities", async (_req, res) => {
           last_seen_at,
           created_at,
           updated_at
-        FROM app."Confirmation_face_identities"
+        FROM app.face_identities
         ORDER BY created_at DESC, id DESC
         LIMIT 200
       `
@@ -897,7 +897,7 @@ app.get("/api/records", async (req, res) => {
           record_timestamp,
           created_at,
           updated_at
-        FROM app."Confirmation_confirmation_test_records"
+        FROM app.confirmation_test_records
         ORDER BY record_timestamp DESC, id DESC
         LIMIT $1
       `,
@@ -930,7 +930,7 @@ app.post("/api/records", async (req, res) => {
 
     const result = await pool.query(
       `
-        INSERT INTO app."Confirmation_confirmation_test_records" (
+        INSERT INTO app.confirmation_test_records (
           operator_name,
           machine_name,
           reading_value,

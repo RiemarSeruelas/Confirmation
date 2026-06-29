@@ -1,6 +1,6 @@
 CREATE SCHEMA IF NOT EXISTS app;
 
-CREATE TABLE IF NOT EXISTS app."Confirmation_confirmation_test_records" (
+CREATE TABLE IF NOT EXISTS app.confirmation_test_records (
   id SERIAL PRIMARY KEY,
   operator_name TEXT NOT NULL,
   machine_name TEXT NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS app."Confirmation_confirmation_test_records" (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-ALTER TABLE app."Confirmation_confirmation_test_records"
+ALTER TABLE app.confirmation_test_records
   ADD COLUMN IF NOT EXISTS product TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS batch_number TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS shift_name TEXT NOT NULL DEFAULT 'Unknown Shift',
@@ -29,11 +29,11 @@ ALTER TABLE app."Confirmation_confirmation_test_records"
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-CREATE INDEX IF NOT EXISTS idx_Confirmation_confirmation_test_records_created_at
-ON app."Confirmation_confirmation_test_records"(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_confirmation_test_records_created_at
+ON app.confirmation_test_records(created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_Confirmation_confirmation_test_records_record_timestamp
-ON app."Confirmation_confirmation_test_records"(record_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_confirmation_test_records_record_timestamp
+ON app.confirmation_test_records(record_timestamp DESC);
 
 CREATE OR REPLACE FUNCTION app.set_updated_at()
 RETURNS TRIGGER AS $$
@@ -43,16 +43,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_Confirmation_confirmation_test_records_updated_at
-ON app."Confirmation_confirmation_test_records";
+DROP TRIGGER IF EXISTS trg_confirmation_test_records_updated_at
+ON app.confirmation_test_records;
 
-CREATE TRIGGER trg_Confirmation_confirmation_test_records_updated_at
-BEFORE UPDATE ON app."Confirmation_confirmation_test_records"
+CREATE TRIGGER trg_confirmation_test_records_updated_at
+BEFORE UPDATE ON app.confirmation_test_records
 FOR EACH ROW
 EXECUTE FUNCTION app.set_updated_at();
 
 
-CREATE TABLE IF NOT EXISTS app."Confirmation_face_identities" (
+CREATE TABLE IF NOT EXISTS app.face_identities (
   id SERIAL PRIMARY KEY,
   operator_name TEXT NOT NULL,
   employee_id TEXT DEFAULT '',
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS app."Confirmation_face_identities" (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-ALTER TABLE app."Confirmation_face_identities"
+ALTER TABLE app.face_identities
   ADD COLUMN IF NOT EXISTS operator_name TEXT NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS employee_id TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
@@ -93,20 +93,20 @@ ALTER TABLE app."Confirmation_face_identities"
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_Confirmation_face_identities_ai_face_key
-ON app."Confirmation_face_identities"(ai_face_key)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_face_identities_ai_face_key
+ON app.face_identities(ai_face_key)
 WHERE ai_face_key IS NOT NULL AND ai_face_key <> '';
 
-CREATE INDEX IF NOT EXISTS idx_Confirmation_face_identities_ai_identifiers
-ON app."Confirmation_face_identities" USING GIN(ai_identifiers);
+CREATE INDEX IF NOT EXISTS idx_face_identities_ai_identifiers
+ON app.face_identities USING GIN(ai_identifiers);
 
-CREATE INDEX IF NOT EXISTS idx_Confirmation_face_identities_operator_name
-ON app."Confirmation_face_identities"(operator_name);
+CREATE INDEX IF NOT EXISTS idx_face_identities_operator_name
+ON app.face_identities(operator_name);
 
-DROP TRIGGER IF EXISTS trg_Confirmation_face_identities_updated_at
-ON app."Confirmation_face_identities";
+DROP TRIGGER IF EXISTS trg_face_identities_updated_at
+ON app.face_identities;
 
-CREATE TRIGGER trg_Confirmation_face_identities_updated_at
-BEFORE UPDATE ON app."Confirmation_face_identities"
+CREATE TRIGGER trg_face_identities_updated_at
+BEFORE UPDATE ON app.face_identities
 FOR EACH ROW
 EXECUTE FUNCTION app.set_updated_at();
