@@ -53,17 +53,12 @@ Copy-Item .env.example .env
 
 Then edit `.env` and put your PostgreSQL details.
 
-You can use `DATABASE_URL`:
+For normal local PostgreSQL on your PC, use this:
 
 ```env
-DATABASE_URL=postgres://postgres:your_password@localhost:5432/confirmation_test_db
-PGSSL=false
 PORT=5178
-```
+NODE_ENV=development
 
-Or separate values:
-
-```env
 PGHOST=localhost
 PGPORT=5432
 PGDATABASE=confirmation_test_db
@@ -71,16 +66,45 @@ PGUSER=postgres
 PGPASSWORD=your_password
 PGMAINTENANCE_DATABASE=postgres
 PGSSL=false
-PORT=5178
 ```
 
-### 3. Create/update the database and table
+If the app is running inside Docker but PostgreSQL is installed on your PC, use this host instead:
+
+```env
+PGHOST=host.docker.internal
+```
+
+If PostgreSQL is another Docker container, use the container or compose service name, for example:
+
+```env
+PGHOST=postgres
+```
+
+### 3. Check the DB connection
+
+Run this first if you are getting `ECONNREFUSED`:
+
+```bash
+npm run check-db
+```
+
+`ECONNREFUSED` usually means PostgreSQL is not running at the host/port in `.env`.
+
+Common fixes:
+
+1. Start PostgreSQL service.
+2. Check that the port is really `5432`.
+3. Check that `.env` is in the same folder as `package.json`.
+4. If the app is inside Docker and PostgreSQL is on your PC, use `PGHOST=host.docker.internal`.
+5. If PostgreSQL is another Docker container, use the container/service name as `PGHOST`.
+
+### 4. Create/update the database and table
 
 ```bash
 npm run setup-db
 ```
 
-This now does three things:
+This does three things:
 
 1. Connects first to `PGMAINTENANCE_DATABASE`, usually `postgres`
 2. Creates your app database from `PGDATABASE` if it does not exist
@@ -104,7 +128,7 @@ If the database is missing, you should see:
 
 Important: the PostgreSQL user in `.env` needs permission to create a database. If it does not, use `postgres` or another admin user for `npm run setup-db`.
 
-### 4. Run the app
+### 5. Run the app
 
 ```bash
 npm run dev
