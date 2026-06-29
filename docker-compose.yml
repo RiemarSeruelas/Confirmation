@@ -1,24 +1,12 @@
 services:
-  app:
+  confirmation-test-app:
     build: .
+    container_name: confirmation-test-app
     env_file:
       - .env
-    restart: unless-stopped
-    expose:
-      - "5178"
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      - app
+    environment:
+      NODE_ENV: production
+      PORT: 5178
     ports:
-      - "5055:5055"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-
-volumes:
-  caddy_data:
-  caddy_config:
+      - "5055:5178"
+    restart: unless-stopped

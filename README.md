@@ -275,3 +275,40 @@ logs/
 .vscode/
 .idea/
 ```
+
+## Docker quick run
+
+Make sure `.env` is filled first. Keep `PORT=5178` inside `.env` when using Docker. The outside browser port is mapped to `5055`.
+
+Build the image:
+
+```bash
+docker build -t confirmation-test-app .
+```
+
+Run DB setup once:
+
+```bash
+docker run --rm --env-file .env confirmation-test-app npm run setup-db
+```
+
+Run the app:
+
+```bash
+docker rm -f confirmation-test-app 2>nul || true
+docker run -d --env-file .env -p 5055:5178 --name confirmation-test-app confirmation-test-app
+```
+
+Open:
+
+```text
+http://localhost:5055
+```
+
+Or use Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+For LAN camera access from another PC, use HTTPS. Browser camera access works on `localhost`, but `http://server-ip:5055` may block the camera.
