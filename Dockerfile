@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:22-bullseye-slim
 
 WORKDIR /app
 
@@ -6,7 +6,8 @@ WORKDIR /app
 ENV NODE_ENV=development
 
 COPY package*.json ./
-RUN npm install --include=dev
+RUN npm install -g npm@11.17.0
+RUN npm ci
 
 COPY . .
 RUN npm run build

@@ -1,0 +1,46 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 399B 0.0s done
+#1 DONE 0.1s
+
+#2 [internal] load metadata for docker.io/library/node:22-bullseye-slim
+#2 DONE 2.3s
+
+#3 [1/7] FROM docker.io/library/node:22-bullseye-slim@sha256:f01a2926cacb1fe0c50a7ccfc69837c992a268e4bb0b01f3b4c9f6fee9f90421
+#3 resolve docker.io/library/node:22-bullseye-slim@sha256:f01a2926cacb1fe0c50a7ccfc69837c992a268e4bb0b01f3b4c9f6fee9f90421 0.0s done
+#3 sha256:7d5cfa4f2c2abd4063dcfe24b0e1d38215b2a289bdc13b7e36cd4bc17a1940a3 448B / 448B 1.3s done
+#3 sha256:6d2d3e2e9f9a7fc05e071077dceb2c198ba59d8f5e4f7860843f5d31b54c5098 4.08kB / 4.08kB 1.4s done
+#3 sha256:7068f1ed42e71f362c5ec9384ce090d68d59fa76f9f0277624d00b296cf54809 1.74MB / 1.74MB 2.7s done
+#3 sha256:0251c4232e4025b51352f0bb7119fd866d4a6a62861f09baea6fe5af4c6eee59 30.26MB / 30.26MB 8.5s done
+#3 sha256:38b19025b6c237686c7e50a1c2edcb5d49f7d3c21178569d401f9e612ce65074 49.96MB / 49.96MB 11.0s done
+#3 extracting sha256:0251c4232e4025b51352f0bb7119fd866d4a6a62861f09baea6fe5af4c6eee59 1.5s done
+#3 extracting sha256:6d2d3e2e9f9a7fc05e071077dceb2c198ba59d8f5e4f7860843f5d31b54c5098 0.0s done
+#3 extracting sha256:38b19025b6c237686c7e50a1c2edcb5d49f7d3c21178569d401f9e612ce65074 1.6s done
+#3 extracting sha256:7068f1ed42e71f362c5ec9384ce090d68d59fa76f9f0277624d00b296cf54809 0.1s done
+#3 extracting sha256:7d5cfa4f2c2abd4063dcfe24b0e1d38215b2a289bdc13b7e36cd4bc17a1940a3 0.0s done
+#3 DONE 13.3s
+
+#4 [2/7] WORKDIR /app
+#4 DONE 0.3s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 167B done
+#5 DONE 0.1s
+
+#6 [internal] load build context
+#6 transferring context: 192.38kB 0.0s done
+#6 DONE 0.1s
+
+#7 [3/7] COPY package*.json ./
+#7 DONE 0.1s
+
+#8 [4/7] RUN npm install -g npm@11.17.0
+#8 24.39 
+#8 24.39 removed 57 packages, and changed 95 packages in 24s
+#8 24.39 
+#8 24.39 15 packages are looking for funding
+#8 24.39   run `npm fund` for details
+#8 DONE 24.6s
+
+#9 [5/7] RUN npm install --include=dev

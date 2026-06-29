@@ -1,38 +1,27 @@
 PS C:\Users\ASUS\Downloads\5th Project> docker build -t confirmation-test-app .
-[+] Building 0.9s (10/10) FINISHED                                                               docker:desktop-linux
- => [internal] load build definition from Dockerfile                                                             0.0s
- => => transferring dockerfile: 225B                                                                             0.0s
- => [internal] load metadata for docker.io/library/node:20-alpine                                                0.0s
- => [internal] load .dockerignore                                                                                0.0s
- => => transferring context: 167B                                                                                0.0s
- => [1/6] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f6  0.0s
- => => resolve docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f6  0.0s
- => [internal] load build context                                                                                0.0s
- => => transferring context: 523B                                                                                0.0s
- => CACHED [2/6] WORKDIR /app                                                                                    0.0s
- => CACHED [3/6] COPY package*.json ./                                                                           0.0s
- => CACHED [4/6] RUN npm ci                                                                                      0.0s
- => CACHED [5/6] COPY . .                                                                                        0.0s
- => ERROR [6/6] RUN npm run build                                                                                0.6s
-------                                                                                                                
- > [6/6] RUN npm run build:                                                                                           
-0.559 
-0.559 > confirmation-test-db-app@1.0.0 build
-0.559 > vite build
-0.559 
-0.566 sh: vite: not found
-------
-Dockerfile:9
---------------------
-   7 |     
-   8 |     COPY . .
-   9 | >>> RUN npm run build
-  10 |     
-  11 |     ENV NODE_ENV=production
---------------------
-ERROR: failed to build: failed to solve: process "/bin/sh -c npm run build" did not complete successfully: exit code: 127
-
-View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/uugbezdstr74br6howqc3qopo
-
-What's next:
-    Debug this build failure with Gordon → docker ai "help me fix this build failure"
+[+] Building 113.7s (10/12)                                                   docker:desktop-linux
+ => [internal] load build definition from Dockerfile                                          0.0s
+ => => transferring dockerfile: 380B                                                          0.0s
+ => [internal] load metadata for docker.io/library/node:22-bullseye-slim                      1.5s
+ => [internal] load .dockerignore                                                             0.0s
+ => => transferring context: 167B                                                             0.0s
+ => [1/7] FROM docker.io/library/node:22-bullseye-slim@sha256:f01a2926cacb1fe0c50a7ccfc6983  13.3s
+ => => resolve docker.io/library/node:22-bullseye-slim@sha256:f01a2926cacb1fe0c50a7ccfc69837  0.0s
+ => => sha256:7d5cfa4f2c2abd4063dcfe24b0e1d38215b2a289bdc13b7e36cd4bc17a1940a3 448B / 448B    1.3s
+ => => sha256:6d2d3e2e9f9a7fc05e071077dceb2c198ba59d8f5e4f7860843f5d31b54c50 4.08kB / 4.08kB  1.4s
+ => => sha256:7068f1ed42e71f362c5ec9384ce090d68d59fa76f9f0277624d00b296cf548 1.74MB / 1.74MB  2.7s
+ => => sha256:0251c4232e4025b51352f0bb7119fd866d4a6a62861f09baea6fe5af4c6e 30.26MB / 30.26MB  8.5s
+ => => sha256:38b19025b6c237686c7e50a1c2edcb5d49f7d3c21178569d401f9e612ce 49.96MB / 49.96MB  11.0s
+ => => extracting sha256:0251c4232e4025b51352f0bb7119fd866d4a6a62861f09baea6fe5af4c6eee59     1.5s
+ => => extracting sha256:6d2d3e2e9f9a7fc05e071077dceb2c198ba59d8f5e4f7860843f5d31b54c5098     0.0s
+ => => extracting sha256:38b19025b6c237686c7e50a1c2edcb5d49f7d3c21178569d401f9e612ce65074     1.6s
+ => => extracting sha256:7068f1ed42e71f362c5ec9384ce090d68d59fa76f9f0277624d00b296cf54809     0.1s
+ => => extracting sha256:7d5cfa4f2c2abd4063dcfe24b0e1d38215b2a289bdc13b7e36cd4bc17a1940a3     0.0s
+ => [2/7] WORKDIR /app                                                                        0.3s
+ => [internal] load build context                                                             0.0s
+ => => transferring context: 7.59kB                                                           0.0s
+ => [3/7] COPY package*.json ./                                                               0.1s
+ => CACHED [3/7] COPY package*.json ./                                                        0.0s
+ => [4/7] RUN npm install -g npm@11.17.0                                                     16.6s
+ => CANCELED [5/7] RUN npm ci                                                                95.4s
+ERROR: failed to build: failed to solve: Canceled: context canceled
