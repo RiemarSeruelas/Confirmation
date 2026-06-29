@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs/promises";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import express from "express";
@@ -151,10 +152,24 @@ function normalizeBoolean(value) {
 }
 
 function normalizeFaceResult(rawResult) {
+  if (Array.isArray(rawResult)) {
+    const firstItem = rawResult[0];
+    const normalized = firstItem ? normalizeFaceResult(firstItem) : null;
+
+    return {
+      matched: rawResult.length > 0 || Boolean(normalized?.matched),
+      name: normalized?.name || "",
+      confidence: normalized?.confidence ?? null,
+      raw: rawResult,
+    };
+  }
+
   if (rawResult && typeof rawResult === "object") {
     const firstMatch = Array.isArray(rawResult.matches) ? rawResult.matches[0] : null;
     const firstResult = Array.isArray(rawResult.results) ? rawResult.results[0] : null;
+    const firstData = Array.isArray(rawResult.data) ? rawResult.data[0] : null;
     const nestedResult = rawResult.result && typeof rawResult.result === "object" ? rawResult.result : null;
+    const identifiers = extractFaceIdentifiers(rawResult);
 
     const name = cleanText(
       firstNonEmpty(
@@ -175,7 +190,10 @@ function normalizeFaceResult(rawResult) {
         firstMatch?.person_name,
         firstResult?.name,
         firstResult?.person,
-        firstResult?.person_name
+        firstResult?.person_name,
+        firstData?.name,
+        firstData?.person,
+        firstData?.person_name
       )
     );
 
@@ -186,20 +204,35 @@ function normalizeFaceResult(rawResult) {
       rawResult.distance,
       nestedResult?.confidence,
       nestedResult?.score,
+      nestedResult?.distance,
       firstMatch?.confidence,
       firstMatch?.score,
+      firstMatch?.distance,
       firstResult?.confidence,
-      firstResult?.score
+      firstResult?.score,
+      firstResult?.distance,
+      firstData?.confidence,
+      firstData?.score,
+      firstData?.distance
     );
 
-    const explicitMatched = firstNonEmpty(rawResult.matched, rawResult.found, rawResult.success, nestedResult?.matched);
+    const explicitMatched = firstNonEmpty(
+      rawResult.matched,
+      rawResult.found,
+      rawResult.success,
+      rawResult.ok,
+      nestedResult?.matched,
+      nestedResult?.found
+    );
     const matchedByName = Boolean(name) && !["unknown", "not found", "none", "null"].includes(name.toLowerCase());
-    const matched = explicitMatched === "" ? matchedByName : normalizeBoolean(explicitMatched);
+    const matchedByResult = Boolean(firstMatch || firstResult || firstData || nestedResult || identifiers.aiFaceKey);
+    const matched = explicitMatched === "" ? matchedByName || matchedByResult : normalizeBoolean(explicitMatched);
 
     return {
-      matched: matched || matchedByName,
+      matched: matched || matchedByName || matchedByResult,
       name,
       confidence: confidence === "" ? null : confidence,
+      identifiers,
       raw: rawResult,
     };
   }
@@ -210,6 +243,7 @@ function normalizeFaceResult(rawResult) {
     matched: Boolean(text),
     name: text,
     confidence: null,
+    identifiers: { aiFaceKey: "", identifiers: [], fields: {} },
     raw: rawResult,
   };
 }
@@ -239,6 +273,231 @@ function compactPayload(payload) {
   } catch {
     return String(payload).slice(0, 350);
   }
+}
+
+function compactJsonValue(value, maxLength = 8000) {
+  if (value === null || value === undefined) return {};
+
+  try {
+    const jsonText = JSON.stringify(value, (key, val) => {
+      const lowerKey = String(key).toLowerCase();
+      if (["img", "image", "imageDataUrl", "file", "face", "photo", "upload"].includes(lowerKey)) {
+        if (typeof val === "string" && val.length > 250) {
+          return `${val.slice(0, 120)}...[truncated]`;
+        }
+      }
+      return val;
+    });
+
+    if (jsonText.length <= maxLength) return JSON.parse(jsonText);
+    return { compact: jsonText.slice(0, maxLength), truncated: true };
+  } catch {
+    return { value: String(value).slice(0, maxLength) };
+  }
+}
+
+function makeLocalHash(value) {
+  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+}
+
+function walkObjects(value, output = [], depth = 0) {
+  if (depth > 6 || value === null || value === undefined) return output;
+
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 25)) {
+      walkObjects(item, output, depth + 1);
+    }
+    return output;
+  }
+
+  if (typeof value === "object") {
+    output.push(value);
+    for (const nested of Object.values(value)) {
+      if (nested && typeof nested === "object") {
+        walkObjects(nested, output, depth + 1);
+      }
+    }
+  }
+
+  return output;
+}
+
+function normalizeIdentifierValue(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    if (value.$oid) return cleanText(value.$oid);
+    if (value.oid) return cleanText(value.oid);
+    return "";
+  }
+  return cleanText(value);
+}
+
+function extractFaceIdentifiers(rawResult) {
+  const objects = walkObjects(rawResult);
+  const preferredFields = [
+    "embedding_hash",
+    "face_hash",
+    "img_name",
+    "image_name",
+    "face_id",
+    "_id",
+    "id",
+    "sequence",
+  ];
+
+  const identifiers = [];
+  const fields = {};
+
+  for (const object of objects) {
+    for (const field of preferredFields) {
+      if (!Object.prototype.hasOwnProperty.call(object, field)) continue;
+      const value = normalizeIdentifierValue(object[field]);
+      if (!value) continue;
+
+      if (!fields[field]) fields[field] = value;
+      identifiers.push(`${field}:${value}`);
+      identifiers.push(value);
+    }
+  }
+
+  const uniqueIdentifiers = uniqueValues(identifiers).slice(0, 60);
+  const primaryField = preferredFields.find((field) => fields[field]);
+  const aiFaceKey = primaryField ? `${primaryField}:${fields[primaryField]}` : uniqueIdentifiers[0] || "";
+
+  return {
+    aiFaceKey,
+    identifiers: uniqueIdentifiers,
+    fields,
+  };
+}
+
+function identityRowToProfile(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    operator_name: row.operator_name,
+    employee_id: row.employee_id || "",
+    department: row.department || "",
+    role_name: row.role_name || "",
+    email: row.email || "",
+    ai_face_key: row.ai_face_key || "",
+    registered_at: row.registered_at,
+    last_seen_at: row.last_seen_at,
+  };
+}
+
+async function findFaceIdentityByIdentifiers(identifiers) {
+  const cleanIdentifiers = uniqueValues(identifiers || []);
+  if (cleanIdentifiers.length === 0) return null;
+
+  const result = await pool.query(
+    `
+      SELECT
+        id,
+        operator_name,
+        employee_id,
+        department,
+        role_name,
+        email,
+        ai_face_key,
+        registered_at,
+        last_seen_at
+      FROM app."Confirmation_face_identities"
+      WHERE ai_face_key = ANY($1::text[])
+         OR ai_identifiers ?| $1::text[]
+      ORDER BY last_seen_at DESC NULLS LAST, id DESC
+      LIMIT 1
+    `,
+    [cleanIdentifiers]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function upsertFaceIdentity({ profile, identifiers, aiFaceKey, registerPayload, matchPayload }) {
+  const operatorName = cleanText(profile.operatorName || profile.operator_name || profile.name);
+  const employeeId = cleanText(profile.employeeId || profile.employee_id);
+  const department = cleanText(profile.department);
+  const roleName = cleanText(profile.roleName || profile.role_name);
+  const email = cleanText(profile.email);
+  const cleanIdentifiers = uniqueValues([aiFaceKey, ...(identifiers || [])]);
+  const finalAiFaceKey = aiFaceKey || cleanIdentifiers[0] || `local:${makeLocalHash(`${operatorName}|${Date.now()}`)}`;
+
+  const result = await pool.query(
+    `
+      INSERT INTO app."Confirmation_face_identities" (
+        operator_name,
+        employee_id,
+        department,
+        role_name,
+        email,
+        ai_face_key,
+        ai_identifiers,
+        ai_register_payload,
+        ai_last_match_payload,
+        last_seen_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, NOW())
+      ON CONFLICT (ai_face_key)
+      DO UPDATE SET
+        operator_name = EXCLUDED.operator_name,
+        employee_id = EXCLUDED.employee_id,
+        department = EXCLUDED.department,
+        role_name = EXCLUDED.role_name,
+        email = EXCLUDED.email,
+        ai_identifiers = EXCLUDED.ai_identifiers,
+        ai_register_payload = EXCLUDED.ai_register_payload,
+        ai_last_match_payload = EXCLUDED.ai_last_match_payload,
+        last_seen_at = NOW()
+      RETURNING
+        id,
+        operator_name,
+        employee_id,
+        department,
+        role_name,
+        email,
+        ai_face_key,
+        registered_at,
+        last_seen_at
+    `,
+    [
+      operatorName,
+      employeeId,
+      department,
+      roleName,
+      email,
+      finalAiFaceKey,
+      JSON.stringify(cleanIdentifiers),
+      JSON.stringify(compactJsonValue(registerPayload)),
+      JSON.stringify(compactJsonValue(matchPayload || {})),
+    ]
+  );
+
+  return result.rows[0];
+}
+
+async function updateFaceIdentitySeen(identityId, matchPayload) {
+  const result = await pool.query(
+    `
+      UPDATE app."Confirmation_face_identities"
+      SET last_seen_at = NOW(), ai_last_match_payload = $2::jsonb
+      WHERE id = $1
+      RETURNING
+        id,
+        operator_name,
+        employee_id,
+        department,
+        role_name,
+        email,
+        ai_face_key,
+        registered_at,
+        last_seen_at
+    `,
+    [identityId, JSON.stringify(compactJsonValue(matchPayload))]
+  );
+
+  return result.rows[0] || null;
 }
 
 function makeImageBlob(image) {
@@ -470,14 +729,80 @@ app.get("/api/face/config", (_req, res) => {
   });
 });
 
+app.get("/api/face/identities", async (_req, res) => {
+  try {
+    await ensureSchemaReady();
+
+    const result = await pool.query(
+      `
+        SELECT
+          id,
+          operator_name,
+          employee_id,
+          department,
+          role_name,
+          email,
+          ai_face_key,
+          registered_at,
+          last_seen_at,
+          created_at,
+          updated_at
+        FROM app."Confirmation_face_identities"
+        ORDER BY created_at DESC, id DESC
+        LIMIT 200
+      `
+    );
+
+    res.json({ ok: true, identities: result.rows.map(identityRowToProfile) });
+  } catch (error) {
+    schemaReadyPromise = null;
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
 app.post("/api/face/search", async (req, res) => {
   try {
+    await ensureSchemaReady();
+
     const result = await postFaceImageToAi({
       endpointType: "search",
       imageDataUrl: req.body?.imageDataUrl,
     });
 
-    res.json({ ok: true, ...result });
+    if (!result.matched) {
+      return res.json({ ok: true, matched: false, error: "No matching face found.", ...result });
+    }
+
+    const extracted = result.identifiers || extractFaceIdentifiers(result.raw);
+    const identity = await findFaceIdentityByIdentifiers([
+      extracted.aiFaceKey,
+      ...(extracted.identifiers || []),
+    ]);
+
+    if (!identity) {
+      return res.status(404).json({
+        ok: false,
+        matched: true,
+        error:
+          "Face AI recognized the face, but this app has no local profile linked to that AI face yet. Register the face inside this app first.",
+        aiFaceKey: extracted.aiFaceKey,
+        aiIdentifiers: extracted.identifiers || [],
+        ...result,
+      });
+    }
+
+    const updatedIdentity = await updateFaceIdentitySeen(identity.id, result.raw);
+    const profile = identityRowToProfile(updatedIdentity || identity);
+
+    res.json({
+      ok: true,
+      matched: true,
+      name: profile.operator_name,
+      profile,
+      aiFaceKey: extracted.aiFaceKey,
+      aiIdentifiers: extracted.identifiers || [],
+      ...result,
+    });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "Face search failed." });
   }
@@ -485,23 +810,71 @@ app.post("/api/face/search", async (req, res) => {
 
 app.post("/api/face/register", async (req, res) => {
   try {
-    const operatorName = cleanText(req.body?.operatorName || req.body?.name);
+    await ensureSchemaReady();
 
-    if (!operatorName) {
+    const profile = {
+      operatorName: cleanText(req.body?.operatorName || req.body?.name),
+      employeeId: cleanText(req.body?.employeeId || req.body?.employee_id),
+      department: cleanText(req.body?.department),
+      roleName: cleanText(req.body?.roleName || req.body?.role_name),
+      email: cleanText(req.body?.email),
+    };
+
+    if (!profile.operatorName) {
       return res.status(400).json({ ok: false, error: "Name is required for face registration." });
     }
 
-    const result = await postFaceImageToAi({
+    const registerResult = await postFaceImageToAi({
       endpointType: "register",
       imageDataUrl: req.body?.imageDataUrl,
-      operatorName,
+      operatorName: profile.operatorName,
     });
 
-    res.json({ ok: true, registeredName: operatorName, ...result });
+    let extracted = registerResult.identifiers || extractFaceIdentifiers(registerResult.raw);
+    let matchResult = null;
+
+    // Some Face AI register endpoints only return "success" and do not return the
+    // stored face row. Search the same captured image immediately so we can get
+    // the AI face id/hash/img_name to link to our local app profile table.
+    if (!extracted.aiFaceKey) {
+      matchResult = await postFaceImageToAi({
+        endpointType: "search",
+        imageDataUrl: req.body?.imageDataUrl,
+      });
+      extracted = matchResult.identifiers || extractFaceIdentifiers(matchResult.raw);
+    }
+
+    if (!extracted.aiFaceKey) {
+      return res.status(502).json({
+        ok: false,
+        error:
+          "Face AI registered the image, but did not return any usable face identifier like img_name, embedding_hash, face_hash, sequence, or _id. The app cannot link login to a local profile yet.",
+        registeredName: profile.operatorName,
+      });
+    }
+
+    const identity = await upsertFaceIdentity({
+      profile,
+      aiFaceKey: extracted.aiFaceKey,
+      identifiers: extracted.identifiers || [],
+      registerPayload: registerResult.raw,
+      matchPayload: matchResult?.raw || {},
+    });
+
+    res.json({
+      ok: true,
+      registeredName: profile.operatorName,
+      name: profile.operatorName,
+      profile: identityRowToProfile(identity),
+      aiFaceKey: extracted.aiFaceKey,
+      aiIdentifiers: extracted.identifiers || [],
+      faceFormat: registerResult.faceFormat,
+    });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || "Face registration failed." });
   }
 });
+
 
 app.get("/api/records", async (req, res) => {
   try {
@@ -524,7 +897,7 @@ app.get("/api/records", async (req, res) => {
           record_timestamp,
           created_at,
           updated_at
-        FROM app.confirmation_test_records
+        FROM app."Confirmation_confirmation_test_records"
         ORDER BY record_timestamp DESC, id DESC
         LIMIT $1
       `,
@@ -557,7 +930,7 @@ app.post("/api/records", async (req, res) => {
 
     const result = await pool.query(
       `
-        INSERT INTO app.confirmation_test_records (
+        INSERT INTO app."Confirmation_confirmation_test_records" (
           operator_name,
           machine_name,
           reading_value,

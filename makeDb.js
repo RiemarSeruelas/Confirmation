@@ -12,7 +12,7 @@ const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_APP_DATABASE = "confirmation_test_db";
+const DEFAULT_APP_DATABASE = "Confirmation_confirmation_app";
 const DEFAULT_MAINTENANCE_DATABASE = "postgres";
 
 function shouldUseSsl() {
@@ -158,7 +158,7 @@ async function main() {
     const schemaSql = await fs.readFile(schemaPath, "utf8");
 
     await pool.query(schemaSql);
-    console.log("✅ Database schema is ready: app.confirmation_test_records");
+    console.log(`✅ Database schema is ready: app."Confirmation_confirmation_test_records" + app."Confirmation_face_identities"`);
   } catch (error) {
     console.error("❌ Failed to setup database:");
     console.error(error.message);

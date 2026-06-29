@@ -79,7 +79,13 @@ function getSecureCameraMessage() {
 function FaceCaptureModal({ mode, onClose, onSuccess }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const [operatorName, setOperatorName] = useState("");
+  const [profile, setProfile] = useState({
+    operatorName: "",
+    employeeId: "",
+    department: "",
+    roleName: "",
+    email: "",
+  });
   const [status, setStatus] = useState("Starting camera...");
   const [busy, setBusy] = useState(false);
   const isRegister = mode === "register";
@@ -120,7 +126,7 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
         videoRef.current.srcObject = stream;
       }
 
-      setStatus(isRegister ? "Camera ready. Enter name, then capture." : "Camera ready. Capture your face to login.");
+      setStatus(isRegister ? "Camera ready. Enter profile details, then capture." : "Camera ready. Capture your face to login.");
     } catch (error) {
       if (error.name === "NotAllowedError") {
         setStatus("Camera permission was blocked. Allow camera access in browser settings.");
@@ -163,7 +169,7 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
   }
 
   async function handleCapture() {
-    if (isRegister && !operatorName.trim()) {
+    if (isRegister && !profile.operatorName.trim()) {
       setStatus("Enter the operator name first.");
       return;
     }
@@ -178,7 +184,11 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageDataUrl,
-          operatorName: operatorName.trim(),
+          operatorName: profile.operatorName.trim(),
+          employeeId: profile.employeeId.trim(),
+          department: profile.department.trim(),
+          roleName: profile.roleName.trim(),
+          email: profile.email.trim(),
         }),
       });
 
@@ -193,7 +203,8 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
         return;
       }
 
-      const resolvedName = data.name || data.registeredName || operatorName.trim() || "Recognized Operator";
+      const resolvedName =
+        data.profile?.operator_name || data.name || data.registeredName || profile.operatorName.trim() || "Recognized Operator";
       stopCamera();
       onSuccess({ ...data, name: resolvedName });
     } catch (error) {
@@ -225,15 +236,57 @@ function FaceCaptureModal({ mode, onClose, onSuccess }) {
         </div>
 
         {isRegister && (
-          <label className="camera-name-field">
-            Operator Name
-            <input
-              value={operatorName}
-              onChange={(event) => setOperatorName(event.target.value)}
-              placeholder="Name to register"
-              disabled={busy}
-            />
-          </label>
+          <div className="camera-profile-grid">
+            <label className="camera-name-field">
+              Operator Name
+              <input
+                value={profile.operatorName}
+                onChange={(event) => setProfile((current) => ({ ...current, operatorName: event.target.value }))}
+                placeholder="Name to register"
+                disabled={busy}
+              />
+            </label>
+
+            <label className="camera-name-field">
+              Employee ID
+              <input
+                value={profile.employeeId}
+                onChange={(event) => setProfile((current) => ({ ...current, employeeId: event.target.value }))}
+                placeholder="Optional"
+                disabled={busy}
+              />
+            </label>
+
+            <label className="camera-name-field">
+              Department
+              <input
+                value={profile.department}
+                onChange={(event) => setProfile((current) => ({ ...current, department: event.target.value }))}
+                placeholder="Optional"
+                disabled={busy}
+              />
+            </label>
+
+            <label className="camera-name-field">
+              Role
+              <input
+                value={profile.roleName}
+                onChange={(event) => setProfile((current) => ({ ...current, roleName: event.target.value }))}
+                placeholder="Optional"
+                disabled={busy}
+              />
+            </label>
+
+            <label className="camera-name-field">
+              Email
+              <input
+                value={profile.email}
+                onChange={(event) => setProfile((current) => ({ ...current, email: event.target.value }))}
+                placeholder="Optional"
+                disabled={busy}
+              />
+            </label>
+          </div>
         )}
 
         <div className="camera-frame">
@@ -271,12 +324,14 @@ function AuthPage({ onLogin, onRegister }) {
     setFaceMode(null);
 
     if (faceMode === "register") {
-      setFaceMessage(`Registered face for ${result.name || result.registeredName}.`);
+      setFaceMessage(`Registered local profile for ${result.profile?.operator_name || result.name || result.registeredName}.`);
       return;
     }
 
-    setFaceMessage(`Face matched: ${result.name}.`);
-    onLogin(result.name);
+    const loginName = result.profile?.operator_name || result.name;
+    const detailText = result.profile?.department ? ` • ${result.profile.department}` : "";
+    setFaceMessage(`Face matched: ${loginName}${detailText}.`);
+    onLogin(loginName);
   }
 
   return (

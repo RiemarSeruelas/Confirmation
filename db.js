@@ -16,7 +16,7 @@ export const pool = new Pool(
     : {
         host: process.env.PGHOST || "localhost",
         port: Number(process.env.PGPORT || 5432),
-        database: process.env.PGDATABASE || "confirmation_test_db",
+        database: process.env.PGDATABASE || "Confirmation_confirmation_app",
         user: process.env.PGUSER,
         password: process.env.PGPASSWORD,
         ssl: useSsl ? { rejectUnauthorized: false } : false,

@@ -6,8 +6,11 @@ Simple React + Express + PostgreSQL app with manual login, AI face login/registe
 - Face Login captures one camera frame and sends it to the AI workstation through the backend.
 - Register Face captures one camera frame and registers it to the AI workstation through the backend.
 - Machine View opens the machine interface preview page.
-- Records are saved to `app.confirmation_test_records`.
+- Records are saved to `app."Confirmation_confirmation_test_records"`.
+- Face/profile mapping is saved to `app."Confirmation_face_identities"`.
 - The app uses `record_timestamp`, `created_at`, and `updated_at`.
+- The app database default is `Confirmation_confirmation_app`.
+- Tables use the `Confirmation_*` naming pattern so they are easy to separate in pgAdmin.
 
 ## 1. Install
 
@@ -24,7 +27,7 @@ Example:
 ```env
 PGHOST=localhost
 PGPORT=5432
-PGDATABASE=confirmation_test_db
+PGDATABASE=Confirmation_confirmation_app
 PGUSER=postgres
 PGPASSWORD=your_password
 PGMAINTENANCE_DATABASE=postgres
@@ -58,7 +61,7 @@ PGHOST=host.docker.internal
 npm run setup-db
 ```
 
-This creates the database if missing, then creates/updates the schema and table.
+This creates the database if missing, then creates/updates the schema and tables.
 
 ## 4. Run
 
@@ -124,7 +127,58 @@ Canvas 640x640 JPEG data URL
 ↓
 Express backend sends JSON body to Face AI
 ↓
-AI response returns name/match
+Face AI returns match/id/hash/img_name
+↓
+App DB checks app."Confirmation_face_identities"
+↓
+App returns the operator profile/details
+```
+
+## Local face profile table
+
+The Face AI stores the embedding. The application stores the person details.
+
+Table:
+
+```text
+app."Confirmation_face_identities"
+```
+
+Important columns:
+
+```text
+operator_name
+employee_id
+department
+role_name
+email
+ai_face_key
+ai_identifiers
+registered_at
+last_seen_at
+```
+
+Register Face now does this:
+
+```text
+1. Send image to Face AI /register
+2. Search the same image if needed to get the AI face key/hash/img_name
+3. Save that AI key + operator details in app."Confirmation_face_identities"
+```
+
+Face Login now does this:
+
+```text
+1. Send image to Face AI /search
+2. Extract AI identifiers from the result
+3. Find matching row in app."Confirmation_face_identities"
+4. Login as that app profile
+```
+
+To see registered local profiles:
+
+```text
+GET http://localhost:5178/api/face/identities
 ```
 
 ## Face AI HTTP 400
@@ -162,7 +216,7 @@ npm run setup-db
 npm run dev
 ```
 
-The server also auto-checks the schema when `/api/health`, `/api/records`, or save record is called.
+The server also auto-checks the schema when `/api/health`, `/api/records`, `/api/face/register`, `/api/face/search`, or save record is called.
 
 ## Scripts
 
