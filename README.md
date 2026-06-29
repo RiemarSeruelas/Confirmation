@@ -276,26 +276,25 @@ logs/
 .idea/
 ```
 
+
 ## Docker quick run
 
-Make sure `.env` is filled first. Keep `PORT=5178` inside `.env` when using Docker. The outside browser port is mapped to `5055`.
-
-Build the image:
+Build the image. Use `--no-cache` the first time if Docker reused an old cached install layer.
 
 ```bash
-docker build -t confirmation-test-app .
+docker build --no-cache -t confirmation-test-app .
 ```
 
-Run DB setup once:
+Run DB setup once inside Docker:
 
 ```bash
 docker run --rm --env-file .env confirmation-test-app npm run setup-db
 ```
 
-Run the app:
+Run the app on port 5055:
 
 ```bash
-docker rm -f confirmation-test-app 2>nul || true
+docker rm -f confirmation-test-app
 docker run -d --env-file .env -p 5055:5178 --name confirmation-test-app confirmation-test-app
 ```
 
@@ -305,10 +304,6 @@ Open:
 http://localhost:5055
 ```
 
-Or use Docker Compose:
+Keep `PORT=5178` in `.env`. Docker maps `5055` outside to `5178` inside.
 
-```bash
-docker compose up --build
-```
-
-For LAN camera access from another PC, use HTTPS. Browser camera access works on `localhost`, but `http://server-ip:5055` may block the camera.
+If you see `vite: not found`, rebuild using `--no-cache` and make sure you are using this updated Dockerfile.
