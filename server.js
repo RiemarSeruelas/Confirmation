@@ -1,4 +1,5 @@
 import path from "path";
+import fs from "fs/promises";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import express from "express";
@@ -13,6 +14,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 5178);
 const isProduction = process.env.NODE_ENV === "production";
+
+let schemaReadyPromise = null;
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
@@ -45,18 +48,63 @@ function getValidationError(body) {
   return null;
 }
 
+function getFriendlyDbError(error) {
+  if (error.code === "ECONNREFUSED") {
+    return "PostgreSQL connection refused. Check PGHOST, PGPORT, and make sure PostgreSQL is running.";
+  }
+
+  if (error.code === "ENOTFOUND") {
+    return "PostgreSQL host was not found. Check PGHOST in your .env file.";
+  }
+
+  if (error.code === "28P01") {
+    return "PostgreSQL username or password is wrong. Check PGUSER and PGPASSWORD.";
+  }
+
+  if (error.code === "3D000") {
+    return "Database does not exist yet. Run npm run setup-db first.";
+  }
+
+  if (error.code === "42P01") {
+    return "Table does not exist yet. Run npm run setup-db, then restart the app.";
+  }
+
+  if (error.code === "42703") {
+    return "A database column is missing. Run npm run setup-db once, then restart the app.";
+  }
+
+  return error.message || "Database error.";
+}
+
+async function ensureSchemaReady() {
+  if (!schemaReadyPromise) {
+    schemaReadyPromise = (async () => {
+      const schemaPath = path.join(__dirname, "schema.sql");
+      const schemaSql = await fs.readFile(schemaPath, "utf8");
+      await pool.query(schemaSql);
+    })();
+  }
+
+  return schemaReadyPromise;
+}
+
 app.get("/api/health", async (_req, res) => {
   try {
+    await ensureSchemaReady();
     const connection = await testDbConnection();
     res.json({ ok: true, dbTime: connection.server_time });
   } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
+    schemaReadyPromise = null;
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
   }
 });
 
 app.get("/api/records", async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 50), 200);
+    await ensureSchemaReady();
+
+    const requestedLimit = Number(req.query.limit || 50);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 50;
 
     const result = await pool.query(
       `
@@ -81,12 +129,15 @@ app.get("/api/records", async (req, res) => {
 
     res.json({ records: result.rows });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    schemaReadyPromise = null;
+    res.status(500).json({ error: getFriendlyDbError(error) });
   }
 });
 
 app.post("/api/records", async (req, res) => {
   try {
+    await ensureSchemaReady();
+
     const validationError = getValidationError(req.body || {});
     if (validationError) {
       return res.status(400).json({ error: validationError });
@@ -131,7 +182,8 @@ app.post("/api/records", async (req, res) => {
 
     res.status(201).json({ record: result.rows[0] });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    schemaReadyPromise = null;
+    res.status(500).json({ error: getFriendlyDbError(error) });
   }
 });
 
@@ -145,5 +197,5 @@ if (isProduction) {
 }
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`Server ready: http://localhost:${PORT}`);
 });
