@@ -1,1 +1,9 @@
-PGDATABASE=Confirmation_confirmation_app
+◇ injected env (22) from .env // tip: ⌘ override existing { override: true }
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+🔎 Connection target: myuser@10.156.119.155:5432/Confirmation_confirmation_app
+🔎 Checking database: Confirmation_confirmation_app
+🔎 Using maintenance database: postgres
+🛠️ Creating database: Confirmation_confirmation_app
+❌ Failed to setup database:
+The PostgreSQL user does not have permission to create database "Confirmation_confirmation_app". Use a superuser/admin account for npm run setup-db, or create the database manually once.
+PS C:\Users\ASUS\Downloads\5th Project> npm.cmd run dev 
