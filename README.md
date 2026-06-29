@@ -276,7 +276,7 @@ logs/
 .idea/
 ```
 
-## Docker quick run
+## Docker
 
 Build the image:
 
@@ -284,7 +284,7 @@ Build the image:
 docker build --no-cache -t confirmation-test-app .
 ```
 
-Run the DB setup once:
+Run DB setup once:
 
 ```bash
 docker run --rm --env-file .env confirmation-test-app npm run setup-db
@@ -303,6 +303,4 @@ Open:
 http://localhost:5055
 ```
 
-Keep `PORT=5178` inside `.env`. Docker maps your PC port `5055` to the container port `5178`.
-
-If Docker says `vite: not found`, rebuild using `--no-cache`. This Dockerfile also installs Vite explicitly as a safety step.
+Keep `PORT=5178` inside `.env`. Docker maps outside `5055` to inside `5178`.
