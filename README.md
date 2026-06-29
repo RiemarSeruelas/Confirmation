@@ -276,10 +276,7 @@ logs/
 .idea/
 ```
 
-
 ## Docker quick run
-
-The Docker image serves the built React app and Express backend from one container.
 
 Build the image:
 
@@ -287,9 +284,7 @@ Build the image:
 docker build --no-cache -t confirmation-test-app .
 ```
 
-If the build stops at `npm ci` with `context canceled`, Docker was interrupted while downloading/installing npm packages. Run the same build command again. The first build can take a few minutes on slow network.
-
-Run DB setup once inside Docker:
+Run the DB setup once:
 
 ```bash
 docker run --rm --env-file .env confirmation-test-app npm run setup-db
@@ -308,12 +303,6 @@ Open:
 http://localhost:5055
 ```
 
-Keep `PORT=5178` in `.env`. Docker maps `5055` outside to `5178` inside.
+Keep `PORT=5178` inside `.env`. Docker maps your PC port `5055` to the container port `5178`.
 
-Or use compose:
-
-```bash
-docker compose up --build
-```
-
-If PostgreSQL is on another server, keep its real IP in `PGHOST`, for example `PGHOST=10.156.119.155`.
+If Docker says `vite: not found`, rebuild using `--no-cache`. This Dockerfile also installs Vite explicitly as a safety step.
