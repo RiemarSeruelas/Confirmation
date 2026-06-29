@@ -256,7 +256,7 @@ The server also auto-checks the schema when `/api/health`, `/api/records`, `/api
 npm run dev       # run backend + frontend
 npm run server    # backend only
 npm run client    # frontend only
-npm run setup-db  # create db if missing + apply schema
+npm run setup-db  # apply schema/tables inside the DB from .env
 npm run check-db  # test DB connection
 npm run build     # build frontend
 npm start         # run backend for production build
@@ -279,11 +279,15 @@ logs/
 
 ## Docker quick run
 
-Build the image. Use `--no-cache` the first time if Docker reused an old cached install layer.
+The Docker image serves the built React app and Express backend from one container.
+
+Build the image:
 
 ```bash
 docker build --no-cache -t confirmation-test-app .
 ```
+
+If the build stops at `npm ci` with `context canceled`, Docker was interrupted while downloading/installing npm packages. Run the same build command again. The first build can take a few minutes on slow network.
 
 Run DB setup once inside Docker:
 
@@ -306,4 +310,10 @@ http://localhost:5055
 
 Keep `PORT=5178` in `.env`. Docker maps `5055` outside to `5178` inside.
 
-If you see `vite: not found`, rebuild using `--no-cache` and make sure you are using this updated Dockerfile.
+Or use compose:
+
+```bash
+docker compose up --build
+```
+
+If PostgreSQL is on another server, keep its real IP in `PGHOST`, for example `PGHOST=10.156.119.155`.

@@ -1,13 +1,13 @@
-FROM node:22-bullseye-slim
+FROM node:20-alpine
 
 WORKDIR /app
 
-# Keep dev deps during image build because Vite is needed to build the React app.
+# Vite is needed during build, so install dev dependencies too.
 ENV NODE_ENV=development
+ENV NPM_CONFIG_PRODUCTION=false
 
 COPY package*.json ./
-RUN npm install -g npm@11.17.0
-RUN npm ci
+RUN npm ci --include=dev --no-audit --no-fund --loglevel=error
 
 COPY . .
 RUN npm run build

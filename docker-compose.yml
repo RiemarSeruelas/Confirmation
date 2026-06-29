@@ -4,9 +4,6 @@ services:
     container_name: confirmation-test-app
     env_file:
       - .env
-    environment:
-      NODE_ENV: production
-      PORT: 5178
     ports:
       - "5055:5178"
     restart: unless-stopped
