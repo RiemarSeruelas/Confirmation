@@ -18,7 +18,7 @@ const isProduction = process.env.NODE_ENV === "production";
 const AI_FACE_BASE_URL = process.env.AI_FACE_BASE_URL || "http://10.156.119.146:5005";
 const AI_FACE_REGISTER_PATH = process.env.AI_FACE_REGISTER_PATH || "/register";
 const AI_FACE_SEARCH_PATH = process.env.AI_FACE_SEARCH_PATH || "/search";
-const AI_FACE_IMAGE_FIELD = process.env.AI_FACE_IMAGE_FIELD || "file";
+const AI_FACE_IMAGE_FIELD = process.env.AI_FACE_IMAGE_FIELD || "img";
 const AI_FACE_NAME_FIELD = process.env.AI_FACE_NAME_FIELD || "name";
 const AI_FACE_TIMEOUT_MS = Number(process.env.AI_FACE_TIMEOUT_MS || 30000);
 const AI_FACE_PAYLOAD_MODE = process.env.AI_FACE_PAYLOAD_MODE || "auto";
@@ -240,7 +240,7 @@ function makeImageBlob(image) {
 }
 
 function createFaceCandidates({ endpointType, image, operatorName }) {
-  const imageFields = uniqueValues([AI_FACE_IMAGE_FIELD, "file", "image", "face", "photo", "upload"]);
+  const imageFields = uniqueValues([AI_FACE_IMAGE_FIELD, "img", "file", "image", "face", "photo", "upload"]);
   const nameFields = uniqueValues([AI_FACE_NAME_FIELD, "name", "person_name", "operator_name", "username", "label"]);
   const candidates = [];
   const isRegister = endpointType === "register";
@@ -296,6 +296,8 @@ function createFaceCandidates({ endpointType, image, operatorName }) {
   if (AI_FACE_PAYLOAD_MODE !== "multipart") {
     const nameBody = isRegister ? { [AI_FACE_NAME_FIELD]: operatorName, name: operatorName } : {};
 
+    addJson("json img base64", { ...nameBody, img: image.base64Data });
+    addJson("json img data-url", { ...nameBody, img: image.dataUrl });
     addJson("json image base64", { ...nameBody, image: image.base64Data });
     addJson("json file base64", { ...nameBody, file: image.base64Data });
     addJson("json face base64", { ...nameBody, face: image.base64Data });

@@ -34,7 +34,7 @@ PORT=5178
 AI_FACE_BASE_URL=http://10.156.119.146:5005
 AI_FACE_REGISTER_PATH=/register
 AI_FACE_SEARCH_PATH=/search
-AI_FACE_IMAGE_FIELD=file
+AI_FACE_IMAGE_FIELD=img
 AI_FACE_NAME_FIELD=name
 AI_FACE_TIMEOUT_MS=30000
 AI_FACE_PAYLOAD_MODE=auto
@@ -108,7 +108,7 @@ raw JPEG body
 Keep these defaults first:
 
 ```env
-AI_FACE_IMAGE_FIELD=file
+AI_FACE_IMAGE_FIELD=img
 AI_FACE_NAME_FIELD=name
 AI_FACE_PAYLOAD_MODE=auto
 ```
@@ -161,4 +161,27 @@ npm run setup-db  # create db if missing + apply schema
 npm run check-db  # test DB connection
 npm run build     # build frontend
 npm start         # run backend for production build
+```
+
+
+## Face AI field fix
+
+Your Face AI returned:
+
+```text
+'img' not found in request in either json or form data
+```
+
+So the app now sends the captured face using the `img` field first. Keep this in `.env`:
+
+```env
+AI_FACE_IMAGE_FIELD=img
+AI_FACE_NAME_FIELD=name
+AI_FACE_PAYLOAD_MODE=auto
+```
+
+The capture flow is:
+
+```text
+Browser camera → 640x640 JPEG base64 → backend → multipart/form-data img file → Face AI
 ```
