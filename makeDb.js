@@ -50,19 +50,15 @@ function explainSetupError(error) {
 
   if (error.code === "3D000") {
     return (
-      `Database "${databaseName}" does not exist yet.\n\n` +
-      `Create it manually first, then run npm run setup-db again.\n\n` +
-      `Example SQL:\n` +
-      `CREATE DATABASE ${databaseName};\n\n` +
-      `If you want your app user to own it, use:\n` +
-      `CREATE DATABASE ${databaseName} OWNER ${process.env.PGUSER || "myuser"};`
+      `Database "${databaseName}" does not exist.\n` +
+      `Create that database manually in PostgreSQL, or change PGDATABASE in .env to the existing database that already has your app schema.`
     );
   }
 
   if (error.code === "42501") {
     return (
-      `PostgreSQL permission error. Your user can connect, but cannot create/update something in the database.\n` +
-      `Ask the DB admin to allow your user to create schema/tables in database "${databaseName}".`
+      `PostgreSQL permission error. Your user can connect, but cannot create/update schema or tables in database "${databaseName}".\n` +
+      `Ask the DB admin to grant CREATE permission on that database/schema, or run setup-db using an admin account once.`
     );
   }
 
@@ -72,19 +68,19 @@ function explainSetupError(error) {
 async function main() {
   try {
     console.log(`🔎 Connection target: ${getPrintableTarget()}`);
-    console.log("🔎 setup-db will not create the database anymore.");
-    console.log("🔎 It only creates/updates the schema and tables inside the database you set in .env.");
+    console.log("🔎 setup-db does not create databases.");
+    console.log("🔎 It only creates/updates the app schema tables inside the database from .env.");
 
     const connection = await testDbConnection();
-    console.log("✅ Connected to app database:", connection.server_time);
+    console.log("✅ Connected to PostgreSQL database:", connection.current_database);
 
     const schemaPath = path.join(__dirname, "schema.sql");
     const schemaSql = await fs.readFile(schemaPath, "utf8");
 
     await pool.query(schemaSql);
-    console.log("✅ Database schema is ready: app.confirmation_test_records + app.face_identities");
+    console.log("✅ Tables are ready: app.confirmation_test_records + app.face_identities");
   } catch (error) {
-    console.error("❌ Failed to setup database:");
+    console.error("❌ Failed to setup database tables:");
     console.error(explainSetupError(error));
     process.exitCode = 1;
   } finally {

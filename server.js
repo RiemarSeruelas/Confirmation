@@ -95,7 +95,7 @@ function getFriendlyDbError(error) {
   }
 
   if (error.code === "3D000") {
-    return "Database does not exist yet. Run npm run setup-db first.";
+    return "Database does not exist. Check PGDATABASE in .env and make sure it points to your existing PostgreSQL database.";
   }
 
   if (error.code === "42P01") {

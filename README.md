@@ -9,7 +9,7 @@ Simple React + Express + PostgreSQL app with manual login, AI face login/registe
 - Records are saved to `app.confirmation_test_records`.
 - Face/profile mapping is saved to `app.face_identities`.
 - The app uses `record_timestamp`, `created_at`, and `updated_at`.
-- The app database default is `confirmation_test_db`.
+- The app uses whatever PostgreSQL database name you put in `.env` as `PGDATABASE`.
 
 ## 1. Install
 
@@ -50,10 +50,10 @@ AI_FACE_SEARCH_METHOD=exact
 
 ## Exact PostgreSQL names used by the code
 
-Default database:
+Database:
 
 ```text
-confirmation_test_db
+Whatever you put in `.env` as PGDATABASE
 ```
 
 Schema:
@@ -69,7 +69,7 @@ app.confirmation_test_records
 app.face_identities
 ```
 
-So if you manually create the database as `confirmation_test_db`, the app code and `.env` will match.
+So keep `PGDATABASE` pointed to the existing PostgreSQL database where you want these app tables.
 
 Use this only when the app runs inside Docker but PostgreSQL is on your PC:
 
@@ -77,21 +77,15 @@ Use this only when the app runs inside Docker but PostgreSQL is on your PC:
 PGHOST=host.docker.internal
 ```
 
-## 3. Create the database manually once
+## 3. Choose the PostgreSQL database
 
-The code expects this default database name:
+Use the PostgreSQL database you already have. Put that exact database name in `.env`:
 
-```text
-confirmation_test_db
+```env
+PGDATABASE=your_existing_database_name
 ```
 
-Create it manually in pgAdmin, DBeaver, or psql. Example SQL:
-
-```sql
-CREATE DATABASE confirmation_test_db OWNER myuser;
-```
-
-If you want a different database name, create that database manually and set the same name in `.env` under `PGDATABASE`. The table names stay fixed.
+The code does **not** create a PostgreSQL database anymore. It only creates/updates the schema and tables inside the database from `.env`.
 
 ## 4. Create/update schema and tables
 

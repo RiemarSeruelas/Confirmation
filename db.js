@@ -24,6 +24,6 @@ export const pool = new Pool(
 );
 
 export async function testDbConnection() {
-  const result = await pool.query("SELECT NOW() AS server_time");
+  const result = await pool.query("SELECT current_database() AS current_database, NOW() AS server_time");
   return result.rows[0];
 }

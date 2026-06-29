@@ -5,22 +5,17 @@ import pg from "pg";
 dotenv.config();
 
 const { Pool } = pg;
-
 const DEFAULT_APP_DATABASE = "confirmation_test_db";
-const DEFAULT_MAINTENANCE_DATABASE = "postgres";
 
 function shouldUseSsl() {
   return String(process.env.PGSSL || "false").toLowerCase() === "true";
 }
 
-function getConnectionInfo(databaseOverride) {
+function getConnectionInfo() {
   const useSsl = shouldUseSsl();
 
   if (process.env.DATABASE_URL) {
     const databaseUrl = new URL(process.env.DATABASE_URL);
-    if (databaseOverride) {
-      databaseUrl.pathname = `/${encodeURIComponent(databaseOverride)}`;
-    }
 
     return {
       label: databaseUrl.toString().replace(/:[^:@/]+@/, ":****@"),
@@ -35,13 +30,14 @@ function getConnectionInfo(databaseOverride) {
 
   const host = process.env.PGHOST || "localhost";
   const port = Number(process.env.PGPORT || 5432);
-  const database = databaseOverride || process.env.PGDATABASE || DEFAULT_APP_DATABASE;
+  const database = process.env.PGDATABASE || DEFAULT_APP_DATABASE;
   const user = process.env.PGUSER || "postgres";
 
   return {
     label: `${user}@${host}:${port}/${database}`,
     host,
     port,
+    database,
     config: {
       host,
       port,
@@ -88,8 +84,6 @@ async function checkPgConnection(label, config) {
 }
 
 async function main() {
-  const maintenanceDatabase = process.env.PGMAINTENANCE_DATABASE || DEFAULT_MAINTENANCE_DATABASE;
-  const appDatabase = process.env.PGDATABASE || DEFAULT_APP_DATABASE;
   const appInfo = getConnectionInfo();
 
   console.log("🔎 DB connection check");
@@ -114,23 +108,11 @@ async function main() {
   console.log(`✅ TCP port is open: ${appInfo.host}:${appInfo.port}`);
 
   try {
-    const maintenanceInfo = getConnectionInfo(maintenanceDatabase);
-    await checkPgConnection(`maintenance DB: ${maintenanceInfo.label}`, maintenanceInfo.config);
+    await checkPgConnection(appInfo.label, appInfo.config);
   } catch (error) {
-    console.error("❌ Connected to the port, but PostgreSQL login/query failed for maintenance DB.");
+    console.error("❌ Connected to the port, but PostgreSQL login/query failed.");
     console.error(`   Error: ${error.message}`);
-    console.error("   Check PGUSER, PGPASSWORD, PGMAINTENANCE_DATABASE, and PGSSL.");
-    process.exitCode = 1;
-    return;
-  }
-
-  try {
-    const targetInfo = getConnectionInfo(appDatabase);
-    await checkPgConnection(`app DB: ${targetInfo.label}`, targetInfo.config);
-  } catch (error) {
-    console.error("❌ Maintenance DB works, but app DB connection failed.");
-    console.error(`   Error: ${error.message}`);
-    console.error("   If the app database does not exist yet, run: npm run setup-db");
+    console.error("   Check PGDATABASE, PGUSER, PGPASSWORD, and PGSSL in .env.");
     process.exitCode = 1;
   }
 }
