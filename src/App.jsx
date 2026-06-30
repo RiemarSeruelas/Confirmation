@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const siteOptions = ["Savoury", "Dressings"];
 const roleOptions = ["operator", "admin"];
@@ -151,7 +151,7 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <section className="camera-modal clean-card">
+      <section className="camera-modal glass-card">
         <div className="modal-header">
           <div>
             <p className="eyebrow">AI Facial Recognition</p>
@@ -177,7 +177,7 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
   );
 }
 
-function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin }) {
+function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser }) {
   const [faceOpen, setFaceOpen] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -199,17 +199,16 @@ function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin }) {
   }
 
   return (
-    <main className="landing-page gradient-bg">
-      <section className="login-shell clean-card">
-        <div className="brand-circle">CT</div>
+    <main className="landing-page app-gradient">
+      <section className="login-card glass-card">
+        <div className="brand-mark">CT</div>
         <p className="eyebrow">Confirmation Test</p>
         <h1>Operator Confirmation</h1>
-        <p className="login-subtitle">Clean input, face registration, and shift-based editable responses.</p>
-
         <div className="login-actions">
           <button type="button" onClick={() => setFaceOpen(true)}>Login</button>
           <button className="secondary-button" type="button" onClick={onRegister}>Register</button>
           <button className="secondary-button" type="button" onClick={onMachineView}>View Machine</button>
+          <button className="ghost-button" type="button" onClick={onDemoUser}>Login as User</button>
           <button className="ghost-button" type="button" onClick={onAdmin}>Admin</button>
         </div>
 
@@ -219,7 +218,7 @@ function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin }) {
       {faceOpen && (
         <FaceCaptureModal
           title="Face Login"
-          description="Capture your face to open the record input page."
+          description="Capture your face to open your assigned page."
           onClose={() => setFaceOpen(false)}
           onCapture={handleLoginCapture}
         />
@@ -265,14 +264,13 @@ function RegisterPage({ onBack, onRegistered }) {
   }
 
   return (
-    <main className="form-page gradient-bg">
+    <main className="form-page app-gradient page-pad no-topbar-pad">
       <section className="form-layout single">
-        <form className="input-form clean-card" onSubmit={handleSubmit}>
+        <form className="input-form glass-card" onSubmit={handleSubmit}>
           <div className="form-title-row">
             <div>
               <p className="eyebrow">New Operator</p>
               <h1>Register Profile</h1>
-              <p>Operator role is used by default. Admins can create admin accounts from the admin page.</p>
             </div>
             <button className="ghost-button" type="button" onClick={onBack}>Back</button>
           </div>
@@ -306,7 +304,6 @@ function RegisterPage({ onBack, onRegistered }) {
           <div className="face-capture-row">
             <div>
               <strong>Facial Recognition</strong>
-              <p>{imageDataUrl ? "Face captured and ready to register." : "Capture the operator face before saving."}</p>
             </div>
             <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>
               {imageDataUrl ? "Retake Face" : "Capture Face"}
@@ -338,14 +335,26 @@ function TopBar({ user, page, setPage, onLogout }) {
 
   return (
     <header className="topbar">
-      <div>
-        <strong>Confirmation Test</strong>
-        <span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}</span>
+      <div className="topbar-brand">
+        <div className="mini-logo">CT</div>
+        <div>
+          <strong>Confirmation Test</strong>
+          <span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}</span>
+        </div>
       </div>
       <nav>
-        {isAdmin && <button className={page === "admin" ? "active" : ""} type="button" onClick={() => setPage("admin")}>Admin</button>}
-        <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Record Input</button>
-        <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>View Machine</button>
+        {isAdmin ? (
+          <>
+            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>View Machine</button>
+            <button className={page === "adminRegister" ? "active" : ""} type="button" onClick={() => setPage("adminRegister")}>Register</button>
+            <button className={page === "logs" ? "active" : ""} type="button" onClick={() => setPage("logs")}>Logs</button>
+          </>
+        ) : (
+          <>
+            <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Record Input</button>
+            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>View Machine</button>
+          </>
+        )}
         <button type="button" onClick={onLogout}>Logout</button>
       </nav>
     </header>
@@ -416,17 +425,16 @@ function RecordInputPage({ user }) {
   }, [user?.id]);
 
   return (
-    <main className="form-page gradient-bg soft-page">
+    <main className="form-page app-gradient page-pad">
       <section className="form-layout">
-        <form className="input-form clean-card" onSubmit={handleSubmit}>
+        <form className="input-form glass-card" onSubmit={handleSubmit}>
           <div className="form-title-row">
             <div>
               <p className="eyebrow">Record Input</p>
               <h1>Confirmation Response</h1>
-              <p>Submit once per shift. You can still edit while the selected shift is active.</p>
             </div>
             <span className={canEditSelectedShift ? "shift-badge open" : "shift-badge closed"}>
-              {canEditSelectedShift ? "Editable now" : "Locked for now"}
+              {canEditSelectedShift ? "Editable now" : "Locked"}
             </span>
           </div>
 
@@ -468,11 +476,10 @@ function RecordInputPage({ user }) {
           </label>
 
           <button type="submit" disabled={saving || !canEditSelectedShift}>{saving ? "Saving..." : "Submit / Update Response"}</button>
-          {!canEditSelectedShift && <p className="hint-text">Editing opens only during the selected shift: 6AM-2PM, 2PM-10PM, or 10PM-6AM.</p>}
           {message && <p className="message">{message}</p>}
         </form>
 
-        <section className="side-card clean-card">
+        <section className="side-card glass-card">
           <div className="records-header compact">
             <div>
               <p className="eyebrow">My Logs</p>
@@ -526,13 +533,11 @@ function RecordList({ records, compact = false }) {
   );
 }
 
-function AdminPage({ adminUser }) {
+function AdminRegisterPage({ adminUser }) {
   const [userForm, setUserForm] = useState({ ...emptyUserForm, roleName: "operator" });
   const [imageDataUrl, setImageDataUrl] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [users, setUsers] = useState([]);
-  const [records, setRecords] = useState([]);
-  const [summary, setSummary] = useState(null);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -540,15 +545,9 @@ function AdminPage({ adminUser }) {
     setUserForm((current) => ({ ...current, [field]: value }));
   }
 
-  async function loadAdminData() {
-    const [usersData, recordsData, summaryData] = await Promise.all([
-      fetchJson("/api/admin/users"),
-      fetchJson("/api/records?limit=200"),
-      fetchJson("/api/dashboard/summary"),
-    ]);
+  async function loadUsers() {
+    const usersData = await fetchJson("/api/admin/users");
     setUsers(usersData.users || []);
-    setRecords(recordsData.records || []);
-    setSummary(summaryData.stats || null);
   }
 
   async function handleCreateUser(event) {
@@ -565,7 +564,7 @@ function AdminPage({ adminUser }) {
       setMessage(`Saved ${data.profile.operator_name} as ${data.profile.role_name}.`);
       setUserForm({ ...emptyUserForm, roleName: "operator" });
       setImageDataUrl("");
-      await loadAdminData();
+      await loadUsers();
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -574,17 +573,15 @@ function AdminPage({ adminUser }) {
   }
 
   useEffect(() => {
-    loadAdminData().catch((error) => setMessage(error.message));
+    loadUsers().catch((error) => setMessage(error.message));
   }, []);
 
   return (
-    <main className="admin-page gradient-bg soft-page">
-      <section className="admin-grid">
-        <form className="input-form clean-card" onSubmit={handleCreateUser}>
-          <p className="eyebrow">Admin</p>
+    <main className="admin-page app-gradient page-pad">
+      <section className="admin-grid register-grid">
+        <form className="input-form glass-card" onSubmit={handleCreateUser}>
+          <p className="eyebrow">Admin Register</p>
           <h1>Register Anyone</h1>
-          <p>Add operators or admins. Face capture is optional for manual accounts, but needed for face login.</p>
-
           <div className="field-grid two">
             <label>
               Name <span>*</span>
@@ -619,7 +616,6 @@ function AdminPage({ adminUser }) {
           <div className="face-capture-row">
             <div>
               <strong>Face Login Link</strong>
-              <p>{imageDataUrl ? "Face captured for this account." : "No face captured. Manual admin account only."}</p>
             </div>
             <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button>
           </div>
@@ -628,45 +624,19 @@ function AdminPage({ adminUser }) {
           {message && <p className="message">{message}</p>}
         </form>
 
-        <section className="clean-card dashboard-summary">
-          <p className="eyebrow">Dashboard Feed</p>
-          <h2>Submission Summary</h2>
-          <div className="summary-grid">
-            <div><strong>{summary?.total_submissions ?? 0}</strong><span>Total</span></div>
-            <div><strong>{summary?.unique_operators ?? 0}</strong><span>Operators</span></div>
-            <div><strong>{summary?.savoury_count ?? 0}</strong><span>Savoury</span></div>
-            <div><strong>{summary?.dressings_count ?? 0}</strong><span>Dressings</span></div>
+        <section className="glass-card dashboard-summary">
+          <p className="eyebrow">Accounts</p>
+          <h2>Registered People</h2>
+          <div className="user-list compact-users">
+            {users.map((user) => (
+              <article key={user.id}>
+                <strong>{user.operator_name}</strong>
+                <span>{user.site_name} • {user.role_name}</span>
+                <small>{user.ai_face_key ? "Face linked" : "Manual account"}</small>
+              </article>
+            ))}
           </div>
-          <button className="secondary-button" type="button" onClick={loadAdminData}>Refresh Data</button>
         </section>
-      </section>
-
-      <section className="admin-section clean-card">
-        <div className="records-header">
-          <div>
-            <p className="eyebrow">Logs</p>
-            <h2>Who Submitted What</h2>
-          </div>
-        </div>
-        <RecordList records={records} />
-      </section>
-
-      <section className="admin-section clean-card">
-        <div className="records-header">
-          <div>
-            <p className="eyebrow">Accounts</p>
-            <h2>Registered People</h2>
-          </div>
-        </div>
-        <div className="user-list">
-          {users.map((user) => (
-            <article key={user.id}>
-              <strong>{user.operator_name}</strong>
-              <span>{user.site_name} • {user.role_name}</span>
-              <small>{user.ai_face_key ? "Face linked" : "Manual account"}</small>
-            </article>
-          ))}
-        </div>
       </section>
 
       {cameraOpen && (
@@ -680,6 +650,60 @@ function AdminPage({ adminUser }) {
           }}
         />
       )}
+    </main>
+  );
+}
+
+function LogsPage() {
+  const [records, setRecords] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function loadLogs() {
+    try {
+      setLoading(true);
+      setMessage("");
+      const [recordsData, summaryData] = await Promise.all([
+        fetchJson("/api/records?limit=300"),
+        fetchJson("/api/dashboard/summary"),
+      ]);
+      setRecords(recordsData.records || []);
+      setSummary(summaryData.stats || null);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadLogs();
+  }, []);
+
+  return (
+    <main className="logs-page app-gradient page-pad">
+      <section className="logs-shell">
+        <aside className="logs-right">
+          <article className="stat-card glass-card"><span>Total Submissions</span><strong>{summary?.total_submissions ?? 0}</strong></article>
+          <article className="stat-card glass-card"><span>Operators</span><strong>{summary?.unique_operators ?? 0}</strong></article>
+          <article className="stat-card glass-card"><span>Savoury</span><strong>{summary?.savoury_count ?? 0}</strong></article>
+          <article className="stat-card glass-card"><span>Dressings</span><strong>{summary?.dressings_count ?? 0}</strong></article>
+        </aside>
+
+        <section className="logs-left glass-card">
+          <div className="logs-hero-inline">
+            <div>
+              <p className="eyebrow">Logs</p>
+              <h1>Submission Records</h1>
+            </div>
+            <button className="secondary-button" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button>
+          </div>
+
+          {message && <p className="message">{message}</p>}
+          <RecordList records={records} />
+        </section>
+      </section>
     </main>
   );
 }
@@ -707,43 +731,73 @@ function MachineViewPage() {
   const latest = records[0];
 
   return (
-    <main className="machine-page gradient-bg soft-page">
-      <section className="machine-hero clean-card">
-        <div>
-          <p className="eyebrow">Machine View</p>
-          <h1>Confirmation Dashboard</h1>
-          <p>{message}</p>
-        </div>
-        <button className="secondary-button" type="button" onClick={loadDashboard}>Refresh</button>
-      </section>
-
-      <section className="machine-grid">
-        <article className="clean-card metric-card">
-          <span>Latest Reading</span>
-          <strong>{formatNumber(latest?.reading_value)}</strong>
-          <p>{latest?.machine_name || "No machine yet"}</p>
-        </article>
-        <article className="clean-card metric-card">
-          <span>Total Submissions</span>
-          <strong>{summary?.total_submissions ?? 0}</strong>
-          <p>All logs</p>
-        </article>
-        <article className="clean-card metric-card">
-          <span>Average Reading</span>
-          <strong>{formatNumber(summary?.avg_reading)}</strong>
-          <p>From record inputs</p>
-        </article>
-      </section>
-
-      <section className="admin-section clean-card">
-        <div className="records-header">
-          <div>
-            <p className="eyebrow">Latest Logs</p>
-            <h2>Data Sent to Dashboard</h2>
+    <main className="machine-page app-gradient page-pad">
+      <section className="machine-monitor">
+        <aside className="asset-panel">
+          <div className="asset-brand">Unilever</div>
+          <dl>
+            <div><dt>Asset Name</dt><dd>{latest?.machine_name || "Selo 3 Cooker 2"}</dd></div>
+            <div><dt>Status</dt><dd className="status-ok">Live</dd></div>
+            <div><dt>Latest Reading</dt><dd>{formatNumber(latest?.reading_value)}</dd></div>
+            <div><dt>Product</dt><dd>{latest?.product || "—"}</dd></div>
+            <div><dt>Batch</dt><dd>{latest?.batch_number || "—"}</dd></div>
+            <div><dt>Operator</dt><dd>{latest?.operator_name || "—"}</dd></div>
+            <div><dt>Last Update</dt><dd>{formatDateTime(latest?.record_timestamp)}</dd></div>
+          </dl>
+          <div className="asset-mini-stats" aria-label="Machine dashboard totals">
+            <article><span>Average</span><strong>{formatNumber(summary?.avg_reading)}</strong></article>
+            <article><span>Savoury</span><strong>{summary?.savoury_count ?? 0}</strong></article>
+            <article><span>Dressings</span><strong>{summary?.dressings_count ?? 0}</strong></article>
           </div>
-        </div>
-        <RecordList records={records} />
+        </aside>
+
+        <section className="process-view">
+          <div className="monitor-head">
+            <div>
+              <p className="eyebrow">Machine Interface</p>
+              <h1>{latest?.machine_name || "SELO-3 Cooker 2"}</h1>
+            </div>
+            <button className="monitor-refresh" type="button" onClick={loadDashboard}>Refresh</button>
+          </div>
+
+          <div className="machine-stage">
+            <div className="machine-visual" aria-hidden="true">
+              <div className="vessel" />
+              <div className="motor" />
+              <div className="legs left" />
+              <div className="legs right" />
+              <div className="pipe" />
+            </div>
+
+            <article className="callout callout-a">
+              <span>Reading Value</span>
+              <strong>{formatNumber(latest?.reading_value)}</strong>
+              <small>{formatDateTime(latest?.record_timestamp)}</small>
+            </article>
+            <article className="callout callout-b">
+              <span>Machine</span>
+              <strong>{latest?.machine_name || "Waiting"}</strong>
+              <small>{latest?.shift_name || "No shift yet"}</small>
+            </article>
+            <article className="callout callout-c">
+              <span>Product / Batch</span>
+              <strong>{latest?.product || "—"}</strong>
+              <small>{latest?.batch_number || "—"}</small>
+            </article>
+            <article className="callout callout-d">
+              <span>Site</span>
+              <strong>{latest?.site_name || "—"}</strong>
+              <small>{latest?.operator_name || "No operator"}</small>
+            </article>
+            <article className="callout callout-e">
+              <span>Total Submissions</span>
+              <strong>{summary?.total_submissions ?? 0}</strong>
+              <small>Dashboard feed</small>
+            </article>
+          </div>
+        </section>
       </section>
+
     </main>
   );
 }
@@ -754,7 +808,12 @@ function App() {
 
   function handleAdminSkip() {
     setUser({ id: null, operator_name: "Temporary Admin", site_name: "Admin", role_name: "admin" });
-    setPage("admin");
+    setPage("machine");
+  }
+
+  function handleDemoUser() {
+    setUser({ id: null, operator_name: "Temporary User", site_name: "Savoury", role_name: "operator" });
+    setPage("record");
   }
 
   function handleLogout() {
@@ -767,11 +826,12 @@ function App() {
       <AuthPage
         onFaceLogin={(profile) => {
           setUser(profile);
-          setPage(userRole(profile) === "admin" ? "admin" : "record");
+          setPage(userRole(profile) === "admin" ? "machine" : "record");
         }}
         onRegister={() => setPage("register")}
         onMachineView={() => setPage("machine")}
         onAdmin={handleAdminSkip}
+        onDemoUser={handleDemoUser}
       />
     );
   }
@@ -792,7 +852,7 @@ function App() {
   return (
     <>
       <TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} />
-      {page === "admin" ? <AdminPage adminUser={user} /> : page === "machine" ? <MachineViewPage /> : <RecordInputPage user={user} />}
+      {page === "adminRegister" ? <AdminRegisterPage adminUser={user} /> : page === "logs" ? <LogsPage /> : page === "machine" ? <MachineViewPage /> : <RecordInputPage user={user} />}
     </>
   );
 }
