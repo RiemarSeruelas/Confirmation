@@ -21,6 +21,7 @@ Inside that database, the app uses these tables:
 ```text
 app.confirmation_test_records
 app.face_identities
+app.machine_configs
 ```
 
 `setup-db` does not create a PostgreSQL database. It only creates or updates the tables inside the database you set in `.env`.
@@ -30,14 +31,14 @@ app.face_identities
 - Clean login screen with Login, Register, View Machine, and Admin.
 - Light purple to light blue background.
 - Face login through your Face AI workstation.
-- Register operator with name, site, face, and role defaulting to operator.
+- Register operator with name, site, shift, and face.
 - Admin skip button for now.
 - Admin can register operators or admins.
-- Admin can create a manual account without face, or capture face for face login.
+- Admin can create machine setups: machine name, site, details, image, thresholds, input fields, required fields, and callout locations.
+- Record input is generated from the admin machine setup.
+- Operators can submit multiple machines; same operator + same machine + same shift updates the existing response.
 - Admin can view submission logs and registered people.
-- Record input behaves like a clean input form.
-- Operators can submit or edit only during the selected shift.
-- Machine View/dashboard reads the saved confirmation records.
+- Machine View/dashboard reads the configured machine setup and saved confirmation records.
 
 ## Shift edit windows
 

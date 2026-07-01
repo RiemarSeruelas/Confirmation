@@ -30,7 +30,7 @@ const AI_FACE_SEARCH_METHOD = process.env.AI_FACE_SEARCH_METHOD || "exact";
 let schemaReadyPromise = null;
 
 app.use(cors());
-app.use(express.json({ limit: "18mb" }));
+app.use(express.json({ limit: "50mb" }));
 
 function cleanText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
@@ -429,6 +429,93 @@ function getCurrentShiftInfo(date = new Date()) {
   };
 }
 
+
+
+const DEFAULT_MACHINE_FIELDS = [
+  { id: "reading_value", label: "Reading Value", type: "number", required: true, mapsTo: "reading_value" },
+  { id: "product", label: "Product", type: "text", required: false, mapsTo: "product" },
+  { id: "batch_number", label: "Batch Number", type: "text", required: false, mapsTo: "batch_number" },
+  { id: "remarks", label: "Remarks", type: "textarea", required: false, mapsTo: "remarks" },
+];
+
+const DEFAULT_MACHINE_CALLOUTS = [
+  { id: "co-reading", title: "Reading Value", valueKey: "reading_value", x: 28, y: 33 },
+  { id: "co-machine", title: "Machine", valueKey: "machine_name", x: 31, y: 54 },
+  { id: "co-site", title: "Site", valueKey: "site_name", x: 76, y: 43 },
+  { id: "co-total", title: "Total Submissions", valueKey: "total_submissions", x: 74, y: 72 },
+];
+
+function normalizeMachineFields(fields) {
+  const source = Array.isArray(fields) && fields.length ? fields : DEFAULT_MACHINE_FIELDS;
+  return source.map((field, index) => ({
+    id: cleanText(field?.id, `field_${index + 1}`).replace(/[^a-zA-Z0-9_\-]/g, "_") || `field_${index + 1}`,
+    label: cleanText(field?.label, `Field ${index + 1}`),
+    type: ["text", "number", "textarea"].includes(field?.type) ? field.type : "text",
+    required: Boolean(field?.required),
+    mapsTo: ["reading_value", "product", "batch_number", "remarks", "custom"].includes(field?.mapsTo) ? field.mapsTo : "custom",
+  })).slice(0, 30);
+}
+
+function normalizeMachineCallouts(callouts) {
+  const source = Array.isArray(callouts) && callouts.length ? callouts : DEFAULT_MACHINE_CALLOUTS;
+  return source.map((callout, index) => ({
+    id: cleanText(callout?.id, `callout_${index + 1}`).replace(/[^a-zA-Z0-9_\-]/g, "_") || `callout_${index + 1}`,
+    title: cleanText(callout?.title, `Callout ${index + 1}`),
+    valueKey: cleanText(callout?.valueKey, "reading_value"),
+    x: Math.max(3, Math.min(97, Number(callout?.x ?? 50))),
+    y: Math.max(8, Math.min(92, Number(callout?.y ?? 50))),
+  })).slice(0, 30);
+}
+
+function machineRowToConfig(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    machine_name: row.machine_name,
+    site_name: row.site_name || "Savoury",
+    details: row.details || "",
+    image_data_url: row.image_data_url || "",
+    threshold_min: row.threshold_min,
+    threshold_max: row.threshold_max,
+    fields: normalizeMachineFields(row.fields),
+    callouts: normalizeMachineCallouts(row.callouts),
+    active: row.active !== false,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function toJsonObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+}
+
+async function getMachineConfigById(id) {
+  if (!id) return null;
+  const result = await pool.query(
+    `SELECT * FROM app.machine_configs WHERE id = $1 AND active = TRUE LIMIT 1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+async function ensureDefaultMachineIfEmpty() {
+  const count = await pool.query(`SELECT COUNT(*)::int AS count FROM app.machine_configs WHERE active = TRUE`);
+  if ((count.rows[0]?.count || 0) > 0) return;
+  await pool.query(
+    `
+      INSERT INTO app.machine_configs (machine_name, site_name, details, fields, callouts)
+      VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+    `,
+    [
+      "SELO-3 Cooker 2",
+      "Savoury",
+      "Default machine setup. Admin can replace this with the real image, fields, thresholds, and callouts.",
+      JSON.stringify(DEFAULT_MACHINE_FIELDS),
+      JSON.stringify(DEFAULT_MACHINE_CALLOUTS),
+    ]
+  );
+}
 function validateRecordBody(body) {
   if (!cleanText(body.operator_name)) return "Operator name is required.";
   if (!cleanText(body.machine_name)) return "Machine name is required.";
@@ -639,6 +726,118 @@ app.delete("/api/admin/users/:id", async (req, res) => {
   }
 });
 
+
+
+app.get("/api/machines", async (req, res) => {
+  try {
+    await ensureSchemaReady();
+    await ensureDefaultMachineIfEmpty();
+    const site = cleanText(req.query.site);
+    const params = [];
+    let where = "WHERE active = TRUE";
+    if (site) {
+      params.push(normalizeSite(site));
+      where += ` AND site_name = $${params.length}`;
+    }
+    const result = await pool.query(
+      `
+        SELECT *
+        FROM app.machine_configs
+        ${where}
+        ORDER BY site_name ASC, machine_name ASC, id DESC
+      `,
+      params
+    );
+    res.json({ ok: true, machines: result.rows.map(machineRowToConfig) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
+app.get("/api/admin/machines", async (_req, res) => {
+  try {
+    await ensureSchemaReady();
+    await ensureDefaultMachineIfEmpty();
+    const result = await pool.query(
+      `
+        SELECT *
+        FROM app.machine_configs
+        WHERE active = TRUE
+        ORDER BY updated_at DESC, id DESC
+      `
+    );
+    res.json({ ok: true, machines: result.rows.map(machineRowToConfig) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
+app.post("/api/admin/machines", async (req, res) => {
+  try {
+    await ensureSchemaReady();
+    const id = Number(req.body?.id || 0) || null;
+    const machineName = cleanText(req.body?.machine_name);
+    if (!machineName) return res.status(400).json({ ok: false, error: "Machine name is required." });
+    const siteName = normalizeSite(req.body?.site_name);
+    const details = cleanText(req.body?.details);
+    const imageDataUrl = cleanText(req.body?.image_data_url);
+    const thresholdMin = toNullableNumber(req.body?.threshold_min);
+    const thresholdMax = toNullableNumber(req.body?.threshold_max);
+    const fields = normalizeMachineFields(req.body?.fields);
+    const callouts = normalizeMachineCallouts(req.body?.callouts);
+
+    let result;
+    if (id) {
+      result = await pool.query(
+        `
+          UPDATE app.machine_configs
+          SET machine_name = $2,
+              site_name = $3,
+              details = $4,
+              image_data_url = $5,
+              threshold_min = $6,
+              threshold_max = $7,
+              fields = $8::jsonb,
+              callouts = $9::jsonb,
+              active = TRUE
+          WHERE id = $1
+          RETURNING *
+        `,
+        [id, machineName, siteName, details, imageDataUrl, thresholdMin, thresholdMax, JSON.stringify(fields), JSON.stringify(callouts)]
+      );
+      if (!result.rows[0]) return res.status(404).json({ ok: false, error: "Machine was not found." });
+    } else {
+      result = await pool.query(
+        `
+          INSERT INTO app.machine_configs (machine_name, site_name, details, image_data_url, threshold_min, threshold_max, fields, callouts)
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+          RETURNING *
+        `,
+        [machineName, siteName, details, imageDataUrl, thresholdMin, thresholdMax, JSON.stringify(fields), JSON.stringify(callouts)]
+      );
+    }
+
+    res.status(id ? 200 : 201).json({ ok: true, machine: machineRowToConfig(result.rows[0]) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
+app.delete("/api/admin/machines/:id", async (req, res) => {
+  try {
+    await ensureSchemaReady();
+    const id = Number(req.params.id || 0);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ ok: false, error: "Invalid machine ID." });
+    const result = await pool.query(
+      `UPDATE app.machine_configs SET active = FALSE WHERE id = $1 RETURNING id, machine_name`,
+      [id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ ok: false, error: "Machine was not found." });
+    res.json({ ok: true, deleted: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
 app.get("/api/records", async (req, res) => {
   try {
     await ensureSchemaReady();
@@ -661,6 +860,7 @@ app.get("/api/records", async (req, res) => {
           r.operator_id,
           r.operator_name,
           r.site_name,
+          r.machine_config_id,
           r.machine_name,
           r.reading_value,
           r.product,
@@ -668,6 +868,7 @@ app.get("/api/records", async (req, res) => {
           r.shift_name,
           r.shift_work_date,
           r.remarks,
+          r.response_fields,
           r.record_timestamp,
           r.created_at,
           r.updated_at,
@@ -710,11 +911,23 @@ app.post("/api/records/upsert", async (req, res) => {
     const operatorId = Number(req.body.operator_id || 0) || null;
     const operatorName = cleanText(req.body.operator_name);
     const siteName = normalizeSite(req.body.site_name);
-    const machineName = cleanText(req.body.machine_name);
+    const requestedMachineConfigId = Number(req.body.machine_config_id || 0) || null;
+    const machineConfig = await getMachineConfigById(requestedMachineConfigId);
+    const machineConfigId = machineConfig?.id || requestedMachineConfigId;
+    const machineName = cleanText(machineConfig?.machine_name || req.body.machine_name);
     const readingValue = toNullableNumber(req.body.reading_value);
     const product = cleanText(req.body.product);
     const batchNumber = cleanText(req.body.batch_number);
     const remarks = cleanText(req.body.remarks);
+    const responseFields = toJsonObject(req.body.response_fields);
+
+    if (machineConfig) {
+      for (const field of normalizeMachineFields(machineConfig.fields)) {
+        if (field.required && !cleanText(responseFields[field.id])) {
+          return res.status(400).json({ ok: false, error: `${field.label} is required.` });
+        }
+      }
+    }
 
     const existing = await pool.query(
       `
@@ -745,31 +958,33 @@ app.post("/api/records/upsert", async (req, res) => {
             operator_id = $2,
             operator_name = $3,
             site_name = $4,
-            machine_name = $5,
-            reading_value = $6,
-            product = $7,
-            batch_number = $8,
-            shift_name = $9,
-            shift_work_date = $10::date,
-            remarks = $11,
+            machine_config_id = $5,
+            machine_name = $6,
+            reading_value = $7,
+            product = $8,
+            batch_number = $9,
+            shift_name = $10,
+            shift_work_date = $11::date,
+            remarks = $12,
+            response_fields = $13::jsonb,
             record_timestamp = NOW()
           WHERE id = $1
           RETURNING *
         `,
-        [existing.rows[0].id, operatorId, operatorName, siteName, machineName, readingValue, product, batchNumber, shiftName, current.workDate, remarks]
+        [existing.rows[0].id, operatorId, operatorName, siteName, machineConfigId, machineName, readingValue, product, batchNumber, shiftName, current.workDate, remarks, JSON.stringify(responseFields)]
       );
     } else {
       action = "created";
       result = await pool.query(
         `
           INSERT INTO app.confirmation_test_records (
-            operator_id, operator_name, site_name, machine_name, reading_value,
-            product, batch_number, shift_name, shift_work_date, remarks, record_timestamp
+            operator_id, operator_name, site_name, machine_config_id, machine_name, reading_value,
+            product, batch_number, shift_name, shift_work_date, remarks, response_fields, record_timestamp
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, NOW())
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11, $12::jsonb, NOW())
           RETURNING *
         `,
-        [operatorId, operatorName, siteName, machineName, readingValue, product, batchNumber, shiftName, current.workDate, remarks]
+        [operatorId, operatorName, siteName, machineConfigId, machineName, readingValue, product, batchNumber, shiftName, current.workDate, remarks, JSON.stringify(responseFields)]
       );
     }
 

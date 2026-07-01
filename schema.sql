@@ -155,3 +155,53 @@ CREATE TRIGGER trg_confirmation_test_records_updated_at
 BEFORE UPDATE ON app.confirmation_test_records
 FOR EACH ROW
 EXECUTE FUNCTION app.set_updated_at();
+
+CREATE TABLE IF NOT EXISTS app.machine_configs (
+  id SERIAL PRIMARY KEY,
+  machine_name TEXT NOT NULL,
+  site_name TEXT NOT NULL DEFAULT 'Savoury',
+  details TEXT DEFAULT '',
+  image_data_url TEXT DEFAULT '',
+  threshold_min NUMERIC,
+  threshold_max NUMERIC,
+  fields JSONB NOT NULL DEFAULT '[{"id":"reading_value","label":"Reading Value","type":"number","required":true,"mapsTo":"reading_value"},{"id":"product","label":"Product","type":"text","required":false,"mapsTo":"product"},{"id":"batch_number","label":"Batch Number","type":"text","required":false,"mapsTo":"batch_number"},{"id":"remarks","label":"Remarks","type":"textarea","required":false,"mapsTo":"remarks"}]'::jsonb,
+  callouts JSONB NOT NULL DEFAULT '[{"id":"co-reading","title":"Reading Value","valueKey":"reading_value","x":28,"y":33},{"id":"co-machine","title":"Machine","valueKey":"machine_name","x":31,"y":54},{"id":"co-site","title":"Site","valueKey":"site_name","x":76,"y":43},{"id":"co-total","title":"Total Submissions","valueKey":"total_submissions","x":74,"y":72}]'::jsonb,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_machine_configs_site_name CHECK (site_name IN ('Savoury', 'Dressings', 'Admin'))
+);
+
+ALTER TABLE app.machine_configs
+  ADD COLUMN IF NOT EXISTS machine_name TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS site_name TEXT NOT NULL DEFAULT 'Savoury',
+  ADD COLUMN IF NOT EXISTS details TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS image_data_url TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS threshold_min NUMERIC,
+  ADD COLUMN IF NOT EXISTS threshold_max NUMERIC,
+  ADD COLUMN IF NOT EXISTS fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS callouts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_machine_configs_active_site
+ON app.machine_configs(active, site_name, machine_name);
+
+DROP TRIGGER IF EXISTS trg_machine_configs_updated_at
+ON app.machine_configs;
+
+CREATE TRIGGER trg_machine_configs_updated_at
+BEFORE UPDATE ON app.machine_configs
+FOR EACH ROW
+EXECUTE FUNCTION app.set_updated_at();
+
+ALTER TABLE app.confirmation_test_records
+  ADD COLUMN IF NOT EXISTS machine_config_id INTEGER REFERENCES app.machine_configs(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS response_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE INDEX IF NOT EXISTS idx_confirmation_test_records_machine_config
+ON app.confirmation_test_records(machine_config_id);
+
+CREATE INDEX IF NOT EXISTS idx_confirmation_test_records_response_fields
+ON app.confirmation_test_records USING GIN(response_fields);

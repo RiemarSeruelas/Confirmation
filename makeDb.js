@@ -78,7 +78,7 @@ async function main() {
     const schemaSql = await fs.readFile(schemaPath, "utf8");
 
     await pool.query(schemaSql);
-    console.log("✅ Tables are ready: app.confirmation_test_records + app.face_identities");
+    console.log("✅ Tables are ready: app.confirmation_test_records + app.face_identities + app.machine_configs");
   } catch (error) {
     console.error("❌ Failed to setup database tables:");
     console.error(explainSetupError(error));
