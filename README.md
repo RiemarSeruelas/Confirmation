@@ -28,7 +28,7 @@ app.machine_configs
 
 ## Main features
 
-- Clean login screen with Login, Register, View Machine, and Admin.
+- Clean login screen with Login, Register, Machines, and Admin.
 - Light purple to light blue background.
 - Face login through your Face AI workstation.
 - Register operator with name, site, shift, and face.
@@ -38,7 +38,7 @@ app.machine_configs
 - Record input is generated from the admin machine setup.
 - Operators can submit multiple machines; same operator + same machine + same shift updates the existing response.
 - Admin can view submission logs and registered people.
-- Machine View/dashboard reads the configured machine setup and saved confirmation records.
+- Machines/dashboard reads the configured machine setup and saved confirmation records.
 
 ## Shift edit windows
 
@@ -148,10 +148,57 @@ Admin-created machine setups are stored in PostgreSQL in:
 app.machine_configs
 ```
 
-The uploaded machine image is converted in the browser into a compact JPEG base64 data URL, then saved in `image_data_url`. The app renders that same value back as an image in Machine View and in the admin preview.
+The uploaded machine image is converted in the browser into a compact JPEG base64 data URL, then saved in `image_data_url`. The app renders that same value back as an image in Machines and in the admin preview.
 
 Run this after replacing files so the table/columns exist:
 
 ```bash
 npm run setup-db
 ```
+
+## Machine-specific dashboard feed
+
+Machines now scopes the live values to the selected machine.
+
+When you pick a machine, the app calls:
+
+```text
+GET /api/dashboard/summary?machine_config_id=<machine_id>
+```
+
+That endpoint only returns the latest submissions for that selected machine. It matches by `machine_config_id`, with a fallback match by `machine_name` for older rows that may not have the config ID yet.
+
+## Latest design update
+
+- Machines is now light/white instead of the large blue panel.
+- The left panel is simplified into a compact selected-machine/latest-record summary.
+- Admin callout positions are treated as anchor points on the machine image.
+- Machines shows each callout with a dot and connector line pointing to the configured location.
+
+## Latest System Page Notes
+
+- The System machine dropdown now lists only saved machine setups.
+- `+ New Setup` creates a blank setup; no default template machine is auto-created.
+- The left builder panel scrolls independently, and the preview stays visible on the right.
+
+## Latest navigation update
+
+The dashboard is now split into two separate pages:
+
+- **Machines**: shows the selected machine image/interface and live callouts only.
+- **Trends**: shows reading trends, threshold status, warning system, and a side list of each machine.
+
+Threshold Min and Threshold Max are still configured in Admin → System.
+
+
+## Latest update
+
+- Logs now include an automatic machine filter populated from saved machine setups and existing submissions.
+- Logs keep the existing search, site, shift, and date filters.
+
+## Latest UI update
+
+- System page now combines Machine Builder + Point Map into one workspace.
+- Input Fields and Callouts are managed through pop-up editors.
+- Callouts still support separate Card and Point placement.
+- Backend/database logic is unchanged.

@@ -432,39 +432,61 @@ function getCurrentShiftInfo(date = new Date()) {
 
 
 const DEFAULT_MACHINE_FIELDS = [
-  { id: "reading_value", label: "Reading Value", type: "number", required: true, mapsTo: "reading_value" },
-  { id: "product", label: "Product", type: "text", required: false, mapsTo: "product" },
-  { id: "batch_number", label: "Batch Number", type: "text", required: false, mapsTo: "batch_number" },
-  { id: "remarks", label: "Remarks", type: "textarea", required: false, mapsTo: "remarks" },
+  { id: "reading_value", label: "Reading Value", type: "number", required: true, mapsTo: "reading_value", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
+  { id: "product", label: "Product", type: "text", required: false, mapsTo: "product", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
+  { id: "batch_number", label: "Batch Number", type: "text", required: false, mapsTo: "batch_number", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
+  { id: "remarks", label: "Remarks", type: "textarea", required: false, mapsTo: "remarks", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
 ];
 
 const DEFAULT_MACHINE_CALLOUTS = [
-  { id: "co-reading", title: "Reading Value", valueKey: "reading_value", x: 28, y: 33 },
-  { id: "co-machine", title: "Machine", valueKey: "machine_name", x: 31, y: 54 },
-  { id: "co-site", title: "Site", valueKey: "site_name", x: 76, y: 43 },
-  { id: "co-total", title: "Total Submissions", valueKey: "total_submissions", x: 74, y: 72 },
+  { id: "co-reading", title: "Reading Value", valueKey: "reading_value", cardX: 23, cardY: 33, pointX: 43, pointY: 40, x: 43, y: 40 },
+  { id: "co-machine", title: "Machine", valueKey: "machine_name", cardX: 67, cardY: 27, pointX: 62, pointY: 32, x: 62, y: 32 },
+  { id: "co-site", title: "Site", valueKey: "site_name", cardX: 68, cardY: 72, pointX: 57, pointY: 65, x: 57, y: 65 },
+  { id: "co-total", title: "Total Submissions", valueKey: "total_submissions", cardX: 82, cardY: 79, pointX: 77, pointY: 74, x: 77, y: 74 },
 ];
 
 function normalizeMachineFields(fields) {
-  const source = Array.isArray(fields) && fields.length ? fields : DEFAULT_MACHINE_FIELDS;
+  const source = Array.isArray(fields) && fields.length ? fields : [];
   return source.map((field, index) => ({
     id: cleanText(field?.id, `field_${index + 1}`).replace(/[^a-zA-Z0-9_\-]/g, "_") || `field_${index + 1}`,
     label: cleanText(field?.label, `Field ${index + 1}`),
     type: ["text", "number", "textarea"].includes(field?.type) ? field.type : "text",
     required: Boolean(field?.required),
     mapsTo: ["reading_value", "product", "batch_number", "remarks", "custom"].includes(field?.mapsTo) ? field.mapsTo : "custom",
+    thresholdEnabled: Boolean(field?.thresholdEnabled || field?.threshold_enabled),
+    threshold_min: field?.threshold_min === undefined || field?.threshold_min === null ? "" : String(field.threshold_min),
+    threshold_max: field?.threshold_max === undefined || field?.threshold_max === null ? "" : String(field.threshold_max),
   })).slice(0, 30);
 }
 
+function clampPercentValue(value, fallback, min = 3, max = 97) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return fallback;
+  return Math.max(min, Math.min(max, numberValue));
+}
+
 function normalizeMachineCallouts(callouts) {
-  const source = Array.isArray(callouts) && callouts.length ? callouts : DEFAULT_MACHINE_CALLOUTS;
-  return source.map((callout, index) => ({
-    id: cleanText(callout?.id, `callout_${index + 1}`).replace(/[^a-zA-Z0-9_\-]/g, "_") || `callout_${index + 1}`,
-    title: cleanText(callout?.title, `Callout ${index + 1}`),
-    valueKey: cleanText(callout?.valueKey, "reading_value"),
-    x: Math.max(3, Math.min(97, Number(callout?.x ?? 50))),
-    y: Math.max(8, Math.min(92, Number(callout?.y ?? 50))),
-  })).slice(0, 30);
+  const source = Array.isArray(callouts) && callouts.length ? callouts : [];
+  return source.map((callout, index) => {
+    const pointX = clampPercentValue(callout?.pointX ?? callout?.x, 50, 3, 97);
+    const pointY = clampPercentValue(callout?.pointY ?? callout?.y, 50, 6, 94);
+    const fallbackCardX = pointX < 50 ? Math.max(8, pointX - 20) : Math.min(92, pointX + 20);
+    const cardX = clampPercentValue(callout?.cardX, fallbackCardX, 5, 95);
+    const cardY = clampPercentValue(callout?.cardY, pointY, 8, 92);
+
+    return {
+      id: cleanText(callout?.id, `callout_${index + 1}`).replace(/[^a-zA-Z0-9_\-]/g, "_") || `callout_${index + 1}`,
+      title: cleanText(callout?.title, `Callout ${index + 1}`),
+      valueKey: cleanText(callout?.valueKey, "reading_value"),
+      cardX,
+      cardY,
+      pointX,
+      pointY,
+      // Keep x/y for older frontend data, but do not use them as the card position.
+      x: pointX,
+      y: pointY,
+    };
+  }).slice(0, 30);
 }
 
 function machineRowToConfig(row) {
@@ -482,6 +504,26 @@ function machineRowToConfig(row) {
     active: row.active !== false,
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+function getReadingThresholds(machineConfig) {
+  if (!machineConfig) return { thresholdMin: null, thresholdMax: null };
+  const fields = normalizeMachineFields(machineConfig.fields);
+  const readingField =
+    fields.find((field) => field.mapsTo === "reading_value") ||
+    fields.find((field) => field.id === "reading_value") ||
+    fields.find((field) => field.type === "number" && field.thresholdEnabled);
+
+  const fieldLimitsEnabled = readingField?.thresholdEnabled && readingField?.type === "number";
+  const minSource = fieldLimitsEnabled ? readingField.threshold_min : machineConfig.threshold_min;
+  const maxSource = fieldLimitsEnabled ? readingField.threshold_max : machineConfig.threshold_max;
+  const min = minSource === "" || minSource === null || minSource === undefined ? null : Number(minSource);
+  const max = maxSource === "" || maxSource === null || maxSource === undefined ? null : Number(maxSource);
+
+  return {
+    thresholdMin: Number.isFinite(min) ? min : null,
+    thresholdMax: Number.isFinite(max) ? max : null,
   };
 }
 
@@ -731,7 +773,6 @@ app.delete("/api/admin/users/:id", async (req, res) => {
 app.get("/api/machines", async (req, res) => {
   try {
     await ensureSchemaReady();
-    await ensureDefaultMachineIfEmpty();
     const site = cleanText(req.query.site);
     const params = [];
     let where = "WHERE active = TRUE";
@@ -757,7 +798,6 @@ app.get("/api/machines", async (req, res) => {
 app.get("/api/admin/machines", async (_req, res) => {
   try {
     await ensureSchemaReady();
-    await ensureDefaultMachineIfEmpty();
     const result = await pool.query(
       `
         SELECT *
@@ -844,14 +884,55 @@ app.get("/api/records", async (req, res) => {
     const requestedLimit = Number(req.query.limit || 100);
     const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 500) : 100;
     const operatorId = Number(req.query.operator_id || 0);
+    const machineConfigId = Number(req.query.machine_config_id || 0);
+    const machineNameQuery = cleanText(req.query.machine_name);
 
-    const params = [limit];
-    let where = "";
+    const params = [];
+    const where = [];
 
     if (operatorId) {
       params.push(operatorId);
-      where = `WHERE r.operator_id = $2`;
+      where.push(`r.operator_id = $${params.length}`);
     }
+
+    if (machineConfigId) {
+      const machineConfig = await getMachineConfigById(machineConfigId);
+      params.push(machineConfigId);
+      const machineIdParam = params.length;
+
+      if (machineConfig?.machine_name) {
+        params.push(machineConfig.machine_name);
+        const machineNameParam = params.length;
+        where.push(`(r.machine_config_id = $${machineIdParam} OR lower(r.machine_name) = lower($${machineNameParam}))`);
+      } else {
+        where.push(`r.machine_config_id = $${machineIdParam}`);
+      }
+    } else if (machineNameQuery) {
+      params.push(machineNameQuery);
+      where.push(`lower(r.machine_name) = lower($${params.length})`);
+    }
+
+    const site = cleanText(req.query.site);
+    if (site) {
+      params.push(normalizeSite(site));
+      where.push(`r.site_name = $${params.length}`);
+    }
+
+    const shift = cleanText(req.query.shift);
+    if (shift) {
+      params.push(normalizeShift(shift));
+      where.push(`r.shift_name = $${params.length}`);
+    }
+
+    const date = cleanText(req.query.date);
+    if (date) {
+      params.push(date);
+      where.push(`(r.record_timestamp AT TIME ZONE 'Asia/Manila')::date = $${params.length}::date`);
+    }
+
+    params.push(limit);
+    const limitParam = params.length;
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     const result = await pool.query(
       `
@@ -875,9 +956,9 @@ app.get("/api/records", async (req, res) => {
           f.role_name
         FROM app.confirmation_test_records r
         LEFT JOIN app.face_identities f ON f.id = r.operator_id
-        ${where}
+        ${whereSql}
         ORDER BY r.record_timestamp DESC, r.id DESC
-        LIMIT $1
+        LIMIT $${limitParam}
       `,
       params
     );
@@ -995,17 +1076,46 @@ app.post("/api/records/upsert", async (req, res) => {
   }
 });
 
-app.get("/api/dashboard/summary", async (_req, res) => {
+app.get("/api/dashboard/summary", async (req, res) => {
   try {
     await ensureSchemaReady();
+
+    const machineConfigId = Number(req.query.machine_config_id || 0);
+    const machineNameQuery = cleanText(req.query.machine_name);
+    const params = [];
+    const where = [];
+    let machineConfig = null;
+
+    if (machineConfigId) {
+      machineConfig = await getMachineConfigById(machineConfigId);
+      params.push(machineConfigId);
+      const machineIdParam = params.length;
+
+      if (machineConfig?.machine_name) {
+        params.push(machineConfig.machine_name);
+        const machineNameParam = params.length;
+        where.push(`(machine_config_id = $${machineIdParam} OR lower(machine_name) = lower($${machineNameParam}))`);
+      } else {
+        where.push(`machine_config_id = $${machineIdParam}`);
+      }
+    } else if (machineNameQuery) {
+      params.push(machineNameQuery);
+      where.push(`lower(machine_name) = lower($${params.length})`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
     const latest = await pool.query(
       `
         SELECT *
         FROM app.confirmation_test_records
+        ${whereSql}
         ORDER BY record_timestamp DESC, id DESC
         LIMIT 20
-      `
+      `,
+      params
     );
+
     const stats = await pool.query(
       `
         SELECT
@@ -1015,9 +1125,120 @@ app.get("/api/dashboard/summary", async (_req, res) => {
           COUNT(DISTINCT operator_name)::int AS unique_operators,
           AVG(reading_value)::float AS avg_reading
         FROM app.confirmation_test_records
-      `
+        ${whereSql}
+      `,
+      params
     );
-    res.json({ ok: true, stats: stats.rows[0], latest: latest.rows });
+
+    res.json({
+      ok: true,
+      stats: stats.rows[0],
+      latest: latest.rows,
+      machine: machineRowToConfig(machineConfig),
+      scoped: Boolean(machineConfigId || machineNameQuery),
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
+
+app.get("/api/dashboard/trends", async (req, res) => {
+  try {
+    await ensureSchemaReady();
+
+    const machineConfigId = Number(req.query.machine_config_id || 0);
+    const machineNameQuery = cleanText(req.query.machine_name);
+    const requestedLimit = Number(req.query.limit || 80);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 5), 300) : 80;
+    const params = [];
+    const where = [];
+    let machineConfig = null;
+
+    if (machineConfigId) {
+      machineConfig = await getMachineConfigById(machineConfigId);
+      params.push(machineConfigId);
+      const machineIdParam = params.length;
+
+      if (machineConfig?.machine_name) {
+        params.push(machineConfig.machine_name);
+        const machineNameParam = params.length;
+        where.push(`(machine_config_id = $${machineIdParam} OR lower(machine_name) = lower($${machineNameParam}))`);
+      } else {
+        where.push(`machine_config_id = $${machineIdParam}`);
+      }
+    } else if (machineNameQuery) {
+      params.push(machineNameQuery);
+      where.push(`lower(machine_name) = lower($${params.length})`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    params.push(limit);
+    const limitParam = params.length;
+
+    const rowsResult = await pool.query(
+      `
+        SELECT
+          id,
+          machine_config_id,
+          machine_name,
+          reading_value,
+          product,
+          batch_number,
+          operator_name,
+          site_name,
+          shift_name,
+          record_timestamp,
+          created_at
+        FROM app.confirmation_test_records
+        ${whereSql}
+        ORDER BY record_timestamp DESC, id DESC
+        LIMIT $${limitParam}
+      `,
+      params
+    );
+
+    const { thresholdMin, thresholdMax } = getReadingThresholds(machineConfig);
+
+    const trendRows = rowsResult.rows.map((row) => {
+      const reading = row.reading_value === null || row.reading_value === undefined ? null : Number(row.reading_value);
+      const below = Number.isFinite(reading) && Number.isFinite(thresholdMin) && reading < thresholdMin;
+      const above = Number.isFinite(reading) && Number.isFinite(thresholdMax) && reading > thresholdMax;
+      return {
+        ...row,
+        reading_value: reading,
+        threshold_min: thresholdMin,
+        threshold_max: thresholdMax,
+        warning_status: below ? "below" : above ? "above" : Number.isFinite(reading) ? "normal" : "no-reading",
+        warning_message: below
+          ? `Below threshold: ${reading} < ${thresholdMin}`
+          : above
+            ? `Above threshold: ${reading} > ${thresholdMax}`
+            : "",
+      };
+    });
+
+    const warnings = trendRows.filter((row) => row.warning_status === "below" || row.warning_status === "above");
+    const numericReadings = trendRows.map((row) => row.reading_value).filter((value) => Number.isFinite(value));
+    const latest = trendRows[0] || null;
+
+    res.json({
+      ok: true,
+      machine: machineRowToConfig(machineConfig),
+      trends: trendRows.reverse(),
+      latest,
+      warnings: warnings.slice(0, 20),
+      stats: {
+        points: trendRows.length,
+        warning_count: warnings.length,
+        latest_status: latest?.warning_status || "no-data",
+        min_reading: numericReadings.length ? Math.min(...numericReadings) : null,
+        max_reading: numericReadings.length ? Math.max(...numericReadings) : null,
+        avg_reading: numericReadings.length ? numericReadings.reduce((sum, value) => sum + value, 0) / numericReadings.length : null,
+        threshold_min: thresholdMin,
+        threshold_max: thresholdMax,
+      },
+    });
   } catch (error) {
     res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
   }

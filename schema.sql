@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS app.machine_configs (
   threshold_min NUMERIC,
   threshold_max NUMERIC,
   fields JSONB NOT NULL DEFAULT '[{"id":"reading_value","label":"Reading Value","type":"number","required":true,"mapsTo":"reading_value"},{"id":"product","label":"Product","type":"text","required":false,"mapsTo":"product"},{"id":"batch_number","label":"Batch Number","type":"text","required":false,"mapsTo":"batch_number"},{"id":"remarks","label":"Remarks","type":"textarea","required":false,"mapsTo":"remarks"}]'::jsonb,
-  callouts JSONB NOT NULL DEFAULT '[{"id":"co-reading","title":"Reading Value","valueKey":"reading_value","x":28,"y":33},{"id":"co-machine","title":"Machine","valueKey":"machine_name","x":31,"y":54},{"id":"co-site","title":"Site","valueKey":"site_name","x":76,"y":43},{"id":"co-total","title":"Total Submissions","valueKey":"total_submissions","x":74,"y":72}]'::jsonb,
+  callouts JSONB NOT NULL DEFAULT '[{"id":"co-reading","title":"Reading Value","valueKey":"reading_value","cardX":23,"cardY":33,"pointX":43,"pointY":40,"x":43,"y":40},{"id":"co-machine","title":"Machine","valueKey":"machine_name","cardX":67,"cardY":27,"pointX":62,"pointY":32,"x":62,"y":32},{"id":"co-site","title":"Site","valueKey":"site_name","cardX":68,"cardY":72,"pointX":57,"pointY":65,"x":57,"y":65},{"id":"co-total","title":"Total Submissions","valueKey":"total_submissions","cardX":82,"cardY":79,"pointX":77,"pointY":74,"x":77,"y":74}]'::jsonb,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

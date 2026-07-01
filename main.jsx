@@ -9,10 +9,10 @@ const shiftOptions = [
 ];
 
 const defaultMachineFields = [
-  { id: "reading_value", label: "Reading Value", type: "number", required: true, mapsTo: "reading_value", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "product", label: "Product", type: "text", required: false, mapsTo: "product", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "batch_number", label: "Batch Number", type: "text", required: false, mapsTo: "batch_number", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "remarks", label: "Remarks", type: "textarea", required: false, mapsTo: "remarks", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
+  { id: "reading_value", label: "Reading Value", type: "number", required: true, mapsTo: "reading_value" },
+  { id: "product", label: "Product", type: "text", required: false, mapsTo: "product" },
+  { id: "batch_number", label: "Batch Number", type: "text", required: false, mapsTo: "batch_number" },
+  { id: "remarks", label: "Remarks", type: "textarea", required: false, mapsTo: "remarks" },
 ];
 
 const defaultCallouts = [
@@ -34,6 +34,8 @@ const emptyMachineForm = {
   site_name: "Savoury",
   details: "",
   image_data_url: "",
+  threshold_min: "",
+  threshold_max: "",
   fields: [],
   callouts: [],
 };
@@ -105,9 +107,6 @@ function normalizeFields(fields) {
     type: ["text", "number", "textarea"].includes(field.type) ? field.type : "text",
     required: Boolean(field.required),
     mapsTo: field.mapsTo || "custom",
-    thresholdEnabled: Boolean(field.thresholdEnabled || field.threshold_enabled),
-    threshold_min: field.threshold_min ?? field.thresholdMin ?? "",
-    threshold_max: field.threshold_max ?? field.thresholdMax ?? "",
   }));
 }
 
@@ -227,24 +226,6 @@ function valueFromRecord(record, key, summary) {
   const extra = record?.response_fields || {};
   const value = extra[key];
   return value === undefined || value === null || value === "" ? "—" : String(value);
-}
-
-function getMachineReadingThresholds(machine) {
-  if (!machine) return { thresholdMin: null, thresholdMax: null };
-  const fields = normalizeFields(machine.fields);
-  const readingField =
-    fields.find((field) => field.mapsTo === "reading_value") ||
-    fields.find((field) => field.id === "reading_value") ||
-    fields.find((field) => field.type === "number" && field.thresholdEnabled);
-  const fieldLimitsEnabled = readingField?.thresholdEnabled && readingField?.type === "number";
-  const minSource = fieldLimitsEnabled ? readingField.threshold_min : machine.threshold_min;
-  const maxSource = fieldLimitsEnabled ? readingField.threshold_max : machine.threshold_max;
-  const min = minSource === "" || minSource === null || minSource === undefined ? null : Number(minSource);
-  const max = maxSource === "" || maxSource === null || maxSource === undefined ? null : Number(maxSource);
-  return {
-    thresholdMin: Number.isFinite(min) ? min : null,
-    thresholdMax: Number.isFinite(max) ? max : null,
-  };
 }
 
 function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapture, autoCapture = false, autoCaptureDelayMs = 900 }) {
@@ -378,7 +359,7 @@ function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser 
         <div className="login-actions">
           <button type="button" onClick={() => setFaceOpen(true)}>Login</button>
           <button className="secondary-button" type="button" onClick={onRegister}>Register</button>
-          <button className="secondary-button" type="button" onClick={onMachineView}>Machines</button>
+          <button className="secondary-button" type="button" onClick={onMachineView}>View Machine</button>
           <button className="secondary-button" type="button" onClick={onDemoUser}>Login as User</button>
           <button className="secondary-button" type="button" onClick={onAdmin}>Admin</button>
         </div>
@@ -460,8 +441,7 @@ function TopBar({ user, page, setPage, onLogout }) {
       <nav>
         {isAdmin ? (
           <>
-            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
-            <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
+            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>View Machine</button>
             <button className={page === "system" ? "active" : ""} type="button" onClick={() => setPage("system")}>System</button>
             <button className={page === "adminRegister" ? "active" : ""} type="button" onClick={() => setPage("adminRegister")}>Register</button>
             <button className={page === "logs" ? "active" : ""} type="button" onClick={() => setPage("logs")}>Logs</button>
@@ -469,8 +449,7 @@ function TopBar({ user, page, setPage, onLogout }) {
         ) : (
           <>
             <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Record Input</button>
-            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
-            <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
+            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>View Machine</button>
           </>
         )}
         <button type="button" onClick={onLogout}>Logout</button>
@@ -685,7 +664,6 @@ function AdminSystemPage() {
   const [form, setForm] = useState(emptyMachineForm);
   const [selectedCalloutId, setSelectedCalloutId] = useState(defaultCallouts[0].id);
   const [markMode, setMarkMode] = useState(null);
-  const [manageMode, setManageMode] = useState(null);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -693,8 +671,7 @@ function AdminSystemPage() {
     setForm({ ...emptyMachineForm, fields: [], callouts: [] });
     setSelectedCalloutId("");
     setMarkMode(null);
-    setManageMode(null);
-    setMessage("New setup ready.");
+    setMessage("New setup ready. Add fields and callouts, then save.");
   }
 
   function updateForm(field, value) { setForm((current) => ({ ...current, [field]: value })); }
@@ -715,7 +692,6 @@ function AdminSystemPage() {
     setForm(next);
     setSelectedCalloutId(next.callouts[0]?.id || "");
     setMarkMode(null);
-    setManageMode(null);
   }
 
   async function handleImageUpload(event) {
@@ -725,7 +701,7 @@ function AdminSystemPage() {
       setMessage("Preparing image...");
       const compactImage = await imageFileToCompactDataUrl(file);
       updateForm("image_data_url", compactImage);
-      setMessage("Image ready.");
+      setMessage("Image ready. Save the machine setup to store it in the database.");
     } catch (error) {
       setMessage(error.message);
     }
@@ -735,8 +711,7 @@ function AdminSystemPage() {
     const callout = form.callouts.find((item) => item.id === calloutId);
     setSelectedCalloutId(calloutId);
     setMarkMode(mode);
-    setManageMode(null);
-    setMessage(mode === "card" ? `Place the ${callout?.title || "callout"} card on the map.` : `Mark the machine point for ${callout?.title || "this callout"}.`);
+    setMessage(mode === "card" ? `Click the preview where the ${callout?.title || "callout"} box should sit.` : `Click the exact machine part that ${callout?.title || "this callout"} should point to.`);
   }
 
   function handlePreviewClick(event) {
@@ -756,7 +731,7 @@ function AdminSystemPage() {
       }),
     }));
     setMarkMode(null);
-    setMessage(`${markMode === "card" ? "Card" : "Point"} marked for ${selectedName}. Save to store it.`);
+    setMessage(`${markMode === "card" ? "Card location" : "Machine point"} marked for ${selectedName}. Save the machine setup to store it.`);
   }
 
   async function handleSave(event) {
@@ -791,112 +766,35 @@ function AdminSystemPage() {
     if (machine) editMachine(machine);
   }
 
-  function addField() {
-    updateForm("fields", [...form.fields, { id: uid("field"), label: "New Field", type: "text", required: false, mapsTo: "custom", thresholdEnabled: false, threshold_min: "", threshold_max: "" }]);
-  }
-
-  function addCallout() {
-    const next = { id: uid("callout"), title: "New Callout", valueKey: "reading_value", cardX: 30, cardY: 30, pointX: 50, pointY: 50, x: 50, y: 50 };
-    updateForm("callouts", [...form.callouts, next]);
-    setSelectedCalloutId(next.id);
-    setMarkMode(null);
-  }
-
   useEffect(() => { loadMachines(true).catch((error) => setMessage(error.message)); }, []);
 
   return (
-    <main className="admin-page app-gradient page-pad system-page function-system-page">
-      <form className="glass-card system-composer" onSubmit={handleSave}>
-        <header className="system-composer-top">
-          <div>
-            <p className="eyebrow">Admin System</p>
-            <h1>Machine Builder</h1>
+    <main className="admin-page app-gradient page-pad system-page">
+      <section className="system-grid">
+        <form className="input-form glass-card machine-builder" onSubmit={handleSave}>
+          <div className="form-title-row"><div><p className="eyebrow">Admin System</p><h1>Machine Builder</h1></div><button className={!form.id ? "new-machine-button active" : "new-machine-button"} type="button" onClick={resetForm}>+ New Setup</button></div>
+          <div className="field-grid two">
+            <label>{requiredLabel("Machine Name")}<input value={form.machine_name} onChange={(event) => updateForm("machine_name", event.target.value)} placeholder="Example: SELO-3 Cooker 2" required /></label>
+            <label>{requiredLabel("Site")}<select value={form.site_name} onChange={(event) => updateForm("site_name", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
+            <label>Threshold Min<input type="number" step="any" value={form.threshold_min} onChange={(event) => updateForm("threshold_min", event.target.value)} placeholder="Optional" /></label>
+            <label>Threshold Max<input type="number" step="any" value={form.threshold_max} onChange={(event) => updateForm("threshold_max", event.target.value)} placeholder="Optional" /></label>
           </div>
-          <div className="system-top-actions">
-            <button className={!form.id ? "new-machine-button active" : "new-machine-button"} type="button" onClick={resetForm}>+ New Setup</button>
-          </div>
-        </header>
+          <label>Details<textarea rows="3" value={form.details} onChange={(event) => updateForm("details", event.target.value)} placeholder="Machine details, inspection note, or process description" /></label>
+          <label>Machine Image<input type="file" accept="image/*" onChange={handleImageUpload} /></label>
 
-        <div className="system-workbench">
-          <section className="machine-core-panel">
-            <div className="field-grid two compact-machine-fields">
-              <label>{requiredLabel("Machine Name")}<input value={form.machine_name} onChange={(event) => updateForm("machine_name", event.target.value)} placeholder="SELO-3 Cooker 2" required /></label>
-              <label>{requiredLabel("Site")}<select value={form.site_name} onChange={(event) => updateForm("site_name", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
-            </div>
-            <label>Details<textarea rows="2" value={form.details} onChange={(event) => updateForm("details", event.target.value)} placeholder="Machine details" /></label>
-            <label>Machine Image<input type="file" accept="image/*" onChange={handleImageUpload} /></label>
-            <div className="system-function-buttons">
-              <button type="button" onClick={() => setManageMode("fields")}>Input Fields <b>{form.fields.length}</b></button>
-              <button type="button" onClick={() => setManageMode("callouts")}>Callouts <b>{form.callouts.length}</b></button>
-            </div>
-            <button className="save-machine-main" type="submit" disabled={saving}>{saving ? "Saving..." : "Save Machine Setup"}</button>
-            {message && <p className="message compact-message">{message}</p>}
-          </section>
+          <div className="builder-block"><div className="block-head"><h2>Input Fields</h2><button className="secondary-button small" type="button" onClick={() => updateForm("fields", [...form.fields, { id: uid("field"), label: "New Field", type: "text", required: false, mapsTo: "custom" }])}>Add Field</button></div>{!form.fields.length && <p className="builder-empty-note">No fields yet. Add the fields operators must fill in.</p>}{form.fields.map((field, index) => <div className="builder-row" key={field.id}><input value={field.label} onChange={(event) => updateField(index, "label", event.target.value)} placeholder="Label" /><select value={field.type} onChange={(event) => updateField(index, "type", event.target.value)}><option value="text">Text</option><option value="number">Number</option><option value="textarea">Paragraph</option></select><select value={field.mapsTo} onChange={(event) => updateField(index, "mapsTo", event.target.value)}><option value="custom">Custom</option><option value="reading_value">Reading</option><option value="product">Product</option><option value="batch_number">Batch</option><option value="remarks">Remarks</option></select><label className="mini-check"><input type="checkbox" checked={field.required} onChange={(event) => updateField(index, "required", event.target.checked)} /> Required</label><button className="ghost-button danger" type="button" onClick={() => updateForm("fields", form.fields.filter((_, i) => i !== index))}>×</button></div>)}</div>
 
-          <section className="point-map-panel">
-            <div className="point-map-head">
-              <div><p className="eyebrow">Preview</p><h2>Point Map</h2></div>
-              <div className="point-map-controls">
-                {markMode && <div className="mark-mode-pill active">{markMode === "card" ? "Place card" : "Mark point"}</div>}
-                <select className="preview-machine-select compact-map-picker" value={form.id || ""} onChange={(event) => handleMachineSelect(event.target.value)} aria-label="Select saved machine">
-                  <option value="" disabled>{machines.length ? "Saved machines" : "No machines"}</option>
-                  {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
-                </select>
-                <button className="preview-delete-button compact-delete" type="button" disabled={!form.id} onClick={() => handleDelete(form)}>Delete</button>
-              </div>
+          <div className="builder-block callout-builder-block">
+            <div className="block-head">
+              <h2>Callouts</h2>
+              <button className="secondary-button small" type="button" onClick={() => { const next = { id: uid("callout"), title: "New Callout", valueKey: "reading_value", cardX: 30, cardY: 30, pointX: 50, pointY: 50, x: 50, y: 50 }; updateForm("callouts", [...form.callouts, next]); setSelectedCalloutId(next.id); setMarkMode("card"); }}>Add Callout</button>
             </div>
-            <div className={markMode ? "builder-preview locating unified-preview" : "builder-preview unified-preview"} onClick={handlePreviewClick}>
-              {form.image_data_url ? <img src={form.image_data_url} alt="Machine preview" /> : <div className="machine-visual preview-machine"><div className="vessel" /><div className="motor" /><div className="legs left" /><div className="legs right" /><div className="pipe" /></div>}
-              {markMode && <div className="preview-crosshair-hint">{markMode === "card" ? "Click card location" : "Click machine point"}</div>}
-              <svg className="callout-line-layer builder-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                {form.callouts.map((callout) => {
-                  const { point, card } = calloutLine(callout);
-                  return <line key={`line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
-                })}
-              </svg>
-              {form.callouts.map((callout) => {
-                const { point, card } = calloutLine(callout);
-                const active = selectedCalloutId === callout.id;
-                return (
-                  <div key={callout.id}>
-                    <button type="button" className={active && markMode === "point" ? "preview-target-dot active" : "preview-target-dot"} style={{ left: `${point.x}%`, top: `${point.y}%` }} onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "point"); }} title="Mark machine point" />
-                    <button type="button" className={active ? "preview-callout-card active" : "preview-callout-card"} style={{ left: `${card.x}%`, top: `${card.y}%` }} onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "card"); }} title="Place callout card">{callout.title}</button>
-                  </div>
-                );
-              })}
+            <div className="callout-help-card">
+              <strong>Pointing system:</strong> choose a callout, place its card, then mark the exact machine part. The line will point from the card to the machine.
             </div>
-          </section>
-        </div>
-      </form>
-
-      {manageMode === "fields" && (
-        <SystemModalShell title="Input Fields" onClose={() => setManageMode(null)}>
-          <div className="modal-action-row"><button className="secondary-button" type="button" onClick={addField}>Add Field</button></div>
-          <div className="modal-list editor-list">
-            {!form.fields.length && <div className="modal-empty">No fields yet.</div>}
-            {form.fields.map((field, index) => (
-              <div className="builder-row modal-editor-row field-editor-row" key={field.id}>
-                <input value={field.label} onChange={(event) => updateField(index, "label", event.target.value)} placeholder="Label" />
-                <select value={field.type} onChange={(event) => updateField(index, "type", event.target.value)}><option value="text">Text</option><option value="number">Number</option><option value="textarea">Paragraph</option></select>
-                <select value={field.mapsTo} onChange={(event) => updateField(index, "mapsTo", event.target.value)}><option value="custom">Custom</option><option value="reading_value">Reading</option><option value="product">Product</option><option value="batch_number">Batch</option><option value="remarks">Remarks</option></select>
-                <label className="mini-check"><input type="checkbox" checked={field.required} onChange={(event) => updateField(index, "required", event.target.checked)} /> Required</label>
-                <label className="mini-check limit-check"><input type="checkbox" checked={Boolean(field.thresholdEnabled)} onChange={(event) => updateField(index, "thresholdEnabled", event.target.checked)} disabled={field.type !== "number"} /> Limit</label>
-                <input className="threshold-mini" type="number" step="any" value={field.threshold_min ?? ""} onChange={(event) => updateField(index, "threshold_min", event.target.value)} placeholder="Min" disabled={field.type !== "number" || !field.thresholdEnabled} />
-                <input className="threshold-mini" type="number" step="any" value={field.threshold_max ?? ""} onChange={(event) => updateField(index, "threshold_max", event.target.value)} placeholder="Max" disabled={field.type !== "number" || !field.thresholdEnabled} />
-                <button className="ghost-button danger" type="button" onClick={() => updateForm("fields", form.fields.filter((_, i) => i !== index))}>×</button>
-              </div>
-            ))}
-          </div>
-        </SystemModalShell>
-      )}
-
-      {manageMode === "callouts" && (
-        <SystemModalShell title="Callouts" onClose={() => setManageMode(null)}>
-          <div className="modal-action-row"><button className="secondary-button" type="button" onClick={addCallout}>Add Callout</button></div>
-          <div className="modal-list editor-list">
-            {!form.callouts.length && <div className="modal-empty">No callouts yet.</div>}
+            {!form.callouts.length && <p className="builder-empty-note">No callouts yet. Add a callout, then set its card and point.</p>}
             {form.callouts.map((callout, index) => (
-              <div className={selectedCalloutId === callout.id ? "builder-row selected callout-builder-row modal-editor-row" : "builder-row callout-builder-row modal-editor-row"} key={callout.id}>
+              <div className={selectedCalloutId === callout.id ? "builder-row selected callout-builder-row" : "builder-row callout-builder-row"} key={callout.id}>
                 <input value={callout.title} onChange={(event) => updateCallout(index, "title", event.target.value)} placeholder="Title" />
                 <select value={callout.valueKey} onChange={(event) => updateCallout(index, "valueKey", event.target.value)}>
                   <option value="reading_value">Reading</option>
@@ -907,286 +805,80 @@ function AdminSystemPage() {
                   <option value="total_submissions">Total</option>
                   {form.fields.map((field) => <option key={field.id} value={field.id}>{field.label}</option>)}
                 </select>
-                <button className="secondary-button small" type="button" onClick={() => beginMarking(callout.id, "card")}>Card</button>
-                <button className="secondary-button small" type="button" onClick={() => beginMarking(callout.id, "point")}>Point</button>
+                <span className="point-status-chip">{selectedCalloutId === callout.id ? (markMode === "card" ? "Pick card spot" : markMode === "point" ? "Pick machine point" : "Selected") : "Mapped"}</span>
+                <button className={selectedCalloutId === callout.id && markMode === "card" ? "secondary-button small active-mark" : "secondary-button small"} type="button" onClick={() => beginMarking(callout.id, "card")}>Card</button>
+                <button className={selectedCalloutId === callout.id && markMode === "point" ? "secondary-button small active-mark" : "secondary-button small"} type="button" onClick={() => beginMarking(callout.id, "point")}>Point</button>
                 <button className="ghost-button danger" type="button" onClick={() => { updateForm("callouts", form.callouts.filter((_, i) => i !== index)); if (selectedCalloutId === callout.id) setMarkMode(null); }}>×</button>
               </div>
             ))}
           </div>
-        </SystemModalShell>
-      )}
-    </main>
-  );
-}
-
-function SystemModalShell({ title, children, onClose }) {
-  return (
-    <div className="system-modal-backdrop" role="dialog" aria-modal="true">
-      <section className="system-modal glass-card">
-        <header className="system-modal-head">
-          <h2>{title}</h2>
-          <button className="ghost-button" type="button" onClick={onClose}>Close</button>
-        </header>
-        {children}
-      </section>
-    </div>
-  );
-}
-
-function LogsPage() {
-  const [records, setRecords] = useState([]);
-  const [summary, setSummary] = useState(null);
-  const [machines, setMachines] = useState([]);
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({ search: "", machine: "", site: "", shift: "", date: "" });
-
-  function updateFilter(field, value) {
-    setFilters((current) => ({ ...current, [field]: value }));
-  }
-
-  function clearFilters() {
-    setFilters({ search: "", machine: "", site: "", shift: "", date: "" });
-  }
-
-  async function loadLogs() {
-    try {
-      setLoading(true);
-      setMessage("");
-      const [recordsData, summaryData, machineData] = await Promise.all([
-        fetchJson("/api/records?limit=300"),
-        fetchJson("/api/dashboard/summary"),
-        fetchJson("/api/machines").catch(() => ({ machines: [] })),
-      ]);
-      setRecords(recordsData.records || []);
-      setSummary(summaryData.stats || null);
-      setMachines(machineData.machines || []);
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const machineOptions = useMemo(() => {
-    const options = [];
-    const seen = new Set();
-
-    for (const machine of machines) {
-      const label = machine.machine_name || `Machine ${machine.id}`;
-      const value = `id:${machine.id}`;
-      options.push({ value, label, id: String(machine.id), name: label });
-      seen.add(value);
-      seen.add(`name:${label.trim().toLowerCase()}`);
-    }
-
-    for (const record of records) {
-      const name = String(record.machine_name || "").trim();
-      if (!name) continue;
-      const key = `name:${name.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      const value = record.machine_config_id ? `id:${record.machine_config_id}` : `name:${name}`;
-      if (seen.has(value)) continue;
-      options.push({ value, label: name, id: record.machine_config_id ? String(record.machine_config_id) : "", name });
-      seen.add(value);
-      seen.add(key);
-    }
-
-    return options.sort((a, b) => a.label.localeCompare(b.label));
-  }, [machines, records]);
-
-  const selectedMachineOption = useMemo(
-    () => machineOptions.find((machine) => machine.value === filters.machine),
-    [machineOptions, filters.machine]
-  );
-
-  const filteredRecords = useMemo(() => {
-    const search = filters.search.trim().toLowerCase();
-    return records.filter((record) => {
-      const siteMatch = !filters.site || record.site_name === filters.site;
-      const shiftMatch = !filters.shift || record.shift_name === filters.shift;
-      const dateMatch = !filters.date || recordDateKey(record.record_timestamp) === filters.date;
-      const machineMatch = !filters.machine || (() => {
-        if (!selectedMachineOption) return true;
-        const recordMachineId = record.machine_config_id === null || record.machine_config_id === undefined ? "" : String(record.machine_config_id);
-        const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
-        return (
-          (selectedMachineOption.id && recordMachineId === selectedMachineOption.id) ||
-          (selectedMachineOption.name && recordMachineName === selectedMachineOption.name.trim().toLowerCase())
-        );
-      })();
-      const haystack = [
-        record.operator_name,
-        record.site_name,
-        record.machine_name,
-        record.reading_value,
-        record.product,
-        record.batch_number,
-        record.shift_name,
-        record.remarks,
-        JSON.stringify(record.response_fields || {}),
-      ].join(" ").toLowerCase();
-      return machineMatch && siteMatch && shiftMatch && dateMatch && (!search || haystack.includes(search));
-    });
-  }, [records, filters, selectedMachineOption]);
-
-  const filteredSummary = useMemo(() => summarizeRecords(filteredRecords), [filteredRecords]);
-  const hasFilters = Object.values(filters).some(Boolean);
-  const activeSummary = hasFilters ? filteredSummary : summary;
-
-  useEffect(() => { loadLogs(); }, []);
-
-  return (
-    <main className="logs-page app-gradient page-pad">
-      <section className="logs-shell">
-        <aside className="logs-right">
-          <article className="stat-card glass-card"><span>Total</span><strong>{activeSummary?.total_submissions ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Operators</span><strong>{activeSummary?.unique_operators ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Savoury</span><strong>{activeSummary?.savoury_count ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Dressings</span><strong>{activeSummary?.dressings_count ?? 0}</strong></article>
-        </aside>
-        <section className="logs-left glass-card">
-          <div className="logs-hero-inline">
-            <div><p className="eyebrow">Logs</p><h1>Submission Records</h1></div>
-            <button className="secondary-button" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button>
-          </div>
-          <div className="logs-filter-bar">
-            <input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search logs" />
-            <select value={filters.machine} onChange={(event) => updateFilter("machine", event.target.value)}>
-              <option value="">All Machines</option>
-              {machineOptions.map((machine) => <option key={machine.value} value={machine.value}>{machine.label}</option>)}
-            </select>
-            <select value={filters.site} onChange={(event) => updateFilter("site", event.target.value)}>
-              <option value="">All Sites</option>
-              {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
-            </select>
-            <select value={filters.shift} onChange={(event) => updateFilter("shift", event.target.value)}>
-              <option value="">All Shifts</option>
-              {shiftOptions.map((shift) => <option key={shift.value} value={shift.value}>{shift.label}</option>)}
-            </select>
-            <input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} />
-            <button className="ghost-button" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear</button>
-          </div>
-          {filters.machine && selectedMachineOption && (
-            <div className="active-machine-filter">
-              Showing logs for <strong>{selectedMachineOption.label}</strong>
-              <button type="button" onClick={() => updateFilter("machine", "")}>Show all</button>
+          <button type="submit" disabled={saving}>{saving ? "Saving..." : "Save Machine Setup"}</button>{message && <p className="message">{message}</p>}
+        </form>
+        <section className="glass-card builder-preview-card">
+          <div className="form-title-row preview-title-row">
+            <div><p className="eyebrow">Preview</p><h2>Point Map</h2></div>
+            <div className="preview-toolbar machine-picker-toolbar">
+              <select className="preview-machine-select" value={form.id || ""} onChange={(event) => handleMachineSelect(event.target.value)} aria-label="Select saved machine">
+                <option value="" disabled>{machines.length ? "Select machine" : "No machines yet"}</option>
+                {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
+              </select>
+              <button className="preview-delete-button" type="button" disabled={!form.id} onClick={() => handleDelete(form)}>Delete</button>
             </div>
-          )}
-          {message && <p className="message">{message}</p>}
-          <RecordList records={filteredRecords} />
+          </div>
+          <div className={markMode ? "builder-preview locating" : "builder-preview"} onClick={handlePreviewClick}>
+            {form.image_data_url ? <img src={form.image_data_url} alt="Machine preview" /> : <div className="machine-visual preview-machine"><div className="vessel" /><div className="motor" /><div className="legs left" /><div className="legs right" /><div className="pipe" /></div>}
+            {markMode && <div className="preview-crosshair-hint">{markMode === "card" ? "Click card location" : "Click machine point"}</div>}
+            <svg className="callout-line-layer builder-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              {form.callouts.map((callout) => {
+                const { point, card } = calloutLine(callout);
+                return <line key={`line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
+              })}
+            </svg>
+            {form.callouts.map((callout) => {
+              const { point, card } = calloutLine(callout);
+              const active = selectedCalloutId === callout.id;
+              return (
+                <div key={callout.id}>
+                  <button
+                    type="button"
+                    className={active && markMode === "point" ? "preview-target-dot active" : "preview-target-dot"}
+                    style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                    onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "point"); }}
+                    title="Click, then mark the exact machine point"
+                  />
+                  <button
+                    type="button"
+                    className={active ? "preview-callout-card active" : "preview-callout-card"}
+                    style={{ left: `${card.x}%`, top: `${card.y}%` }}
+                    onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "card"); }}
+                    title="Click, then place the callout card"
+                  >
+                    {callout.title}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </section>
       </section>
     </main>
   );
 }
 
-
-function trendStatusLabel(status) {
-  if (status === "below") return "Below";
-  if (status === "above") return "Above";
-  if (status === "normal") return "Normal";
-  return "No Data";
-}
-
-function trendStatusClass(status) {
-  if (status === "below" || status === "above") return "warning";
-  if (status === "normal") return "normal";
-  return "empty";
-}
-
-function TrendMiniChart({ trends = [], thresholdMin, thresholdMax }) {
-  const points = trends
-    .map((item) => ({ ...item, reading: Number(item.reading_value) }))
-    .filter((item) => Number.isFinite(item.reading));
-
-  if (points.length < 2) {
-    return <div className="trend-empty">Need at least 2 readings to draw a trend.</div>;
-  }
-
-  const values = points.map((item) => item.reading);
-  const thresholds = [thresholdMin, thresholdMax].map(Number).filter(Number.isFinite);
-  const min = Math.min(...values, ...thresholds);
-  const max = Math.max(...values, ...thresholds);
-  const range = max === min ? 1 : max - min;
-  const width = 100;
-  const height = 52;
-
-  const coordinates = points.map((item, index) => {
-    const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
-    const y = height - ((item.reading - min) / range) * (height - 8) - 4;
-    return { x, y, item };
-  });
-
-  const path = coordinates.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
-  const yForThreshold = (value) => height - ((Number(value) - min) / range) * (height - 8) - 4;
-
-  return (
-    <div className="trend-chart-wrap">
-      <svg className="trend-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-label="Reading trend">
-        <defs>
-          <linearGradient id="trendFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="rgba(49, 132, 255, 0.28)" />
-            <stop offset="100%" stopColor="rgba(49, 132, 255, 0.02)" />
-          </linearGradient>
-        </defs>
-        {Number.isFinite(Number(thresholdMax)) && <line className="threshold-line high" x1="0" x2="100" y1={yForThreshold(thresholdMax)} y2={yForThreshold(thresholdMax)} />}
-        {Number.isFinite(Number(thresholdMin)) && <line className="threshold-line low" x1="0" x2="100" y1={yForThreshold(thresholdMin)} y2={yForThreshold(thresholdMin)} />}
-        <path className="trend-fill" d={`${path} L100,${height} L0,${height} Z`} />
-        <path className="trend-path" d={path} />
-        {coordinates.slice(-12).map((point) => <circle key={point.item.id} className={point.item.warning_status === "normal" ? "trend-dot" : "trend-dot warn"} cx={point.x} cy={point.y} r="1.7" />)}
-      </svg>
-      <div className="trend-axis-labels"><span>{formatNumber(min)}</span><span>{formatNumber(max)}</span></div>
-    </div>
-  );
-}
-
-function TrendWarningPanel({ trends = [], warnings = [], stats = {}, selectedMachine, latest }) {
-  const latestStatus = latest?.warning_status || stats?.latest_status || "no-data";
-  const latestReading = latest?.reading_value ?? stats?.avg_reading;
-  const machineThresholds = getMachineReadingThresholds(selectedMachine);
-  const thresholdMin = machineThresholds.thresholdMin ?? stats?.threshold_min;
-  const thresholdMax = machineThresholds.thresholdMax ?? stats?.threshold_max;
-  const recentWarnings = warnings.slice(0, 4);
-
-  return (
-    <aside className="trend-warning-panel">
-      <div className="trend-panel-head">
-        <div>
-          <p className="eyebrow">Trends</p>
-          <h2>Reading Trend</h2>
-        </div>
-        <span className={`trend-status-pill ${trendStatusClass(latestStatus)}`}>{trendStatusLabel(latestStatus)}</span>
-      </div>
-
-      <div className="trend-stat-grid">
-        <article><span>Latest</span><strong>{formatNumber(latestReading)}</strong></article>
-        <article><span>Min</span><strong>{thresholdMin === null || thresholdMin === undefined || thresholdMin === "" ? "—" : formatNumber(thresholdMin)}</strong></article>
-        <article><span>Max</span><strong>{thresholdMax === null || thresholdMax === undefined || thresholdMax === "" ? "—" : formatNumber(thresholdMax)}</strong></article>
-      </div>
-
-      <TrendMiniChart trends={trends} thresholdMin={thresholdMin} thresholdMax={thresholdMax} />
-
-      <div className="warning-system-card">
-        <div className="warning-system-title">
-          <span>Warning System</span>
-          <strong>{stats?.warning_count || 0}</strong>
-        </div>
-        {!recentWarnings.length ? (
-          <p className="warning-empty">No threshold warning for this machine.</p>
-        ) : (
-          <div className="warning-list">
-            {recentWarnings.map((warning) => (
-              <article key={warning.id} className="warning-item">
-                <div><strong>{warning.warning_status === "below" ? "Below limit" : "Above limit"}</strong><span>{formatDateTime(warning.record_timestamp)}</span></div>
-                <b>{formatNumber(warning.reading_value)}</b>
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
-    </aside>
-  );
+function LogsPage() {
+  const [records, setRecords] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState({ search: "", site: "", shift: "", date: "" });
+  function updateFilter(field, value) { setFilters((current) => ({ ...current, [field]: value })); }
+  function clearFilters() { setFilters({ search: "", site: "", shift: "", date: "" }); }
+  async function loadLogs() { try { setLoading(true); setMessage(""); const [recordsData, summaryData] = await Promise.all([fetchJson("/api/records?limit=300"), fetchJson("/api/dashboard/summary")]); setRecords(recordsData.records || []); setSummary(summaryData.stats || null); } catch (error) { setMessage(error.message); } finally { setLoading(false); } }
+  const filteredRecords = useMemo(() => { const search = filters.search.trim().toLowerCase(); return records.filter((record) => { const siteMatch = !filters.site || record.site_name === filters.site; const shiftMatch = !filters.shift || record.shift_name === filters.shift; const dateMatch = !filters.date || recordDateKey(record.record_timestamp) === filters.date; const haystack = [record.operator_name, record.site_name, record.machine_name, record.reading_value, record.product, record.batch_number, record.shift_name, record.remarks, JSON.stringify(record.response_fields || {})].join(" ").toLowerCase(); return siteMatch && shiftMatch && dateMatch && (!search || haystack.includes(search)); }); }, [records, filters]);
+  const filteredSummary = useMemo(() => summarizeRecords(filteredRecords), [filteredRecords]);
+  const hasFilters = Object.values(filters).some(Boolean);
+  useEffect(() => { loadLogs(); }, []);
+  return <main className="logs-page app-gradient page-pad"><section className="logs-shell"><aside className="logs-right"><article className="stat-card glass-card"><span>Total</span><strong>{hasFilters ? filteredSummary.total_submissions : summary?.total_submissions ?? 0}</strong></article><article className="stat-card glass-card"><span>Operators</span><strong>{hasFilters ? filteredSummary.unique_operators : summary?.unique_operators ?? 0}</strong></article><article className="stat-card glass-card"><span>Savoury</span><strong>{hasFilters ? filteredSummary.savoury_count : summary?.savoury_count ?? 0}</strong></article><article className="stat-card glass-card"><span>Dressings</span><strong>{hasFilters ? filteredSummary.dressings_count : summary?.dressings_count ?? 0}</strong></article></aside><section className="logs-left glass-card"><div className="logs-hero-inline"><div><p className="eyebrow">Logs</p><h1>Submission Records</h1></div><button className="secondary-button" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button></div><div className="logs-filter-bar"><input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search logs" /><select value={filters.site} onChange={(event) => updateFilter("site", event.target.value)}><option value="">All Sites</option>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select><select value={filters.shift} onChange={(event) => updateFilter("shift", event.target.value)}><option value="">All Shifts</option>{shiftOptions.map((shift) => <option key={shift.value} value={shift.value}>{shift.label}</option>)}</select><input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} /><button className="ghost-button" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear</button></div>{message && <p className="message">{message}</p>}<RecordList records={filteredRecords} /></section></section></main>;
 }
 
 function MachineViewPage() {
@@ -1194,7 +886,7 @@ function MachineViewPage() {
   const [records, setRecords] = useState([]);
   const [machines, setMachines] = useState([]);
   const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [message, setMessage] = useState("Loading machine feed...");
+  const [message, setMessage] = useState("Loading dashboard feed...");
   const [loading, setLoading] = useState(false);
 
   async function loadMachines() {
@@ -1239,10 +931,9 @@ function MachineViewPage() {
     operator_name: "No operator",
   };
   const callouts = normalizeCallouts(selectedMachine?.callouts);
-  const { thresholdMin, thresholdMax } = getMachineReadingThresholds(selectedMachine);
   const hasReading = latest?.reading_value !== null && latest?.reading_value !== undefined && latest?.reading_value !== "";
-  const isLow = hasReading && thresholdMin !== null && Number(latest?.reading_value) < thresholdMin;
-  const isHigh = hasReading && thresholdMax !== null && Number(latest?.reading_value) > thresholdMax;
+  const isLow = hasReading && selectedMachine?.threshold_min !== null && selectedMachine?.threshold_min !== undefined && Number(latest?.reading_value) < Number(selectedMachine.threshold_min);
+  const isHigh = hasReading && selectedMachine?.threshold_max !== null && selectedMachine?.threshold_max !== undefined && Number(latest?.reading_value) > Number(selectedMachine.threshold_max);
   const statusText = !latest ? "No Data" : isLow ? "Below Threshold" : isHigh ? "Above Threshold" : "Live";
 
   const leftStatusClass = isLow || isHigh ? "status-warn" : latest ? "status-ok" : "";
@@ -1257,7 +948,7 @@ function MachineViewPage() {
 
   return (
     <main className="machine-page app-gradient page-pad">
-      <section className="machine-monitor scalable-monitor light-monitor machine-only-monitor">
+      <section className="machine-monitor scalable-monitor light-monitor">
         <aside className="asset-panel asset-panel-light">
           <div className="asset-brand light-brand">CT</div>
           <div className="asset-title-block">
@@ -1277,7 +968,7 @@ function MachineViewPage() {
         <section className="process-view process-view-light">
           <div className="monitor-head monitor-head-light">
             <div>
-              <p className="eyebrow">Machines</p>
+              <p className="eyebrow">Machine Interface</p>
               <h1 title={selectedMachine?.machine_name || "Machine Monitor"}>{selectedMachine?.machine_name || "Machine Monitor"}</h1>
               {selectedMachine?.details && <p className="machine-view-details">{selectedMachine.details}</p>}
             </div>
@@ -1289,166 +980,29 @@ function MachineViewPage() {
               <button className="monitor-refresh" type="button" onClick={() => loadDashboard(selectedMachineId)} disabled={loading || !selectedMachineId}>{loading ? "Loading" : "Refresh"}</button>
             </div>
           </div>
-          <div className="machine-content-grid machine-only-grid">
-            <div className="machine-stage dynamic-stage anchored-stage">
-              <div className="machine-image-frame">
-                {selectedMachine?.image_data_url ? <img className="machine-custom-image" src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} /> : <div className="machine-visual" aria-hidden="true"><div className="vessel" /><div className="motor" /><div className="legs left" /><div className="legs right" /><div className="pipe" /></div>}
-                <svg className="callout-line-layer machine-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  {callouts.map((callout) => {
-                    const { point, card } = calloutLine(callout);
-                    return <line key={`machine-line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
-                  })}
-                </svg>
+          <div className="machine-stage dynamic-stage anchored-stage">
+            <div className="machine-image-frame">
+              {selectedMachine?.image_data_url ? <img className="machine-custom-image" src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} /> : <div className="machine-visual" aria-hidden="true"><div className="vessel" /><div className="motor" /><div className="legs left" /><div className="legs right" /><div className="pipe" /></div>}
+              <svg className="callout-line-layer machine-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                 {callouts.map((callout) => {
                   const { point, card } = calloutLine(callout);
-                  return (
-                    <div key={callout.id}>
-                      <span className="machine-anchor-dot free-anchor-dot" style={{ left: `${point.x}%`, top: `${point.y}%` }} />
-                      <article className="callout dynamic-callout machine-free-callout" style={{ left: `${card.x}%`, top: `${card.y}%` }}>
-                        <span>{callout.title}</span>
-                        <strong>{valueFromRecord(displayRecord, callout.valueKey, summary)}</strong>
-                        <small>{message}</small>
-                      </article>
-                    </div>
-                  );
+                  return <line key={`machine-line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
                 })}
-              </div>
-            </div>
-          </div>
-        </section>
-      </section>
-    </main>
-  );
-}
-
-function TrendsPage() {
-  const [machines, setMachines] = useState([]);
-  const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [trendData, setTrendData] = useState({ trends: [], warnings: [], stats: null });
-  const [machineTrendMap, setMachineTrendMap] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("Loading trends...");
-
-  async function loadMachines() {
-    const machineData = await fetchJson("/api/machines");
-    const machineList = machineData.machines || [];
-    setMachines(machineList);
-    if (!selectedMachineId && machineList[0]) setSelectedMachineId(String(machineList[0].id));
-    if (!machineList.length) setMessage("No machines configured yet");
-    return machineList;
-  }
-
-  async function loadTrend(machineId = selectedMachineId) {
-    if (!machineId) return;
-    try {
-      setLoading(true);
-      const data = await fetchJson(`/api/dashboard/trends?machine_config_id=${encodeURIComponent(machineId)}&limit=120`);
-      setTrendData({ trends: data.trends || [], warnings: data.warnings || [], stats: data.stats || null });
-      setMessage(data.trends?.length ? "Trend data loaded" : "No trend data yet for this machine");
-    } catch (error) {
-      setMessage(error.message);
-      setTrendData({ trends: [], warnings: [], stats: null });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadSidebarSummaries(machineList = machines) {
-    if (!machineList.length) return;
-    const entries = await Promise.all(machineList.map(async (machine) => {
-      try {
-        const data = await fetchJson(`/api/dashboard/trends?machine_config_id=${encodeURIComponent(machine.id)}&limit=20`);
-        return [String(machine.id), { trends: data.trends || [], warnings: data.warnings || [], stats: data.stats || null }];
-      } catch {
-        return [String(machine.id), { trends: [], warnings: [], stats: null }];
-      }
-    }));
-    setMachineTrendMap(Object.fromEntries(entries));
-  }
-
-  async function refreshAll() {
-    const machineList = await loadMachines();
-    await Promise.all([loadSidebarSummaries(machineList), selectedMachineId ? loadTrend(selectedMachineId) : Promise.resolve()]);
-  }
-
-  useEffect(() => {
-    loadMachines().then((machineList) => loadSidebarSummaries(machineList)).catch((error) => setMessage(error.message));
-  }, []);
-
-  useEffect(() => {
-    if (selectedMachineId) loadTrend(selectedMachineId);
-  }, [selectedMachineId]);
-
-  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
-  const trends = trendData.trends || [];
-  const warnings = trendData.warnings || [];
-  const stats = trendData.stats || {};
-  const latest = trends[trends.length - 1] || null;
-  const recentPoints = trends.slice(-10).reverse();
-
-  return (
-    <main className="trends-page app-gradient page-pad">
-      <section className="trends-shell">
-        <aside className="trend-machine-sidebar glass-card">
-          <div className="trend-side-head">
-            <div>
-              <p className="eyebrow">Trends</p>
-              <h1>Machine Trends</h1>
-            </div>
-            <button className="secondary-button" type="button" onClick={refreshAll} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
-          </div>
-          <div className="trend-machine-list">
-            {!machines.length && <p className="empty-state">No machines configured yet.</p>}
-            {machines.map((machine) => {
-              const mini = machineTrendMap[String(machine.id)] || {};
-              const miniStats = mini.stats || {};
-              const miniLatest = (mini.trends || []).slice(-1)[0];
-              const status = miniStats.latest_status || miniLatest?.warning_status || "no-data";
-              return (
-                <button key={machine.id} type="button" className={`trend-machine-card ${String(machine.id) === String(selectedMachineId) ? "active" : ""}`} onClick={() => setSelectedMachineId(String(machine.id))}>
-                  <span className="trend-card-name">{machine.machine_name}</span>
-                  <small>{machine.site_name || "—"}</small>
-                  <div><b>{formatNumber(miniLatest?.reading_value ?? miniStats.avg_reading)}</b><em className={`trend-status-pill ${trendStatusClass(status)}`}>{trendStatusLabel(status)}</em></div>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
-
-        <section className="trend-main-panel glass-card">
-          <div className="trend-main-head">
-            <div>
-              <p className="eyebrow">Selected Machine</p>
-              <h1>{selectedMachine?.machine_name || "No Machine"}</h1>
-            </div>
-            <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={!machines.length}>
-              {!machines.length && <option value="">No machines</option>}
-              {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
-            </select>
-          </div>
-
-          {message && <p className="trend-message">{message}</p>}
-
-          <div className="trend-page-grid">
-            <TrendWarningPanel trends={trends} warnings={warnings} stats={stats} selectedMachine={selectedMachine} latest={latest} />
-            <section className="trend-history-card">
-              <div className="trend-history-head">
-                <div><p className="eyebrow">History</p><h2>Recent Readings</h2></div>
-                <span>{stats.points || 0} points</span>
-              </div>
-              {!recentPoints.length ? (
-                <p className="empty-state">No readings yet.</p>
-              ) : (
-                <div className="trend-reading-list">
-                  {recentPoints.map((point) => (
-                    <article key={point.id} className={`trend-reading-row ${trendStatusClass(point.warning_status)}`}>
-                      <div><strong>{formatNumber(point.reading_value)}</strong><span>{formatDateTime(point.record_timestamp)}</span></div>
-                      <p>{point.operator_name || "—"} • {point.product || "No product"} • {point.batch_number || "No batch"}</p>
+              </svg>
+              {callouts.map((callout) => {
+                const { point, card } = calloutLine(callout);
+                return (
+                  <div key={callout.id}>
+                    <span className="machine-anchor-dot free-anchor-dot" style={{ left: `${point.x}%`, top: `${point.y}%` }} />
+                    <article className="callout dynamic-callout machine-free-callout" style={{ left: `${card.x}%`, top: `${card.y}%` }}>
+                      <span>{callout.title}</span>
+                      <strong>{valueFromRecord(displayRecord, callout.valueKey, summary)}</strong>
+                      <small>{message}</small>
                     </article>
-                  ))}
-                </div>
-              )}
-            </section>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </section>
       </section>
@@ -1465,7 +1019,7 @@ function App() {
   if (page === "auth") return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(userRole(profile) === "admin" ? "machine" : "record"); }} onRegister={() => setPage("register")} onMachineView={() => setPage("machine")} onAdmin={handleAdminSkip} onDemoUser={handleDemoUser} />;
   if (page === "register") return <RegisterPage onBack={() => setPage("auth")} onRegistered={(profile) => { setUser(profile); setPage("record"); }} />;
   if (page === "machine" && !user) return <><button className="floating-back" type="button" onClick={() => setPage("auth")}>Back</button><MachineViewPage /></>;
-  return <><TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} />{page === "system" ? <AdminSystemPage /> : page === "adminRegister" ? <AdminRegisterPage adminUser={user} /> : page === "logs" ? <LogsPage /> : page === "trends" ? <TrendsPage /> : page === "machine" ? <MachineViewPage /> : <RecordInputPage user={user} />}</>;
+  return <><TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} />{page === "system" ? <AdminSystemPage /> : page === "adminRegister" ? <AdminRegisterPage adminUser={user} /> : page === "logs" ? <LogsPage /> : page === "machine" ? <MachineViewPage /> : <RecordInputPage user={user} />}</>;
 }
 
 export default App;
