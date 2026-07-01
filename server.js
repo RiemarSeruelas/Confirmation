@@ -611,6 +611,34 @@ app.get("/api/admin/users", async (_req, res) => {
   }
 });
 
+app.delete("/api/admin/users/:id", async (req, res) => {
+  try {
+    await ensureSchemaReady();
+    const id = Number(req.params.id || 0);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ ok: false, error: "Invalid registered person ID." });
+    }
+
+    const result = await pool.query(
+      `
+        DELETE FROM app.face_identities
+        WHERE id = $1
+        RETURNING id, operator_name, role_name, site_name
+      `,
+      [id]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ ok: false, error: "Registered person was not found." });
+    }
+
+    res.json({ ok: true, deleted: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
 app.get("/api/records", async (req, res) => {
   try {
     await ensureSchemaReady();

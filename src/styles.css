@@ -2372,3 +2372,406 @@ label > span:not(.label-text) {
     font-size: 0.78rem;
   }
 }
+
+/* =========================================================
+   Final mobile compact pass + registered people delete
+========================================================= */
+.registered-person-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.delete-user-button {
+  padding: 0.48rem 0.7rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #dc2626;
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  box-shadow: none;
+  font-size: 0.75rem;
+  min-height: 34px;
+}
+
+.delete-user-button:hover:not(:disabled) {
+  background: rgba(254, 226, 226, 0.95);
+  box-shadow: none;
+}
+
+@media (max-width: 780px) {
+  :root {
+    font-size: 14px;
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+
+  .page-pad {
+    padding: 5rem 0.55rem 0.55rem;
+  }
+
+  .glass-card {
+    border-radius: 18px;
+    box-shadow: 0 14px 36px rgba(80, 92, 145, 0.13);
+  }
+
+  .topbar {
+    left: 0.45rem;
+    right: 0.45rem;
+    top: 0.45rem;
+    padding: 0.52rem;
+    border-radius: 16px;
+    gap: 0.45rem;
+  }
+
+  .topbar-brand {
+    gap: 0.45rem;
+  }
+
+  .mini-logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 11px;
+    font-size: 0.76rem;
+  }
+
+  .topbar-brand strong {
+    font-size: 0.86rem;
+  }
+
+  .topbar span {
+    font-size: 0.64rem;
+    margin-top: 0.04rem;
+  }
+
+  .topbar nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.32rem;
+    width: 100%;
+  }
+
+  .topbar nav button,
+  .topbar button {
+    min-height: 32px;
+    padding: 0.34rem 0.32rem;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    line-height: 1.05;
+  }
+
+  .logs-page {
+    height: 100dvh;
+    overflow: hidden;
+    padding: 4.85rem 0.5rem 0.5rem;
+  }
+
+  .logs-shell {
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .logs-right {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.34rem;
+    position: static;
+    order: 0;
+  }
+
+  .logs-right .stat-card {
+    min-height: 42px;
+    padding: 0.36rem 0.42rem;
+    border-radius: 12px;
+    display: grid;
+    grid-template-columns: 1fr;
+    align-content: center;
+    gap: 0.06rem;
+  }
+
+  .logs-right .stat-card span {
+    font-size: 0.5rem;
+    line-height: 1.05;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .logs-right .stat-card strong {
+    font-size: 0.95rem;
+    line-height: 1;
+    justify-self: start;
+  }
+
+  .logs-left {
+    min-height: 0;
+    padding: 0.68rem;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .logs-hero-inline {
+    gap: 0.55rem;
+    align-items: center;
+  }
+
+  .logs-left h1 {
+    font-size: 1.45rem;
+    letter-spacing: -0.045em;
+  }
+
+  .eyebrow {
+    font-size: 0.55rem;
+    letter-spacing: 0.13em;
+  }
+
+  .logs-hero-inline .secondary-button {
+    min-height: 30px;
+    padding: 0.36rem 0.56rem;
+    border-radius: 10px;
+    font-size: 0.72rem;
+  }
+
+  .logs-left .table-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+    border-radius: 12px;
+    background: transparent;
+    border: 0;
+  }
+
+  .logs-left table,
+  .compact-table {
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0 0.38rem;
+  }
+
+  .logs-left thead,
+  .compact-table thead {
+    display: none;
+  }
+
+  .logs-left tbody,
+  .logs-left tr,
+  .logs-left td,
+  .compact-table tbody,
+  .compact-table tr,
+  .compact-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .logs-left tr,
+  .compact-table tr {
+    padding: 0.45rem;
+    border: 1px solid rgba(115, 130, 165, 0.13);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.64);
+  }
+
+  .logs-left td,
+  .compact-table td {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 0.35rem;
+    padding: 0.12rem 0;
+    border-bottom: 0;
+    font-size: 0.66rem;
+    line-height: 1.2;
+    word-break: break-word;
+  }
+
+  .logs-left td::before,
+  .compact-table td::before {
+    content: attr(data-label);
+    color: #66738b;
+    font-size: 0.56rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .empty-state {
+    padding: 0.65rem;
+    border-radius: 12px;
+    font-size: 0.76rem;
+  }
+
+  .admin-page {
+    min-height: 100dvh;
+    padding: 4.85rem 0.5rem 0.5rem;
+    overflow-x: hidden;
+  }
+
+  .admin-grid,
+  .admin-grid.register-grid,
+  .register-grid {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.55rem;
+  }
+
+  .register-grid .input-form,
+  .admin-page .input-form,
+  .dashboard-summary {
+    padding: 0.72rem;
+    border-radius: 16px;
+  }
+
+  .admin-page .input-form h1,
+  .register-grid .input-form h1,
+  .form-page .input-form h1 {
+    font-size: 1.38rem;
+  }
+
+  .register-grid .field-grid,
+  .register-grid .field-grid.two,
+  .field-grid,
+  .field-grid.two {
+    grid-template-columns: 1fr;
+    gap: 0.42rem;
+  }
+
+  label {
+    font-size: 0.64rem;
+    gap: 0.2rem;
+  }
+
+  input,
+  select,
+  textarea {
+    min-height: 31px;
+    padding: 0.38rem 0.5rem;
+    border-radius: 9px;
+    font-size: 0.72rem;
+  }
+
+  textarea {
+    min-height: 54px;
+  }
+
+  .face-capture-row {
+    padding: 0.46rem;
+    border-radius: 12px;
+    gap: 0.45rem;
+  }
+
+  .face-capture-row strong {
+    font-size: 0.68rem;
+  }
+
+  .face-capture-row .secondary-button,
+  .register-grid button,
+  .input-form > button[type="submit"] {
+    min-height: 32px;
+    padding: 0.42rem 0.58rem;
+    border-radius: 10px;
+    font-size: 0.72rem;
+  }
+
+  .dashboard-summary h2 {
+    font-size: 1rem;
+  }
+
+  .user-list {
+    gap: 0.38rem;
+    max-height: 34dvh;
+    overflow: auto;
+  }
+
+  .user-list article,
+  .registered-person-row {
+    padding: 0.46rem;
+    border-radius: 12px;
+    gap: 0.4rem;
+  }
+
+  .user-list article strong {
+    font-size: 0.78rem;
+  }
+
+  .user-list article span,
+  .user-list article small {
+    font-size: 0.62rem;
+  }
+
+  .delete-user-button {
+    min-height: 28px;
+    padding: 0.3rem 0.45rem;
+    border-radius: 9px;
+    font-size: 0.62rem;
+  }
+
+  .form-page,
+  .form-page.no-topbar-pad {
+    min-height: 100dvh;
+    padding: 0.48rem;
+    overflow-x: hidden;
+  }
+
+  .form-layout,
+  .form-layout.single {
+    width: 100%;
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .form-layout .input-form,
+  .form-layout .side-card,
+  .form-layout.single .input-form {
+    padding: 0.68rem;
+    border-radius: 16px;
+  }
+
+  .form-title-row h1 {
+    font-size: 1.32rem;
+  }
+
+  .operator-strip {
+    padding: 0.42rem;
+    gap: 0.28rem;
+  }
+
+  .operator-strip span,
+  .shift-badge {
+    padding: 0.28rem 0.4rem;
+    font-size: 0.58rem;
+    border-radius: 8px;
+  }
+
+  .message {
+    padding: 0.52rem 0.65rem;
+    border-radius: 11px;
+    font-size: 0.72rem;
+  }
+}
+
+@media (max-width: 430px) {
+  .logs-right .stat-card span {
+    font-size: 0.46rem;
+  }
+
+  .logs-right .stat-card strong {
+    font-size: 0.86rem;
+  }
+
+  .topbar nav button {
+    font-size: 0.66rem;
+  }
+
+  .logs-left td,
+  .compact-table td {
+    grid-template-columns: 58px minmax(0, 1fr);
+    font-size: 0.62rem;
+  }
+}

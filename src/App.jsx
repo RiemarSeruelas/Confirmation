@@ -550,15 +550,15 @@ function RecordList({ records, compact = false }) {
         <tbody>
           {records.map((record) => (
             <tr key={record.id}>
-              <td>{formatDateTime(record.record_timestamp)}</td>
-              <td>{record.operator_name}</td>
-              <td>{record.site_name || "—"}</td>
-              <td>{record.machine_name}</td>
-              <td>{formatNumber(record.reading_value)}</td>
-              <td>{record.product || "—"}</td>
-              <td>{record.batch_number || "—"}</td>
-              <td>{shiftDisplayName(record.shift_name)}</td>
-              <td>{record.remarks || "—"}</td>
+              <td data-label="When">{formatDateTime(record.record_timestamp)}</td>
+              <td data-label="Operator">{record.operator_name}</td>
+              <td data-label="Site">{record.site_name || "—"}</td>
+              <td data-label="Machine">{record.machine_name}</td>
+              <td data-label="Reading">{formatNumber(record.reading_value)}</td>
+              <td data-label="Product">{record.product || "—"}</td>
+              <td data-label="Batch">{record.batch_number || "—"}</td>
+              <td data-label="Shift">{shiftDisplayName(record.shift_name)}</td>
+              <td data-label="Remarks">{record.remarks || "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -574,6 +574,7 @@ function AdminRegisterPage({ adminUser }) {
   const [users, setUsers] = useState([]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   function updateUserField(field, value) {
     setUserForm((current) => ({ ...current, [field]: value }));
@@ -603,6 +604,24 @@ function AdminRegisterPage({ adminUser }) {
       setMessage(error.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDeleteUser(user) {
+    const name = user?.operator_name || "this person";
+    const confirmed = window.confirm(`Delete ${name} from registered people? Their old submissions will stay in logs.`);
+    if (!confirmed) return;
+
+    try {
+      setDeletingId(user.id);
+      setMessage("");
+      await fetchJson(`/api/admin/users/${user.id}`, { method: "DELETE" });
+      setMessage(`Deleted ${name}.`);
+      await loadUsers();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -668,11 +687,22 @@ function AdminRegisterPage({ adminUser }) {
           <p className="eyebrow">Accounts</p>
           <h2>Registered People</h2>
           <div className="user-list compact-users">
+            {!users.length && <p className="empty-state">No registered people yet.</p>}
             {users.map((user) => (
-              <article key={user.id}>
-                <strong>{user.operator_name}</strong>
-                <span>{user.site_name} • {shiftDisplayName(user.shift_name)} • {user.role_name}</span>
-                <small>{user.ai_face_key ? "Face linked" : "Manual account"}</small>
+              <article key={user.id} className="registered-person-row">
+                <div>
+                  <strong>{user.operator_name}</strong>
+                  <span>{user.site_name} • {shiftDisplayName(user.shift_name)} • {user.role_name}</span>
+                  <small>{user.ai_face_key ? "Face linked" : "Manual account"}</small>
+                </div>
+                <button
+                  className="delete-user-button"
+                  type="button"
+                  onClick={() => handleDeleteUser(user)}
+                  disabled={deletingId === user.id}
+                >
+                  {deletingId === user.id ? "Deleting" : "Delete"}
+                </button>
               </article>
             ))}
           </div>
