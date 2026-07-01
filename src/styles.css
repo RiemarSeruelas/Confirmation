@@ -2201,3 +2201,174 @@ body {
     min-width: 72px;
   }
 }
+
+/* =========================================================
+   Shift registration + mobile form polish
+========================================================= */
+label .label-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  color: #43536f;
+}
+
+label .label-text em {
+  color: #ec4899;
+  font-style: normal;
+  margin-left: 1px;
+}
+
+/* Keep regular label helper spans from turning whole labels pink. */
+label > span:not(.label-text) {
+  color: #ec4899;
+}
+
+.form-layout.single {
+  align-items: start;
+}
+
+.form-layout.single .input-form {
+  width: min(680px, 100%);
+  justify-self: center;
+}
+
+.form-page.no-topbar-pad {
+  min-height: 100dvh;
+  display: grid;
+  align-items: start;
+}
+
+.input-form select option {
+  font-weight: 700;
+}
+
+@media (max-width: 780px) {
+  .form-page {
+    min-height: 100dvh;
+    padding: 0.65rem;
+    overflow-x: hidden;
+  }
+
+  .form-page.no-topbar-pad {
+    padding: 0.65rem;
+  }
+
+  .form-layout,
+  .form-layout.single {
+    gap: 0.6rem;
+  }
+
+  .form-layout .input-form,
+  .form-layout .side-card,
+  .form-layout.single .input-form {
+    padding: 0.78rem;
+    border-radius: 20px;
+  }
+
+  .form-title-row {
+    gap: 0.55rem;
+  }
+
+  .form-title-row h1 {
+    font-size: 1.65rem;
+  }
+
+  .field-grid,
+  .field-grid.two {
+    gap: 0.55rem;
+  }
+
+  label {
+    gap: 0.28rem;
+    font-size: 0.72rem;
+  }
+
+  input,
+  select,
+  textarea {
+    min-height: 36px;
+    padding: 0.5rem 0.62rem;
+    border-radius: 11px;
+    font-size: 0.82rem;
+  }
+
+  textarea {
+    min-height: 74px;
+  }
+
+  .operator-strip {
+    gap: 0.4rem;
+    padding: 0.55rem;
+    border-radius: 15px;
+  }
+
+  .operator-strip span {
+    padding: 0.36rem 0.5rem;
+    font-size: 0.78rem;
+  }
+
+  .shift-badge {
+    padding: 0.42rem 0.58rem;
+    font-size: 0.68rem;
+  }
+
+  .face-capture-row {
+    gap: 0.45rem;
+  }
+
+  .face-capture-row strong {
+    font-size: 0.78rem;
+  }
+
+  .input-form > button[type="submit"] {
+    min-height: 38px;
+    padding: 0.58rem 0.75rem;
+    border-radius: 12px;
+  }
+
+  .side-card .records-header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .side-card h2 {
+    font-size: 1rem;
+  }
+
+  .side-card .secondary-button {
+    min-height: 34px;
+    padding: 0.48rem 0.62rem;
+    font-size: 0.78rem;
+  }
+}
+
+@media (max-width: 430px) {
+  .form-page,
+  .form-page.no-topbar-pad {
+    padding: 0.5rem;
+  }
+
+  .form-layout .input-form,
+  .form-layout .side-card,
+  .form-layout.single .input-form {
+    padding: 0.68rem;
+    border-radius: 18px;
+  }
+
+  .form-title-row h1 {
+    font-size: 1.45rem;
+  }
+
+  .form-title-row .ghost-button {
+    min-height: 32px;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.74rem;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 0.78rem;
+  }
+}

@@ -2,7 +2,19 @@ import { useEffect, useRef, useState } from "react";
 
 const siteOptions = ["Savoury", "Dressings"];
 const roleOptions = ["operator", "admin"];
-const shiftOptions = ["1st Shift", "2nd Shift", "3rd Shift"];
+const shiftOptions = [
+  { value: "1st Shift", label: "1st Shift || 6:00 AM - 2:00 PM" },
+  { value: "2nd Shift", label: "2nd Shift || 2:00 PM - 10:00 PM" },
+  { value: "3rd Shift", label: "3rd Shift || 10:00 PM - 6:00 AM" },
+];
+
+function shiftDisplayName(value) {
+  return shiftOptions.find((shift) => shift.value === value)?.label || value || "—";
+}
+
+function requiredLabel(text) {
+  return <span className="label-text">{text}<em>*</em></span>;
+}
 
 const emptyRecord = {
   machine_name: "",
@@ -20,6 +32,7 @@ const emptyUserForm = {
   department: "",
   roleName: "operator",
   email: "",
+  shiftName: "1st Shift",
 };
 
 function formatDateTime(value) {
@@ -70,17 +83,32 @@ function userRole(user) {
   return user?.role_name || "operator";
 }
 
-function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapture }) {
+function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapture, autoCapture = false, autoCaptureDelayMs = 900 }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const autoCaptureTimerRef = useRef(null);
+  const autoCaptureDoneRef = useRef(false);
   const [status, setStatus] = useState("Starting camera...");
   const [busy, setBusy] = useState(false);
 
   function stopCamera() {
+    if (autoCaptureTimerRef.current) {
+      clearTimeout(autoCaptureTimerRef.current);
+      autoCaptureTimerRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+  }
+
+  function scheduleAutoCapture() {
+    if (!autoCapture || autoCaptureDoneRef.current) return;
+    autoCaptureDoneRef.current = true;
+    setStatus("Camera ready. Auto capturing...");
+    autoCaptureTimerRef.current = setTimeout(() => {
+      handleCapture();
+    }, autoCaptureDelayMs);
   }
 
   async function startCamera() {
@@ -105,8 +133,11 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
         audio: false,
       });
       streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setStatus("Camera ready. Center your face and capture.");
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = scheduleAutoCapture;
+      }
+      setStatus(autoCapture ? "Camera ready. Auto capturing..." : "Camera ready. Center your face and capture.");
     } catch (error) {
       setStatus(error.name === "NotAllowedError" ? "Camera permission was blocked." : error.message || "Could not start camera.");
     }
@@ -162,7 +193,7 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
         </div>
 
         <div className="camera-frame">
-          <video ref={videoRef} autoPlay playsInline muted />
+          <video ref={videoRef} autoPlay playsInline muted onCanPlay={scheduleAutoCapture} />
           <div className="face-guide" />
         </div>
 
@@ -170,7 +201,7 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
 
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" onClick={handleCapture} disabled={busy}>{busy ? "Processing..." : "Capture"}</button>
+          {!autoCapture && <button type="button" onClick={handleCapture} disabled={busy}>{busy ? "Processing..." : "Capture"}</button>}
         </div>
       </section>
     </div>
@@ -218,9 +249,10 @@ function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser 
       {faceOpen && (
         <FaceCaptureModal
           title="Face Login"
-          description="Capture your face to open your assigned page."
+          description="Center your face. The app will capture automatically."
           onClose={() => setFaceOpen(false)}
           onCapture={handleLoginCapture}
+          autoCapture
         />
       )}
     </main>
@@ -277,13 +309,19 @@ function RegisterPage({ onBack, onRegistered }) {
 
           <div className="field-grid two">
             <label>
-              Name <span>*</span>
+              {requiredLabel("Name")}
               <input value={form.operatorName} onChange={(event) => updateField("operatorName", event.target.value)} placeholder="Operator name" required />
             </label>
             <label>
-              Site <span>*</span>
+              {requiredLabel("Site")}
               <select value={form.siteName} onChange={(event) => updateField("siteName", event.target.value)} required>
                 {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+              </select>
+            </label>
+            <label>
+              {requiredLabel("Shift")}
+              <select value={form.shiftName} onChange={(event) => updateField("shiftName", event.target.value)} required>
+                {shiftOptions.map((shift) => <option key={shift.value} value={shift.value}>{shift.label}</option>)}
               </select>
             </label>
             <label>
@@ -310,7 +348,7 @@ function RegisterPage({ onBack, onRegistered }) {
             </button>
           </div>
 
-          <button type="submit" disabled={saving}>{saving ? "Registering..." : "Register Operator"}</button>
+          <button type="submit" disabled={saving}>{saving ? "Registering..." : "Register"}</button>
           {message && <p className="message">{message}</p>}
         </form>
       </section>
@@ -369,7 +407,8 @@ function RecordInputPage({ user }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const canEditSelectedShift = shiftStatus?.currentShift === form.shift_name;
+  const assignedShift = user?.shift_name || shiftStatus?.currentShift || "1st Shift";
+  const canEditSelectedShift = Boolean(shiftStatus?.currentShift) && shiftStatus.currentShift === assignedShift;
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -378,7 +417,6 @@ function RecordInputPage({ user }) {
   async function loadShiftStatus() {
     const data = await fetchJson("/api/shift-status");
     setShiftStatus(data);
-    setForm((current) => ({ ...current, shift_name: current.shift_name || data.currentShift }));
   }
 
   async function loadMyRecords() {
@@ -405,12 +443,13 @@ function RecordInputPage({ user }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
+          shift_name: assignedShift,
           operator_id: user?.id || null,
           operator_name: userDisplayName(user),
           site_name: userSite(user),
         }),
       });
-      setMessage(data.action === "updated" ? "Response updated for this shift." : "Response submitted for this shift.");
+      setMessage(data.action === "updated" ? "Response updated for this machine." : "Response submitted.");
       await loadMyRecords();
     } catch (error) {
       setMessage(error.message);
@@ -441,12 +480,13 @@ function RecordInputPage({ user }) {
           <div className="operator-strip">
             <span>Name: <strong>{userDisplayName(user)}</strong></span>
             <span>Site: <strong>{userSite(user)}</strong></span>
-            <span>Current Shift: <strong>{shiftStatus?.currentShift || "—"}</strong></span>
+            <span>Shift: <strong>{shiftDisplayName(assignedShift)}</strong></span>
+            <span>Now: <strong>{shiftDisplayName(shiftStatus?.currentShift)}</strong></span>
           </div>
 
           <div className="field-grid two">
             <label>
-              Machine Name <span>*</span>
+              {requiredLabel("Machine Name")}
               <input value={form.machine_name} onChange={(event) => updateField("machine_name", event.target.value)} placeholder="Machine name" required />
             </label>
             <label>
@@ -463,12 +503,6 @@ function RecordInputPage({ user }) {
             </label>
           </div>
 
-          <label>
-            Shift <span>*</span>
-            <select value={form.shift_name} onChange={(event) => updateField("shift_name", event.target.value)} required>
-              {shiftOptions.map((shift) => <option key={shift} value={shift}>{shift}</option>)}
-            </select>
-          </label>
 
           <label>
             Remarks
@@ -523,7 +557,7 @@ function RecordList({ records, compact = false }) {
               <td>{formatNumber(record.reading_value)}</td>
               <td>{record.product || "—"}</td>
               <td>{record.batch_number || "—"}</td>
-              <td>{record.shift_name}</td>
+              <td>{shiftDisplayName(record.shift_name)}</td>
               <td>{record.remarks || "—"}</td>
             </tr>
           ))}
@@ -584,7 +618,7 @@ function AdminRegisterPage({ adminUser }) {
           <h1>Register Anyone</h1>
           <div className="field-grid two">
             <label>
-              Name <span>*</span>
+              {requiredLabel("Name")}
               <input value={userForm.operatorName} onChange={(event) => updateUserField("operatorName", event.target.value)} placeholder="Person name" required />
             </label>
             <label>
@@ -597,6 +631,12 @@ function AdminRegisterPage({ adminUser }) {
               Site
               <select value={userForm.siteName} onChange={(event) => updateUserField("siteName", event.target.value)}>
                 {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+              </select>
+            </label>
+            <label>
+              {requiredLabel("Shift")}
+              <select value={userForm.shiftName} onChange={(event) => updateUserField("shiftName", event.target.value)} required>
+                {shiftOptions.map((shift) => <option key={shift.value} value={shift.value}>{shift.label}</option>)}
               </select>
             </label>
             <label>
@@ -620,7 +660,7 @@ function AdminRegisterPage({ adminUser }) {
             <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button>
           </div>
 
-          <button type="submit" disabled={saving}>{saving ? "Saving..." : "Save Person"}</button>
+          <button type="submit" disabled={saving}>{saving ? "Saving..." : "Register"}</button>
           {message && <p className="message">{message}</p>}
         </form>
 
@@ -631,7 +671,7 @@ function AdminRegisterPage({ adminUser }) {
             {users.map((user) => (
               <article key={user.id}>
                 <strong>{user.operator_name}</strong>
-                <span>{user.site_name} • {user.role_name}</span>
+                <span>{user.site_name} • {shiftDisplayName(user.shift_name)} • {user.role_name}</span>
                 <small>{user.ai_face_key ? "Face linked" : "Manual account"}</small>
               </article>
             ))}
@@ -812,7 +852,7 @@ function App() {
   }
 
   function handleDemoUser() {
-    setUser({ id: null, operator_name: "Temporary User", site_name: "Savoury", role_name: "operator" });
+    setUser({ id: null, operator_name: "Temporary User", site_name: "Savoury", role_name: "operator", shift_name: "1st Shift" });
     setPage("record");
   }
 

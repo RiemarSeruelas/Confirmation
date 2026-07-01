@@ -272,6 +272,7 @@ function identityRowToProfile(row) {
     operator_name: row.operator_name,
     employee_id: row.employee_id || "",
     site_name: row.site_name || "Savoury",
+    shift_name: row.shift_name || "1st Shift",
     department: row.department || "",
     role_name: row.role_name || "operator",
     email: row.email || "",
@@ -313,6 +314,7 @@ async function saveIdentity({ profile, aiFaceKey, identifiers = [], registerPayl
 
   const siteName = normalizeSite(profile.siteName || profile.site_name);
   const roleName = normalizeRole(profile.roleName || profile.role_name);
+  const shiftName = normalizeShift(profile.shiftName || profile.shift_name);
   const employeeId = cleanText(profile.employeeId || profile.employee_id);
   const department = cleanText(profile.department);
   const email = cleanText(profile.email);
@@ -322,16 +324,17 @@ async function saveIdentity({ profile, aiFaceKey, identifiers = [], registerPayl
   const result = await pool.query(
     `
       INSERT INTO app.face_identities (
-        operator_name, employee_id, site_name, department, role_name, email,
+        operator_name, employee_id, site_name, shift_name, department, role_name, email,
         ai_face_key, ai_identifiers, ai_register_payload, ai_last_match_payload,
         registered_by, last_seen_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, NOW())
       ON CONFLICT (ai_face_key)
       DO UPDATE SET
         operator_name = EXCLUDED.operator_name,
         employee_id = EXCLUDED.employee_id,
         site_name = EXCLUDED.site_name,
+        shift_name = EXCLUDED.shift_name,
         department = EXCLUDED.department,
         role_name = EXCLUDED.role_name,
         email = EXCLUDED.email,
@@ -347,6 +350,7 @@ async function saveIdentity({ profile, aiFaceKey, identifiers = [], registerPayl
       operatorName,
       employeeId,
       siteName,
+      shiftName,
       department,
       roleName,
       email,
@@ -501,6 +505,7 @@ app.post("/api/face/register", async (req, res) => {
       operatorName: cleanText(req.body?.operatorName || req.body?.name),
       employeeId: cleanText(req.body?.employeeId),
       siteName: normalizeSite(req.body?.siteName),
+      shiftName: normalizeShift(req.body?.shiftName || req.body?.shift_name),
       department: cleanText(req.body?.department),
       roleName: normalizeRole(req.body?.roleName || "operator"),
       email: cleanText(req.body?.email),
@@ -550,6 +555,7 @@ app.post("/api/admin/users", async (req, res) => {
       operatorName: cleanText(req.body?.operatorName || req.body?.name),
       employeeId: cleanText(req.body?.employeeId),
       siteName: normalizeSite(req.body?.siteName),
+      shiftName: normalizeShift(req.body?.shiftName || req.body?.shift_name),
       department: cleanText(req.body?.department),
       roleName: normalizeRole(req.body?.roleName),
       email: cleanText(req.body?.email),
@@ -688,6 +694,7 @@ app.post("/api/records/upsert", async (req, res) => {
         FROM app.confirmation_test_records
         WHERE shift_name = $1
           AND shift_work_date = $2::date
+          AND lower(machine_name) = lower($5)
           AND (
             ($3::int IS NOT NULL AND operator_id = $3::int)
             OR ($3::int IS NULL AND lower(operator_name) = lower($4))
@@ -695,7 +702,7 @@ app.post("/api/records/upsert", async (req, res) => {
         ORDER BY id DESC
         LIMIT 1
       `,
-      [shiftName, current.workDate, operatorId, operatorName]
+      [shiftName, current.workDate, operatorId, operatorName, machineName]
     );
 
     let result;

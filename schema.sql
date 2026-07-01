@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS app.face_identities (
   operator_name TEXT NOT NULL,
   employee_id TEXT DEFAULT '',
   site_name TEXT NOT NULL DEFAULT 'Savoury',
+  shift_name TEXT NOT NULL DEFAULT '1st Shift',
   department TEXT DEFAULT '',
   role_name TEXT NOT NULL DEFAULT 'operator',
   email TEXT DEFAULT '',
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS app.face_identities (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT chk_face_identities_site_name CHECK (site_name IN ('Savoury', 'Dressings', 'Admin')),
+  CONSTRAINT chk_face_identities_shift_name CHECK (shift_name IN ('1st Shift', '2nd Shift', '3rd Shift')),
   CONSTRAINT chk_face_identities_role_name CHECK (role_name IN ('operator', 'admin'))
 );
 
@@ -35,6 +37,7 @@ ALTER TABLE app.face_identities
   ADD COLUMN IF NOT EXISTS operator_name TEXT NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS employee_id TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS site_name TEXT NOT NULL DEFAULT 'Savoury',
+  ADD COLUMN IF NOT EXISTS shift_name TEXT NOT NULL DEFAULT '1st Shift',
   ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS role_name TEXT NOT NULL DEFAULT 'operator',
   ADD COLUMN IF NOT EXISTS email TEXT DEFAULT '',
@@ -58,6 +61,10 @@ UPDATE app.face_identities
 SET site_name = 'Savoury'
 WHERE site_name IS NULL OR site_name = '';
 
+UPDATE app.face_identities
+SET shift_name = '1st Shift'
+WHERE shift_name IS NULL OR shift_name = '' OR shift_name NOT IN ('1st Shift', '2nd Shift', '3rd Shift');
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_face_identities_ai_face_key
 ON app.face_identities(ai_face_key)
 WHERE ai_face_key IS NOT NULL AND ai_face_key <> '';
@@ -70,6 +77,9 @@ ON app.face_identities(operator_name);
 
 CREATE INDEX IF NOT EXISTS idx_face_identities_role_name
 ON app.face_identities(role_name);
+
+CREATE INDEX IF NOT EXISTS idx_face_identities_shift_name
+ON app.face_identities(shift_name);
 
 DROP TRIGGER IF EXISTS trg_face_identities_updated_at
 ON app.face_identities;
@@ -131,6 +141,9 @@ ON app.confirmation_test_records(record_timestamp DESC);
 
 CREATE INDEX IF NOT EXISTS idx_confirmation_test_records_operator_shift
 ON app.confirmation_test_records(operator_id, shift_name, shift_work_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_confirmation_test_records_operator_machine_shift
+ON app.confirmation_test_records(operator_id, lower(machine_name), shift_name, shift_work_date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_confirmation_test_records_shift_work_date
 ON app.confirmation_test_records(shift_work_date DESC);
