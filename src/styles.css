@@ -2775,3 +2775,233 @@ label > span:not(.label-text) {
     font-size: 0.62rem;
   }
 }
+
+/* =========================================================
+   Requested admin-delete + log filter/mobile cleanup pass
+========================================================= */
+.registered-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.registered-header-row h2 {
+  margin: 0;
+}
+
+.registered-header-row .delete-user-button {
+  flex: 0 0 auto;
+}
+
+.registered-person-row {
+  grid-template-columns: minmax(0, 1fr);
+  border: 1px solid rgba(115, 130, 165, 0.14);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.user-list.delete-mode .registered-person-row.can-delete {
+  cursor: pointer;
+}
+
+.user-list.delete-mode .registered-person-row.can-delete:hover,
+.user-list.delete-mode .registered-person-row.can-delete:focus-visible {
+  background: rgba(254, 226, 226, 0.86);
+  border-color: rgba(239, 68, 68, 0.42);
+  box-shadow: 0 12px 24px rgba(239, 68, 68, 0.12);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.delete-user-button.active-delete {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: rgba(239, 68, 68, 0.32);
+}
+
+.logs-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.3fr) minmax(120px, 0.7fr) minmax(170px, 0.9fr) minmax(132px, 0.65fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.logs-filter-bar input,
+.logs-filter-bar select {
+  min-height: 42px;
+  padding: 0.62rem 0.8rem;
+  border-radius: 13px;
+  font-size: 0.82rem;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.logs-filter-bar button {
+  min-height: 42px;
+  padding: 0.62rem 0.9rem;
+  border-radius: 13px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.mobile-record-list {
+  display: none;
+}
+
+.mobile-log-card {
+  border: 1px solid rgba(115, 130, 165, 0.15);
+  background: rgba(255, 255, 255, 0.68);
+  border-radius: 14px;
+  padding: 0.6rem;
+}
+
+.mobile-log-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding-bottom: 0.42rem;
+  border-bottom: 1px solid rgba(115, 130, 165, 0.12);
+}
+
+.mobile-log-top strong {
+  min-width: 0;
+  color: #172033;
+  font-size: 0.82rem;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-log-top span {
+  flex: 0 0 auto;
+  color: #1d3768;
+  font-size: 0.88rem;
+  font-weight: 950;
+}
+
+.mobile-log-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.6rem;
+  padding-top: 0.45rem;
+}
+
+.mobile-log-grid span {
+  min-width: 0;
+  color: #182137;
+  font-size: 0.66rem;
+  line-height: 1.22;
+  word-break: break-word;
+}
+
+.mobile-log-grid b {
+  display: block;
+  margin-bottom: 0.08rem;
+  color: #68758d;
+  font-size: 0.5rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mobile-log-grid .wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 780px) {
+  .logs-filter-bar {
+    grid-template-columns: 1fr 0.72fr 0.88fr;
+    gap: 0.32rem;
+  }
+
+  .logs-filter-bar input,
+  .logs-filter-bar select,
+  .logs-filter-bar button {
+    min-height: 29px;
+    padding: 0.3rem 0.4rem;
+    border-radius: 9px;
+    font-size: 0.61rem;
+  }
+
+  .logs-filter-bar input:first-child {
+    grid-column: span 2;
+  }
+
+  .logs-filter-bar button {
+    grid-column: auto;
+  }
+
+  .logs-left .table-wrap {
+    padding: 0;
+  }
+
+  .logs-left table,
+  .logs-left .compact-table,
+  .compact-table {
+    display: none !important;
+  }
+
+  .mobile-record-list {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .mobile-log-card {
+    padding: 0.42rem;
+    border-radius: 11px;
+  }
+
+  .mobile-log-top {
+    padding-bottom: 0.28rem;
+  }
+
+  .mobile-log-top strong {
+    font-size: 0.72rem;
+  }
+
+  .mobile-log-top span {
+    font-size: 0.76rem;
+  }
+
+  .mobile-log-grid {
+    gap: 0.22rem 0.42rem;
+    padding-top: 0.32rem;
+  }
+
+  .mobile-log-grid span {
+    font-size: 0.56rem;
+    line-height: 1.18;
+  }
+
+  .mobile-log-grid b {
+    font-size: 0.43rem;
+  }
+
+  .registered-header-row {
+    margin-bottom: 0.44rem;
+  }
+
+  .registered-header-row .delete-user-button {
+    min-height: 28px;
+    padding: 0.3rem 0.56rem;
+  }
+
+  .registered-person-row.can-delete {
+    background: rgba(255, 247, 247, 0.78);
+  }
+}
+
+@media (max-width: 430px) {
+  .logs-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .logs-filter-bar input:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .logs-filter-bar button {
+    grid-column: 2;
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const siteOptions = ["Savoury", "Dressings"];
 const roleOptions = ["operator", "admin"];
@@ -54,6 +54,33 @@ function formatNumber(value, decimals = 2) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return "—";
   return numberValue.toFixed(decimals);
+}
+
+function recordDateKey(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+}
+
+function summarizeRecords(records = []) {
+  const operatorSet = new Set();
+  let savouryCount = 0;
+  let dressingsCount = 0;
+
+  for (const record of records) {
+    if (record.operator_name) operatorSet.add(String(record.operator_name).trim().toLowerCase());
+    const site = String(record.site_name || "").trim().toLowerCase();
+    if (site === "savoury") savouryCount += 1;
+    if (site === "dressings") dressingsCount += 1;
+  }
+
+  return {
+    total_submissions: records.length,
+    unique_operators: operatorSet.size,
+    savoury_count: savouryCount,
+    dressings_count: dressingsCount,
+  };
 }
 
 async function fetchJson(url, options = {}) {
@@ -563,6 +590,26 @@ function RecordList({ records, compact = false }) {
           ))}
         </tbody>
       </table>
+
+      <div className="mobile-record-list">
+        {records.map((record) => (
+          <article className="mobile-log-card" key={`mobile-${record.id}`}>
+            <div className="mobile-log-top">
+              <strong>{record.machine_name}</strong>
+              <span>{formatNumber(record.reading_value)}</span>
+            </div>
+            <div className="mobile-log-grid">
+              <span><b>When</b>{formatDateTime(record.record_timestamp)}</span>
+              <span><b>Operator</b>{record.operator_name || "—"}</span>
+              <span><b>Site</b>{record.site_name || "—"}</span>
+              <span><b>Shift</b>{shiftDisplayName(record.shift_name)}</span>
+              <span><b>Product</b>{record.product || "—"}</span>
+              <span><b>Batch</b>{record.batch_number || "—"}</span>
+              <span className="wide"><b>Remarks</b>{record.remarks || "—"}</span>
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
@@ -575,6 +622,7 @@ function AdminRegisterPage({ adminUser }) {
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [deleteMode, setDeleteMode] = useState(false);
 
   function updateUserField(field, value) {
     setUserForm((current) => ({ ...current, [field]: value }));
@@ -685,24 +733,34 @@ function AdminRegisterPage({ adminUser }) {
 
         <section className="glass-card dashboard-summary">
           <p className="eyebrow">Accounts</p>
-          <h2>Registered People</h2>
-          <div className="user-list compact-users">
+          <div className="registered-header-row">
+            <h2>Registered People</h2>
+            <button
+              className={deleteMode ? "delete-user-button active-delete" : "delete-user-button"}
+              type="button"
+              onClick={() => setDeleteMode((current) => !current)}
+            >
+              {deleteMode ? "Done" : "Delete"}
+            </button>
+          </div>
+          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>
             {!users.length && <p className="empty-state">No registered people yet.</p>}
             {users.map((user) => (
-              <article key={user.id} className="registered-person-row">
+              <article
+                key={user.id}
+                className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"}
+                onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined}
+                role={deleteMode ? "button" : undefined}
+                tabIndex={deleteMode ? 0 : undefined}
+                onKeyDown={(event) => {
+                  if (deleteMode && (event.key === "Enter" || event.key === " ")) handleDeleteUser(user);
+                }}
+              >
                 <div>
                   <strong>{user.operator_name}</strong>
                   <span>{user.site_name} • {shiftDisplayName(user.shift_name)} • {user.role_name}</span>
-                  <small>{user.ai_face_key ? "Face linked" : "Manual account"}</small>
+                  <small>{deletingId === user.id ? "Deleting..." : user.ai_face_key ? "Face linked" : "Manual account"}</small>
                 </div>
-                <button
-                  className="delete-user-button"
-                  type="button"
-                  onClick={() => handleDeleteUser(user)}
-                  disabled={deletingId === user.id}
-                >
-                  {deletingId === user.id ? "Deleting" : "Delete"}
-                </button>
               </article>
             ))}
           </div>
@@ -729,6 +787,15 @@ function LogsPage() {
   const [summary, setSummary] = useState(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState({ search: "", site: "", shift: "", date: "" });
+
+  function updateFilter(field, value) {
+    setFilters((current) => ({ ...current, [field]: value }));
+  }
+
+  function clearFilters() {
+    setFilters({ search: "", site: "", shift: "", date: "" });
+  }
 
   async function loadLogs() {
     try {
@@ -747,6 +814,30 @@ function LogsPage() {
     }
   }
 
+  const filteredRecords = useMemo(() => {
+    const search = filters.search.trim().toLowerCase();
+    return records.filter((record) => {
+      const siteMatch = !filters.site || record.site_name === filters.site;
+      const shiftMatch = !filters.shift || record.shift_name === filters.shift;
+      const dateMatch = !filters.date || recordDateKey(record.record_timestamp) === filters.date;
+      const haystack = [
+        record.operator_name,
+        record.site_name,
+        record.machine_name,
+        record.reading_value,
+        record.product,
+        record.batch_number,
+        record.shift_name,
+        record.remarks,
+      ].join(" ").toLowerCase();
+      const searchMatch = !search || haystack.includes(search);
+      return siteMatch && shiftMatch && dateMatch && searchMatch;
+    });
+  }, [records, filters]);
+
+  const filteredSummary = useMemo(() => summarizeRecords(filteredRecords), [filteredRecords]);
+  const hasFilters = Object.values(filters).some(Boolean);
+
   useEffect(() => {
     loadLogs();
   }, []);
@@ -755,10 +846,10 @@ function LogsPage() {
     <main className="logs-page app-gradient page-pad">
       <section className="logs-shell">
         <aside className="logs-right">
-          <article className="stat-card glass-card"><span>Total Submissions</span><strong>{summary?.total_submissions ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Operators</span><strong>{summary?.unique_operators ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Savoury</span><strong>{summary?.savoury_count ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Dressings</span><strong>{summary?.dressings_count ?? 0}</strong></article>
+          <article className="stat-card glass-card"><span>Total</span><strong>{hasFilters ? filteredSummary.total_submissions : summary?.total_submissions ?? 0}</strong></article>
+          <article className="stat-card glass-card"><span>Operators</span><strong>{hasFilters ? filteredSummary.unique_operators : summary?.unique_operators ?? 0}</strong></article>
+          <article className="stat-card glass-card"><span>Savoury</span><strong>{hasFilters ? filteredSummary.savoury_count : summary?.savoury_count ?? 0}</strong></article>
+          <article className="stat-card glass-card"><span>Dressings</span><strong>{hasFilters ? filteredSummary.dressings_count : summary?.dressings_count ?? 0}</strong></article>
         </aside>
 
         <section className="logs-left glass-card">
@@ -770,8 +861,22 @@ function LogsPage() {
             <button className="secondary-button" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button>
           </div>
 
+          <div className="logs-filter-bar">
+            <input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search logs" />
+            <select value={filters.site} onChange={(event) => updateFilter("site", event.target.value)} aria-label="Filter by site">
+              <option value="">All Sites</option>
+              {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+            </select>
+            <select value={filters.shift} onChange={(event) => updateFilter("shift", event.target.value)} aria-label="Filter by shift">
+              <option value="">All Shifts</option>
+              {shiftOptions.map((shift) => <option key={shift.value} value={shift.value}>{shift.label}</option>)}
+            </select>
+            <input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} aria-label="Filter by date" />
+            <button className="ghost-button" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear</button>
+          </div>
+
           {message && <p className="message">{message}</p>}
-          <RecordList records={records} />
+          <RecordList records={filteredRecords} />
         </section>
       </section>
     </main>
