@@ -138,3 +138,20 @@ Dashboard summary:
 ```text
 GET http://localhost:5178/api/dashboard/summary
 ```
+
+
+## Machine Builder storage
+
+Admin-created machine setups are stored in PostgreSQL in:
+
+```text
+app.machine_configs
+```
+
+The uploaded machine image is converted in the browser into a compact JPEG base64 data URL, then saved in `image_data_url`. The app renders that same value back as an image in Machine View and in the admin preview.
+
+Run this after replacing files so the table/columns exist:
+
+```bash
+npm run setup-db
+```

@@ -44,6 +44,32 @@ function uid(prefix = "id") {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function imageFileToCompactDataUrl(file, maxWidth = 1280, maxHeight = 820, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error("No image selected."));
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read image file."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Could not load image preview."));
+      img.onload = () => {
+        const ratio = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
+        const width = Math.max(1, Math.round(img.width * ratio));
+        const height = Math.max(1, Math.round(img.height * ratio));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function requiredLabel(text) {
   return <span className="label-text">{text}<em>*</em></span>;
 }
@@ -285,18 +311,19 @@ function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser 
 
   return (
     <main className="landing-page app-gradient">
-      <section className="landing-card glass-card">
+      <section className="login-card glass-card">
         <div className="brand-mark">CT</div>
         <p className="eyebrow">Confirmation Test</p>
         <h1>Operator Confirmation</h1>
-        <div className="landing-actions">
+        <p className="login-subtitle">Login, register, and monitor confirmation records in one clean app.</p>
+        <div className="login-actions">
           <button type="button" onClick={() => setFaceOpen(true)}>Login</button>
           <button className="secondary-button" type="button" onClick={onRegister}>Register</button>
-          <button className="secondary-button wide" type="button" onClick={onMachineView}>View Machine</button>
+          <button className="secondary-button" type="button" onClick={onMachineView}>View Machine</button>
           <button className="secondary-button" type="button" onClick={onDemoUser}>Login as User</button>
           <button className="secondary-button" type="button" onClick={onAdmin}>Admin</button>
         </div>
-        {message && <p className="message centered">{message}</p>}
+        {message && <p className="message centered center-message">{message}</p>}
       </section>
       {faceOpen && <FaceCaptureModal title="Face Login" description="Hold steady. The app will capture automatically." onClose={() => setFaceOpen(false)} onCapture={handleLoginCapture} autoCapture />}
     </main>
@@ -369,7 +396,7 @@ function TopBar({ user, page, setPage, onLogout }) {
     <header className="topbar">
       <div className="topbar-brand">
         <div className="mini-logo">CT</div>
-        <div><strong>Confirmation Test</strong><span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}</span></div>
+        <div><strong>Confirmation Test</strong><span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}{user?.shift_name ? ` • ${shiftDisplayName(user.shift_name)}` : ""}</span></div>
       </div>
       <nav>
         {isAdmin ? (
@@ -493,12 +520,6 @@ function RecordInputPage({ user }) {
           <div className="form-title-row">
             <div><p className="eyebrow">Record Input</p><h1>Confirmation Response</h1></div>
             <span className={canEditSelectedShift ? "shift-badge open" : "shift-badge closed"}>{canEditSelectedShift ? "Editable now" : "Locked"}</span>
-          </div>
-          <div className="operator-strip">
-            <span>Name: <strong>{userDisplayName(user)}</strong></span>
-            <span>Site: <strong>{userSite(user)}</strong></span>
-            <span>Shift: <strong>{shiftDisplayName(assignedShift)}</strong></span>
-            <span>Now: <strong>{shiftDisplayName(shiftStatus?.currentShift)}</strong></span>
           </div>
           <label>{requiredLabel("Machine")}<select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} required>{!machines.length && <option value="">No machines configured</option>}{machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}</select></label>
           {selectedMachine?.details && <div className="machine-details-note">{selectedMachine.details}</div>}
@@ -625,12 +646,17 @@ function AdminSystemPage() {
     setSelectedCalloutId(next.callouts[0]?.id || "");
   }
 
-  function handleImageUpload(event) {
+  async function handleImageUpload(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => updateForm("image_data_url", String(reader.result || ""));
-    reader.readAsDataURL(file);
+    try {
+      setMessage("Preparing image...");
+      const compactImage = await imageFileToCompactDataUrl(file);
+      updateForm("image_data_url", compactImage);
+      setMessage("Image ready. Save the machine setup to store it in the database.");
+    } catch (error) {
+      setMessage(error.message);
+    }
   }
 
   function handlePreviewClick(event) {
