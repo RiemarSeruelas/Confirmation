@@ -1492,7 +1492,12 @@ function MachineViewPage({ user = null, setPage = null, onLogout = null, standal
           <select className="factory-area-chip factory-area-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)}>
             {siteOptions.map((site) => <option key={site} value={site}>{site} Area</option>)}
           </select>
-          <button className="factory-bell notification-bell" type="button" onClick={() => go("alarms")} aria-label="Notifications"><span>{warningCount || 0}</span>🔔</button>
+          <button className="factory-bell notification-bell" type="button" onClick={() => go("alarms")} aria-label="Notifications">
+            <span className="factory-bell-count">{warningCount || 0}</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15 17H9m9-1.5c-.9-.95-1.35-2.2-1.35-3.75V9.5a4.65 4.65 0 0 0-9.3 0v2.25c0 1.55-.45 2.8-1.35 3.75h12ZM13.45 19.15a1.7 1.7 0 0 1-2.9 0" />
+            </svg>
+          </button>
           {standalone ? (
             <button className="factory-user-chip" type="button" onClick={() => setPage?.("auth")}>Back</button>
           ) : (
@@ -1573,6 +1578,180 @@ function MachineViewPage({ user = null, setPage = null, onLogout = null, standal
   );
 }
 
+
+function getMachineReadingMeta(machine) {
+  const fields = Array.isArray(machine?.fields) ? machine.fields : [];
+  const readingField =
+    fields.find((field) => field?.mapsTo === "reading_value") ||
+    fields.find((field) => field?.id === "reading_value") ||
+    fields.find((field) => field?.type === "number" && (field?.thresholdEnabled || field?.threshold_enabled));
+
+  return {
+    label: readingField?.label || "Reading",
+    unit: readingField?.unit || readingField?.suffix || readingField?.measurementUnit || "",
+  };
+}
+
+function formatTrendTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-PH", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+function trendMachineState(status) {
+  if (status === "normal") return "Running";
+  if (status === "below" || status === "above") return "Warning";
+  return "No Data";
+}
+
+function formatRangeText(minimum, maximum) {
+  const hasMin = minimum !== null && minimum !== undefined && minimum !== "" && Number.isFinite(Number(minimum));
+  const hasMax = maximum !== null && maximum !== undefined && maximum !== "" && Number.isFinite(Number(maximum));
+  if (!hasMin && !hasMax) return "— — —";
+  return `${hasMin ? formatNumber(minimum) : "—"} – ${hasMax ? formatNumber(maximum) : "—"}`;
+}
+
+function TrendOverviewChart({ trends = [], thresholdMin, thresholdMax }) {
+  const points = trends
+    .map((item) => ({ ...item, reading: Number(item.reading_value) }))
+    .filter((item) => Number.isFinite(item.reading));
+
+  if (points.length < 2) {
+    return <div className="trend-overview-empty">Need at least 2 readings to draw a trend.</div>;
+  }
+
+  const values = points.map((item) => item.reading);
+  const thresholds = [thresholdMin, thresholdMax].map(Number).filter(Number.isFinite);
+  const min = Math.min(...values, ...(thresholds.length ? thresholds : values));
+  const max = Math.max(...values, ...(thresholds.length ? thresholds : values));
+  const range = max === min ? 1 : max - min;
+  const width = 100;
+  const height = 60;
+  const chartTop = 5;
+  const chartBottom = height - 6;
+
+  const coordinates = points.map((item, index) => {
+    const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
+    const y = chartBottom - ((item.reading - min) / range) * (chartBottom - chartTop);
+    return { x, y, item };
+  });
+
+  const path = coordinates.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+  const areaPath = `${path} L${width},${height} L0,${height} Z`;
+  const yForThreshold = (value) => chartBottom - ((Number(value) - min) / range) * (chartBottom - chartTop);
+  const timeMarks = [points[0], points[Math.floor(points.length / 2)], points[points.length - 1]];
+
+  return (
+    <div className="trend-overview-chart-wrap">
+      <svg className="trend-overview-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-label="Machine trend overview chart">
+        <defs>
+          <linearGradient id="trendOverviewFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="rgba(33, 95, 224, 0.22)" />
+            <stop offset="100%" stopColor="rgba(33, 95, 224, 0.03)" />
+          </linearGradient>
+        </defs>
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = chartTop + (chartBottom - chartTop) * ratio;
+          return <line key={ratio} className="trend-overview-gridline" x1="0" y1={y} x2="100" y2={y} />;
+        })}
+        {Number.isFinite(Number(thresholdMax)) && <line className="trend-overview-threshold high" x1="0" x2="100" y1={yForThreshold(thresholdMax)} y2={yForThreshold(thresholdMax)} />}
+        {Number.isFinite(Number(thresholdMin)) && <line className="trend-overview-threshold low" x1="0" x2="100" y1={yForThreshold(thresholdMin)} y2={yForThreshold(thresholdMin)} />}
+        <path className="trend-overview-area" d={areaPath} />
+        <path className="trend-overview-line" d={path} />
+      </svg>
+      <div className="trend-overview-axis y"><span>{formatNumber(max)}</span><span>{formatNumber((max + min) / 2)}</span><span>{formatNumber(min)}</span></div>
+      <div className="trend-overview-axis x">{timeMarks.map((point, index) => <span key={`${point.id || index}-${index}`}>{formatTrendTime(point.record_timestamp)}</span>)}</div>
+    </div>
+  );
+}
+
+function TrendSparkline({ trends = [], status = "normal" }) {
+  const points = trends
+    .map((item) => Number(item.reading_value))
+    .filter((value) => Number.isFinite(value));
+
+  if (points.length < 2) {
+    return <div className="trend-tile-empty-line" aria-hidden="true" />;
+  }
+
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max === min ? 1 : max - min;
+  const width = 100;
+  const height = 28;
+  const path = points
+    .map((value, index) => {
+      const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
+      const y = height - ((value - min) / range) * (height - 6) - 3;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg className={`trend-tile-sparkline ${trendStatusClass(status)}`} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={path} />
+    </svg>
+  );
+}
+
+function TrendProgressRing({ percent = 0 }) {
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  const radius = 44;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference - (safePercent / 100) * circumference;
+
+  return (
+    <div className="trend-progress-ring" aria-label={`${Math.round(safePercent)} percent of target`}>
+      <svg viewBox="0 0 120 120">
+        <circle className="ring-track" cx="60" cy="60" r={radius} />
+        <circle className="ring-progress" cx="60" cy="60" r={radius} strokeDasharray={circumference} strokeDashoffset={dashOffset} />
+      </svg>
+      <div>
+        <strong>{Math.round(safePercent)}%</strong>
+        <span>of target</span>
+      </div>
+    </div>
+  );
+}
+
+function TrendMachineTile({ machine, miniData, isSelected, onSelect }) {
+  const miniStats = miniData?.stats || {};
+  const miniTrends = miniData?.trends || [];
+  const latestPoint = miniTrends[miniTrends.length - 1] || null;
+  const latestStatus = miniStats.latest_status || latestPoint?.warning_status || "no-data";
+  const readingMeta = getMachineReadingMeta(machine);
+  const { thresholdMin, thresholdMax } = getMachineReadingThresholds(machine);
+  const latestReading = latestPoint?.reading_value ?? miniStats.avg_reading;
+
+  return (
+    <button type="button" className={`trend-machine-tile ${isSelected ? "active" : ""}`} onClick={onSelect}>
+      <div className="trend-machine-tile-head">
+        <div>
+          <h3>{machine.machine_name}</h3>
+          <p>{readingMeta.label}</p>
+        </div>
+        <span className={`trend-machine-status ${trendStatusClass(latestStatus)}`}>{trendMachineState(latestStatus)}</span>
+      </div>
+      <div className="trend-machine-value-row">
+        <div>
+          <strong>{formatNumber(latestReading)}</strong>
+          <small>{readingMeta.unit || "value"}</small>
+        </div>
+        <TrendSparkline trends={miniTrends} status={latestStatus} />
+      </div>
+      <div className="trend-machine-meta-row">
+        <span><b>Target:</b> {thresholdMax !== null ? formatNumber(thresholdMax) : "—"}</span>
+        <span><b>Range:</b> {formatRangeText(thresholdMin, thresholdMax)}</span>
+      </div>
+    </button>
+  );
+}
+
 function TrendsPage() {
   const [machines, setMachines] = useState([]);
   const [selectedMachineId, setSelectedMachineId] = useState("");
@@ -1580,6 +1759,7 @@ function TrendsPage() {
   const [machineTrendMap, setMachineTrendMap] = useState({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Loading trends...");
+  const [trendLimit, setTrendLimit] = useState("120");
 
   async function loadMachines() {
     const machineData = await fetchJson("/api/machines");
@@ -1590,13 +1770,13 @@ function TrendsPage() {
     return machineList;
   }
 
-  async function loadTrend(machineId = selectedMachineId) {
+  async function loadTrend(machineId = selectedMachineId, limit = trendLimit) {
     if (!machineId) return;
     try {
       setLoading(true);
-      const data = await fetchJson(`/api/dashboard/trends?machine_config_id=${encodeURIComponent(machineId)}&limit=120`);
+      const data = await fetchJson(`/api/dashboard/trends?machine_config_id=${encodeURIComponent(machineId)}&limit=${encodeURIComponent(limit)}`);
       setTrendData({ trends: data.trends || [], warnings: data.warnings || [], stats: data.stats || null });
-      setMessage(data.trends?.length ? "Trend data loaded" : "No trend data yet for this machine");
+      setMessage(data.trends?.length ? "Live trend data from the database" : "No trend data yet for this machine");
     } catch (error) {
       setMessage(error.message);
       setTrendData({ trends: [], warnings: [], stats: null });
@@ -1605,103 +1785,128 @@ function TrendsPage() {
     }
   }
 
-  async function loadSidebarSummaries(machineList = machines) {
-    if (!machineList.length) return;
+  async function loadGridSummaries(machineList = machines) {
+    if (!machineList.length) {
+      setMachineTrendMap({});
+      return;
+    }
+
     const entries = await Promise.all(machineList.map(async (machine) => {
       try {
-        const data = await fetchJson(`/api/dashboard/trends?machine_config_id=${encodeURIComponent(machine.id)}&limit=20`);
+        const data = await fetchJson(`/api/dashboard/trends?machine_config_id=${encodeURIComponent(machine.id)}&limit=24`);
         return [String(machine.id), { trends: data.trends || [], warnings: data.warnings || [], stats: data.stats || null }];
       } catch {
         return [String(machine.id), { trends: [], warnings: [], stats: null }];
       }
     }));
+
     setMachineTrendMap(Object.fromEntries(entries));
   }
 
   async function refreshAll() {
     const machineList = await loadMachines();
-    await Promise.all([loadSidebarSummaries(machineList), selectedMachineId ? loadTrend(selectedMachineId) : Promise.resolve()]);
+    const activeId = selectedMachineId || String(machineList[0]?.id || "");
+    await Promise.all([loadGridSummaries(machineList), activeId ? loadTrend(activeId, trendLimit) : Promise.resolve()]);
   }
 
   useEffect(() => {
-    loadMachines().then((machineList) => loadSidebarSummaries(machineList)).catch((error) => setMessage(error.message));
+    loadMachines()
+      .then((machineList) => loadGridSummaries(machineList))
+      .catch((error) => setMessage(error.message));
   }, []);
 
   useEffect(() => {
-    if (selectedMachineId) loadTrend(selectedMachineId);
-  }, [selectedMachineId]);
+    if (selectedMachineId) loadTrend(selectedMachineId, trendLimit);
+  }, [selectedMachineId, trendLimit]);
 
-  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
+  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0] || null;
   const trends = trendData.trends || [];
-  const warnings = trendData.warnings || [];
   const stats = trendData.stats || {};
   const latest = trends[trends.length - 1] || null;
-  const recentPoints = trends.slice(-10).reverse();
+  const readingMeta = getMachineReadingMeta(selectedMachine);
+  const { thresholdMin, thresholdMax } = getMachineReadingThresholds(selectedMachine);
+  const currentValue = latest?.reading_value ?? stats.avg_reading;
+  const targetValue = thresholdMax ?? stats.max_reading ?? null;
+  const targetPercent = Number.isFinite(Number(currentValue)) && Number.isFinite(Number(targetValue)) && Number(targetValue) !== 0
+    ? (Number(currentValue) / Number(targetValue)) * 100
+    : 0;
+  const currentStatus = stats.latest_status || latest?.warning_status || "no-data";
 
   return (
-    <main className="trends-page app-gradient page-pad">
-      <section className="trends-shell">
-        <aside className="trend-machine-sidebar glass-card">
-          <div className="trend-side-head">
-            <div>
-              <p className="eyebrow">Trends</p>
-              <h1>Machine Trends</h1>
-            </div>
-            <button className="secondary-button" type="button" onClick={refreshAll} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
+    <main className="trends-page confirmation-trends-page app-gradient page-pad">
+      <section className="trends-dashboard glass-card">
+        <div className="trends-dashboard-header">
+          <div>
+            <p className="eyebrow">Trends</p>
+            <h1>Production Trend Overview</h1>
+            <p className="trend-dashboard-subtitle">Database-driven trend monitoring for configured machines.</p>
           </div>
-          <div className="trend-machine-list">
-            {!machines.length && <p className="empty-state">No machines configured yet.</p>}
-            {machines.map((machine) => {
-              const mini = machineTrendMap[String(machine.id)] || {};
-              const miniStats = mini.stats || {};
-              const miniLatest = (mini.trends || []).slice(-1)[0];
-              const status = miniStats.latest_status || miniLatest?.warning_status || "no-data";
-              return (
-                <button key={machine.id} type="button" className={`trend-machine-card ${String(machine.id) === String(selectedMachineId) ? "active" : ""}`} onClick={() => setSelectedMachineId(String(machine.id))}>
-                  <span className="trend-card-name">{machine.machine_name}</span>
-                  <small>{machine.site_name || "—"}</small>
-                  <div><b>{formatNumber(miniLatest?.reading_value ?? miniStats.avg_reading)}</b><em className={`trend-status-pill ${trendStatusClass(status)}`}>{trendStatusLabel(status)}</em></div>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
-
-        <section className="trend-main-panel glass-card">
-          <div className="trend-main-head">
-            <div>
-              <p className="eyebrow">Selected Machine</p>
-              <h1>{selectedMachine?.machine_name || "No Machine"}</h1>
-            </div>
+          <div className="trends-dashboard-toolbar">
             <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={!machines.length}>
               {!machines.length && <option value="">No machines</option>}
               {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
             </select>
+            <select value={trendLimit} onChange={(event) => setTrendLimit(event.target.value)} disabled={loading}>
+              <option value="40">Last 40 readings</option>
+              <option value="80">Last 80 readings</option>
+              <option value="120">Last 120 readings</option>
+              <option value="200">Last 200 readings</option>
+            </select>
+            <button className="secondary-button trend-dashboard-refresh" type="button" onClick={refreshAll} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
           </div>
+        </div>
 
-          {message && <p className="trend-message">{message}</p>}
+        {message && <p className="trend-dashboard-message">{message}</p>}
 
-          <div className="trend-page-grid">
-            <TrendWarningPanel trends={trends} warnings={warnings} stats={stats} selectedMachine={selectedMachine} latest={latest} />
-            <section className="trend-history-card">
-              <div className="trend-history-head">
-                <div><p className="eyebrow">History</p><h2>Recent Readings</h2></div>
-                <span>{stats.points || 0} points</span>
+        <section className="trend-overview-card">
+          <div className="trend-overview-left">
+            <div className="trend-overview-head">
+              <div>
+                <h2>{readingMeta.label} Trend {selectedMachine?.machine_name ? `(${selectedMachine.machine_name})` : "(All Machines)"}</h2>
+                <p>{readingMeta.unit ? `${readingMeta.label} (${readingMeta.unit})` : readingMeta.label}</p>
               </div>
-              {!recentPoints.length ? (
-                <p className="empty-state">No readings yet.</p>
-              ) : (
-                <div className="trend-reading-list">
-                  {recentPoints.map((point) => (
-                    <article key={point.id} className={`trend-reading-row ${trendStatusClass(point.warning_status)}`}>
-                      <div><strong>{formatNumber(point.reading_value)}</strong><span>{formatDateTime(point.record_timestamp)}</span></div>
-                      <p>{point.operator_name || "—"} • {point.product || "No product"} • {point.batch_number || "No batch"}</p>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
+              <div className="trend-overview-head-actions">
+                <span className="trend-time-chip">Last {trendLimit} Records</span>
+                <span className={`trend-current-state ${trendStatusClass(currentStatus)}`}>{trendMachineState(currentStatus)}</span>
+              </div>
+            </div>
+            <TrendOverviewChart trends={trends} thresholdMin={thresholdMin ?? stats.threshold_min} thresholdMax={thresholdMax ?? stats.threshold_max} />
           </div>
+
+          <aside className="trend-overview-right">
+            <div>
+              <span className="trend-side-label">Current {readingMeta.label}</span>
+              <div className="trend-current-reading">
+                <strong>{formatNumber(currentValue)}</strong>
+                <small>{readingMeta.unit || "value"}</small>
+              </div>
+            </div>
+
+            <div className="trend-side-stats">
+              <article><span>Average</span><strong>{formatNumber(stats.avg_reading)}</strong></article>
+              <article><span>Maximum</span><strong>{formatNumber(stats.max_reading)}</strong></article>
+              <article><span>Minimum</span><strong>{formatNumber(stats.min_reading)}</strong></article>
+              <article><span>Target</span><strong>{targetValue !== null && targetValue !== undefined ? formatNumber(targetValue) : "—"}</strong></article>
+            </div>
+
+            <TrendProgressRing percent={targetPercent} />
+          </aside>
+        </section>
+
+        <section className="trend-machine-grid">
+          {!machines.length ? (
+            <div className="empty-state">No machines configured yet.</div>
+          ) : (
+            machines.map((machine) => (
+              <TrendMachineTile
+                key={machine.id}
+                machine={machine}
+                miniData={machineTrendMap[String(machine.id)] || { trends: [], stats: null }}
+                isSelected={String(machine.id) === String(selectedMachineId)}
+                onSelect={() => setSelectedMachineId(String(machine.id))}
+              />
+            ))
+          )}
         </section>
       </section>
     </main>
