@@ -1198,31 +1198,237 @@ function TrendWarningPanel({ trends = [], warnings = [], stats = {}, selectedMac
   );
 }
 
-function MachineViewPage() {
+function getRawValueFromRecord(record, key, summary) {
+  if (key === "total_submissions") return summary?.total_submissions ?? 0;
+  if (!record) return "";
+  if (key === "machine_name") return record.machine_name;
+  if (key === "site_name") return record.site_name;
+  if (key === "operator_name") return record.operator_name;
+  if (key === "record_timestamp") return record.record_timestamp;
+  if (key === "reading_value") return record.reading_value;
+  if (key === "product") return record.product;
+  if (key === "batch_number") return record.batch_number;
+  if (key === "remarks") return record.remarks;
+  return record.response_fields?.[key];
+}
+
+function inferMetricUnit(title = "", key = "") {
+  const text = `${title} ${key}`.toLowerCase();
+  if (text.includes("temp")) return "°C";
+  if (text.includes("pressure")) return "bar";
+  if (text.includes("current")) return "A";
+  if (text.includes("speed") || text.includes("rpm")) return "rpm";
+  if (text.includes("power") || text.includes("kw")) return "kW";
+  if (text.includes("vibration")) return "mm/s";
+  if (text.includes("health") || text.includes("quality") || text.includes("availability") || text.includes("performance")) return "%";
+  return "";
+}
+
+function defaultRangeForMetric(title = "", key = "") {
+  const text = `${title} ${key}`.toLowerCase();
+  if (text.includes("vibration")) return { min: 0, max: 4 };
+  if (text.includes("current")) return { min: 0, max: 25 };
+  if (text.includes("pressure")) return { min: 0, max: 5 };
+  if (text.includes("temp")) return { min: 0, max: 120 };
+  if (text.includes("speed") || text.includes("rpm")) return { min: 0, max: 3000 };
+  if (text.includes("power") || text.includes("kw")) return { min: 0, max: 15 };
+  if (text.includes("health")) return { min: 0, max: 100 };
+  return { min: null, max: null };
+}
+
+function getFieldForMetric(fields, key) {
+  return fields.find((field) => field.id === key || field.mapsTo === key) || null;
+}
+
+function getMetricThresholds(machine, fields, key, title) {
+  const field = getFieldForMetric(fields, key);
+  const fieldMin = field?.thresholdEnabled ? Number(field.threshold_min) : NaN;
+  const fieldMax = field?.thresholdEnabled ? Number(field.threshold_max) : NaN;
+  const machineThresholds = key === "reading_value" ? getMachineReadingThresholds(machine) : { thresholdMin: null, thresholdMax: null };
+  const fallback = defaultRangeForMetric(title, key);
+
+  return {
+    min: Number.isFinite(fieldMin) ? fieldMin : machineThresholds.thresholdMin ?? fallback.min,
+    max: Number.isFinite(fieldMax) ? fieldMax : machineThresholds.thresholdMax ?? fallback.max,
+  };
+}
+
+function compactMetricValue(value, decimals = 2) {
+  if (value === null || value === undefined || value === "") return "—";
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return String(value);
+  const maxDigits = Math.abs(numberValue) >= 100 ? 0 : Math.abs(numberValue) >= 10 ? 1 : decimals;
+  return numberValue.toLocaleString("en-US", { maximumFractionDigits: maxDigits, minimumFractionDigits: maxDigits === 0 ? 0 : Math.min(maxDigits, decimals) });
+}
+
+function metricStatus(value, min, max) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return "idle";
+  if (Number.isFinite(Number(min)) && numberValue < Number(min)) return "warning";
+  if (Number.isFinite(Number(max)) && numberValue > Number(max)) return "warning";
+  return "normal";
+}
+
+function rangeText(min, max, unit) {
+  if (!Number.isFinite(Number(min)) && !Number.isFinite(Number(max))) return "Latest database value";
+  const left = Number.isFinite(Number(min)) ? compactMetricValue(min, 1) : "—";
+  const right = Number.isFinite(Number(max)) ? compactMetricValue(max, 1) : "—";
+  return `Range: ${left} – ${right}${unit ? ` ${unit}` : ""}`;
+}
+
+function enhanceFactoryCallouts(configuredCallouts) {
+  // Frontend does not invent callouts anymore.
+  // What appears here is only what the admin saved in app.machine_configs.callouts.
+  return normalizeCallouts(configuredCallouts).slice(0, 8);
+}
+
+function buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields) {
+  const rawValue = getRawValueFromRecord(displayRecord, callout.valueKey, summary);
+  const unit = inferMetricUnit(callout.title, callout.valueKey);
+  const thresholds = getMetricThresholds(selectedMachine, fields, callout.valueKey, callout.title);
+  const status = metricStatus(rawValue, thresholds.min, thresholds.max);
+  return {
+    ...callout,
+    rawValue,
+    value: compactMetricValue(rawValue),
+    unit,
+    range: rangeText(thresholds.min, thresholds.max, unit),
+    status,
+  };
+}
+
+function summaryKeyForField(field) {
+  if (!field) return "";
+  return field.mapsTo && field.mapsTo !== "custom" ? field.mapsTo : field.id;
+}
+
+function buildFactorySummaryRows({ selectedMachine, latest, fields, summary, statusText, warningCount }) {
+  const rows = [
+    ["Asset Name", selectedMachine?.machine_name || "No Machine"],
+    ["Status", statusText, warningCount ? "warn" : latest ? "ok" : "idle"],
+    ["Latest Record", latest ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }).format(new Date(latest.record_timestamp)) : "—"],
+  ];
+
+  for (const field of fields) {
+    const key = summaryKeyForField(field);
+    if (!key) continue;
+    rows.push([field.label, valueFromRecord(latest, key, summary)]);
+  }
+
+  rows.push(["Operator", latest?.operator_name || "—"]);
+  rows.push(["Last Update", formatDateTime(latest?.record_timestamp)]);
+
+  return rows;
+}
+
+function seriesForMetric(records, key) {
+  const values = records
+    .slice()
+    .reverse()
+    .map((record) => Number(getRawValueFromRecord(record, key)))
+    .filter(Number.isFinite);
+  if (values.length >= 2) return values.slice(-24);
+  if (values.length === 1) return [values[0], values[0], values[0]];
+  return [0, 0, 0];
+}
+
+function FactorySparkline({ values = [], warning = false }) {
+  const points = values.map(Number).filter(Number.isFinite);
+  const safePoints = points.length ? points : [0, 0, 0];
+  const min = Math.min(...safePoints);
+  const max = Math.max(...safePoints);
+  const range = max === min ? 1 : max - min;
+  const width = 100;
+  const height = 28;
+  const path = safePoints.map((value, index) => {
+    const x = safePoints.length === 1 ? width / 2 : (index / (safePoints.length - 1)) * width;
+    const y = height - ((value - min) / range) * (height - 6) - 3;
+    return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+
+  return (
+    <svg className={warning ? "factory-sparkline warning" : "factory-sparkline"} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={path} />
+    </svg>
+  );
+}
+
+function FactoryPumpFallback() {
+  return (
+    <div className="factory-pump-fallback" aria-hidden="true">
+      <div className="factory-base-plate" />
+      <div className="factory-motor-shell"><span /><span /><span /><span /><span /></div>
+      <div className="factory-motor-cap" />
+      <div className="factory-coupling" />
+      <div className="factory-shaft" />
+      <div className="factory-pump-body" />
+      <div className="factory-pump-flange left" />
+      <div className="factory-pump-flange right" />
+      <div className="factory-pipe-top" />
+      <div className="factory-pipe-nozzle" />
+      <div className="factory-foot left" />
+      <div className="factory-foot right" />
+    </div>
+  );
+}
+
+function FactoryMetricCard({ metric, records }) {
+  return (
+    <article className={metric.status === "warning" ? "factory-trend-card warning" : "factory-trend-card"}>
+      <div>
+        <span>{metric.title}</span>
+        {metric.status === "warning" && <b>⚠</b>}
+      </div>
+      <strong>{metric.value}<small>{metric.unit}</small></strong>
+      <FactorySparkline values={seriesForMetric(records, metric.valueKey)} warning={metric.status === "warning"} />
+    </article>
+  );
+}
+
+function MachineViewPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
   const [summary, setSummary] = useState(null);
   const [records, setRecords] = useState([]);
   const [machines, setMachines] = useState([]);
+  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [message, setMessage] = useState("Loading machine feed...");
   const [loading, setLoading] = useState(false);
 
-  async function loadMachines() {
-    const machineData = await fetchJson("/api/machines");
+  async function loadMachines(site = selectedArea) {
+    const query = site ? `?site=${encodeURIComponent(site)}` : "";
+    const machineData = await fetchJson(`/api/machines${query}`);
     const machineList = machineData.machines || [];
     setMachines(machineList);
-    if (!selectedMachineId && machineList[0]) setSelectedMachineId(String(machineList[0].id));
-    if (!machineList.length) setMessage("No machines configured yet");
+
+    const stillAvailable = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
+    if (stillAvailable) {
+      setSelectedMachineId(String(stillAvailable.id));
+    } else {
+      setSelectedMachineId(machineList[0] ? String(machineList[0].id) : "");
+    }
+
+    if (!machineList.length) {
+      setRecords([]);
+      setSummary(null);
+      setMessage(`No machines configured for ${site}`);
+    }
+
     return machineList;
   }
 
-  async function loadDashboard(machineId = selectedMachineId) {
+  async function loadDashboard(machineId = selectedMachineId, date = selectedDate) {
+    if (!machineId) return;
+
     try {
       setLoading(true);
-      const query = machineId ? `?machine_config_id=${encodeURIComponent(machineId)}` : "";
-      const data = await fetchJson(`/api/dashboard/summary${query}`);
-      setSummary(data.stats || null);
-      setRecords(data.latest || []);
-      setMessage(data.latest?.length ? "Live database feed" : "No data for this machine yet");
+      const params = new URLSearchParams({ machine_config_id: String(machineId), limit: "500" });
+      if (date) params.set("date", date);
+      const data = await fetchJson(`/api/records?${params.toString()}`);
+      const recordList = data.records || [];
+      setRecords(recordList);
+      setSummary(summarizeRecords(recordList));
+      setMessage(recordList.length ? `Database feed for ${date || "all dates"}` : "No data for this machine/date yet");
     } catch (error) {
       setMessage(error.message);
       setRecords([]);
@@ -1233,97 +1439,134 @@ function MachineViewPage() {
   }
 
   useEffect(() => {
-    loadMachines().catch((error) => setMessage(error.message));
-  }, []);
+    loadMachines(selectedArea).catch((error) => setMessage(error.message));
+  }, [selectedArea]);
 
   useEffect(() => {
-    if (selectedMachineId) loadDashboard(selectedMachineId);
-  }, [selectedMachineId]);
+    if (selectedMachineId) loadDashboard(selectedMachineId, selectedDate);
+  }, [selectedMachineId, selectedDate]);
 
   const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
   const latest = records[0] || null;
   const displayRecord = latest || {
     machine_name: selectedMachine?.machine_name || "No Machine",
-    site_name: selectedMachine?.site_name || "—",
+    site_name: selectedMachine?.site_name || selectedArea,
     operator_name: "No operator",
   };
-  const callouts = normalizeCallouts(selectedMachine?.callouts);
-  const { thresholdMin, thresholdMax } = getMachineReadingThresholds(selectedMachine);
-  const hasReading = latest?.reading_value !== null && latest?.reading_value !== undefined && latest?.reading_value !== "";
-  const isLow = hasReading && thresholdMin !== null && Number(latest?.reading_value) < thresholdMin;
-  const isHigh = hasReading && thresholdMax !== null && Number(latest?.reading_value) > thresholdMax;
-  const statusText = !latest ? "No Data" : isLow ? "Below Threshold" : isHigh ? "Above Threshold" : "Live";
+  const fields = normalizeFields(selectedMachine?.fields);
+  const factoryCallouts = enhanceFactoryCallouts(selectedMachine?.callouts);
+  const metrics = factoryCallouts.map((callout) => buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields));
+  const warningCount = metrics.filter((metric) => metric.status === "warning").length;
+  const statusText = !latest ? "No Data" : warningCount ? "Attention" : "Running";
+  const isAdmin = userRole(user) === "admin";
+  const latestRows = buildFactorySummaryRows({ selectedMachine, latest, fields, summary, statusText, warningCount });
 
-  const leftStatusClass = isLow || isHigh ? "status-warn" : latest ? "status-ok" : "";
-  const latestRows = [
-    ["Status", statusText, leftStatusClass],
-    ["Reading", formatNumber(latest?.reading_value), ""],
-    ["Product", latest?.product || "—", ""],
-    ["Batch", latest?.batch_number || "—", ""],
-    ["Operator", latest?.operator_name || "—", ""],
-    ["Updated", formatDateTime(latest?.record_timestamp), ""],
-  ];
+  function go(target) {
+    if (target === "overview") return;
+    if (!setPage) return;
+    if (target === "alarms" || target === "reports") return setPage("logs");
+    if (target === "maintenance") return setPage(isAdmin ? "system" : "record");
+    setPage(target);
+  }
 
   return (
-    <main className="machine-page app-gradient page-pad">
-      <section className="machine-monitor scalable-monitor light-monitor machine-only-monitor">
-        <aside className="asset-panel asset-panel-light">
-          <div className="asset-brand light-brand">CT</div>
-          <div className="asset-title-block">
-            <span className="eyebrow">Selected Machine</span>
-            <strong>{selectedMachine?.machine_name || "No Machine"}</strong>
-            {selectedMachine?.site_name && <small>{selectedMachine.site_name}</small>}
+    <main className="factory-os-page">
+      <header className="factory-topbar">
+        <button className="factory-brand confirmation-brand" type="button" onClick={() => standalone ? setPage?.("auth") : go("machine")}>
+          <span className="confirmation-mark">✓</span>
+          <strong>Confirmation</strong>
+        </button>
+        <nav className="factory-nav-tabs" aria-label="Factory navigation">
+          <button type="button" onClick={() => go("overview")}>Overview</button>
+          <button className="active" type="button" onClick={() => go("machine")}>Machines</button>
+          <button type="button" onClick={() => go("trends")}>Trends</button>
+          <button type="button" onClick={() => go("alarms")}>Alarms</button>
+          <button type="button" onClick={() => go("reports")}>Reports</button>
+          {isAdmin && <button type="button" onClick={() => go("system")}>System</button>}
+        </nav>
+        <div className="factory-top-actions">
+          <label className="factory-date-chip factory-date-filter">
+            <span>Calendar</span>
+            <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
+          </label>
+          <select className="factory-area-chip factory-area-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)}>
+            {siteOptions.map((site) => <option key={site} value={site}>{site} Area</option>)}
+          </select>
+          <button className="factory-bell notification-bell" type="button" onClick={() => go("alarms")} aria-label="Notifications"><span>{warningCount || 0}</span>🔔</button>
+          {standalone ? (
+            <button className="factory-user-chip" type="button" onClick={() => setPage?.("auth")}>Back</button>
+          ) : (
+            <button className="factory-user-chip" type="button" onClick={onLogout}>{userDisplayName(user).split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "AD"}</button>
+          )}
+        </div>
+      </header>
+
+      <section className="factory-workspace">
+        <div className="factory-toolbar-row">
+          <div className="factory-machine-select-group">
+            <label>Select Machine</label>
+            <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={!machines.length}>
+              {!machines.length && <option value="">No machines</option>}
+              {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
+            </select>
+            <span className={warningCount ? "factory-running-dot warn" : latest ? "factory-running-dot" : "factory-running-dot idle"} />
+            <b>{statusText}</b>
           </div>
-          <dl className="asset-compact-list">
-            {latestRows.map(([label, value, className]) => (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd className={className}>{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </aside>
-        <section className="process-view process-view-light">
-          <div className="monitor-head monitor-head-light">
-            <div>
-              <p className="eyebrow">Machines</p>
-              <h1 title={selectedMachine?.machine_name || "Machine Monitor"}>{selectedMachine?.machine_name || "Machine Monitor"}</h1>
-              {selectedMachine?.details && <p className="machine-view-details">{selectedMachine.details}</p>}
-            </div>
-            <div className="monitor-actions monitor-actions-light">
-              <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={!machines.length}>
-                {!machines.length && <option value="">No machines</option>}
-                {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
-              </select>
-              <button className="monitor-refresh" type="button" onClick={() => loadDashboard(selectedMachineId)} disabled={loading || !selectedMachineId}>{loading ? "Loading" : "Refresh"}</button>
-            </div>
+          <div className="factory-refresh-group">
+            <button type="button" onClick={() => loadDashboard(selectedMachineId, selectedDate)} disabled={loading || !selectedMachineId}>⟳ Refresh</button>
+            <span>Last updated: {latest ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }).format(new Date(latest.record_timestamp)) : "—"}</span>
           </div>
-          <div className="machine-content-grid machine-only-grid">
-            <div className="machine-stage dynamic-stage anchored-stage">
-              <div className="machine-image-frame">
-                {selectedMachine?.image_data_url ? <img className="machine-custom-image" src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} /> : <div className="machine-visual" aria-hidden="true"><div className="vessel" /><div className="motor" /><div className="legs left" /><div className="legs right" /><div className="pipe" /></div>}
-                <svg className="callout-line-layer machine-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  {callouts.map((callout) => {
-                    const { point, card } = calloutLine(callout);
-                    return <line key={`machine-line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
+        </div>
+
+        <section className="factory-main-card">
+          <aside className="factory-summary-panel">
+            <div className="factory-panel-head">
+              <h2>Machine Summary</h2>
+              <button type="button">•••</button>
+            </div>
+            <div className="factory-summary-list">
+              {latestRows.map(([label, value, tone]) => (
+                <div key={label} className={tone ? `tone-${tone}` : ""}>
+                  <span>{label}</span>
+                  {label === "Status" ? <strong className="factory-status-badge">{value}<i /></strong> : <strong>{value}</strong>}
+                </div>
+              ))}
+            </div>
+            <div className="factory-alarm-box">
+              <span>△</span>
+              <div><strong>Active Alarms</strong><small>Unacknowledged</small></div>
+              <b>{warningCount}</b>
+            </div>
+
+          </aside>
+
+          <section className="factory-machine-stage-card">
+            <div className="factory-machine-stage">
+              <div className="factory-machine-art">
+                {selectedMachine?.image_data_url ? <img src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} /> : <FactoryPumpFallback />}
+                <svg className="factory-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  {metrics.map((metric) => {
+                    const { point, card } = calloutLine(metric);
+                    return <line key={`factory-line-${metric.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
                   })}
                 </svg>
-                {callouts.map((callout) => {
-                  const { point, card } = calloutLine(callout);
+                {metrics.map((metric) => {
+                  const { point, card } = calloutLine(metric);
                   return (
-                    <div key={callout.id}>
-                      <span className="machine-anchor-dot free-anchor-dot" style={{ left: `${point.x}%`, top: `${point.y}%` }} />
-                      <article className="callout dynamic-callout machine-free-callout" style={{ left: `${card.x}%`, top: `${card.y}%` }}>
-                        <span>{callout.title}</span>
-                        <strong>{valueFromRecord(displayRecord, callout.valueKey, summary)}</strong>
-                        <small>{message}</small>
+                    <div key={metric.id}>
+                      <span className={metric.status === "warning" ? "factory-target-dot warning" : "factory-target-dot"} style={{ left: `${point.x}%`, top: `${point.y}%` }} />
+                      <article className={metric.status === "warning" ? "factory-callout-card warning" : "factory-callout-card"} style={{ left: `${card.x}%`, top: `${card.y}%` }}>
+                        <div><span>{metric.title}</span><em>{metric.status === "warning" ? "♧" : "✓"}</em></div>
+                        <strong>{metric.value}<small>{metric.unit}</small></strong>
+                        <p>{metric.range}</p>
                       </article>
                     </div>
                   );
                 })}
               </div>
             </div>
-          </div>
+
+          </section>
         </section>
       </section>
     </main>
@@ -1473,8 +1716,9 @@ function App() {
   function handleLogout() { setUser(null); setPage("auth"); }
   if (page === "auth") return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(userRole(profile) === "admin" ? "machine" : "record"); }} onRegister={() => setPage("register")} onMachineView={() => setPage("machine")} onAdmin={handleAdminSkip} onDemoUser={handleDemoUser} />;
   if (page === "register") return <RegisterPage onBack={() => setPage("auth")} onRegistered={(profile) => { setUser(profile); setPage("record"); }} />;
-  if (page === "machine" && !user) return <><button className="floating-back" type="button" onClick={() => setPage("auth")}>Back</button><MachineViewPage /></>;
-  return <><TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} />{page === "system" ? <AdminSystemPage /> : page === "adminRegister" ? <AdminRegisterPage adminUser={user} /> : page === "logs" ? <LogsPage /> : page === "trends" ? <TrendsPage /> : page === "machine" ? <MachineViewPage /> : <RecordInputPage user={user} />}</>;
+  if (page === "machine" && !user) return <MachineViewPage setPage={setPage} standalone />;
+  if (page === "machine") return <MachineViewPage user={user} setPage={setPage} onLogout={handleLogout} />;
+  return <><TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} />{page === "system" ? <AdminSystemPage /> : page === "adminRegister" ? <AdminRegisterPage adminUser={user} /> : page === "logs" ? <LogsPage /> : page === "trends" ? <TrendsPage /> : <RecordInputPage user={user} />}</>;
 }
 
 export default App;
