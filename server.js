@@ -48,8 +48,7 @@ function normalizeRole(value) {
 }
 
 function normalizeShift(value) {
-  const shift = cleanText(value, "1st Shift");
-  return ["1st Shift", "2nd Shift", "3rd Shift"].includes(shift) ? shift : "1st Shift";
+  return cleanText(value);
 }
 
 function uniqueValues(values) {
@@ -272,7 +271,7 @@ function identityRowToProfile(row) {
     operator_name: row.operator_name,
     employee_id: row.employee_id || "",
     site_name: row.site_name || "Savoury",
-    shift_name: row.shift_name || "1st Shift",
+    shift_name: row.shift_name || "",
     department: row.department || "",
     role_name: row.role_name || "operator",
     email: row.email || "",
@@ -314,7 +313,7 @@ async function saveIdentity({ profile, aiFaceKey, identifiers = [], registerPayl
 
   const siteName = normalizeSite(profile.siteName || profile.site_name);
   const roleName = normalizeRole(profile.roleName || profile.role_name);
-  const shiftName = normalizeShift(profile.shiftName || profile.shift_name);
+  const shiftName = "";
   const employeeId = cleanText(profile.employeeId || profile.employee_id);
   const department = cleanText(profile.department);
   const email = cleanText(profile.email);
@@ -561,7 +560,6 @@ async function ensureDefaultMachineIfEmpty() {
 function validateRecordBody(body) {
   if (!cleanText(body.operator_name)) return "Operator name is required.";
   if (!cleanText(body.machine_name)) return "Machine name is required.";
-  if (!cleanText(body.shift_name)) return "Shift is required.";
   if (body.reading_value !== "" && body.reading_value !== null && body.reading_value !== undefined) {
     const numberValue = Number(body.reading_value);
     if (!Number.isFinite(numberValue)) return "Reading value must be a valid number.";
@@ -634,7 +632,7 @@ app.post("/api/face/register", async (req, res) => {
       operatorName: cleanText(req.body?.operatorName || req.body?.name),
       employeeId: cleanText(req.body?.employeeId),
       siteName: normalizeSite(req.body?.siteName),
-      shiftName: normalizeShift(req.body?.shiftName || req.body?.shift_name),
+      shiftName: "",
       department: cleanText(req.body?.department),
       roleName: normalizeRole(req.body?.roleName || "operator"),
       email: cleanText(req.body?.email),
@@ -684,7 +682,7 @@ app.post("/api/admin/users", async (req, res) => {
       operatorName: cleanText(req.body?.operatorName || req.body?.name),
       employeeId: cleanText(req.body?.employeeId),
       siteName: normalizeSite(req.body?.siteName),
-      shiftName: normalizeShift(req.body?.shiftName || req.body?.shift_name),
+      shiftName: "",
       department: cleanText(req.body?.department),
       roleName: normalizeRole(req.body?.roleName),
       email: cleanText(req.body?.email),
@@ -977,18 +975,6 @@ app.post("/api/records/upsert", async (req, res) => {
     const validationError = validateRecordBody(req.body || {});
     if (validationError) return res.status(400).json({ ok: false, error: validationError });
 
-    const shiftName = normalizeShift(req.body.shift_name);
-    const current = getCurrentShiftInfo();
-
-    if (shiftName !== current.currentShift) {
-      return res.status(403).json({
-        ok: false,
-        error: `This response can only be submitted/edited during ${shiftName}. Current shift is ${current.currentShift}.`,
-        currentShift: current.currentShift,
-        workDate: current.workDate,
-      });
-    }
-
     const operatorId = Number(req.body.operator_id || 0) || null;
     const operatorName = cleanText(req.body.operator_name);
     const siteName = normalizeSite(req.body.site_name);
@@ -1010,66 +996,19 @@ app.post("/api/records/upsert", async (req, res) => {
       }
     }
 
-    const existing = await pool.query(
+    const result = await pool.query(
       `
-        SELECT id
-        FROM app.confirmation_test_records
-        WHERE shift_name = $1
-          AND shift_work_date = $2::date
-          AND lower(machine_name) = lower($5)
-          AND (
-            ($3::int IS NOT NULL AND operator_id = $3::int)
-            OR ($3::int IS NULL AND lower(operator_name) = lower($4))
-          )
-        ORDER BY id DESC
-        LIMIT 1
+        INSERT INTO app.confirmation_test_records (
+          operator_id, operator_name, site_name, machine_config_id, machine_name, reading_value,
+          product, batch_number, shift_name, shift_work_date, remarks, response_fields, record_timestamp
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', NULL, $9, $10::jsonb, NOW())
+        RETURNING *
       `,
-      [shiftName, current.workDate, operatorId, operatorName, machineName]
+      [operatorId, operatorName, siteName, machineConfigId, machineName, readingValue, product, batchNumber, remarks, JSON.stringify(responseFields)]
     );
 
-    let result;
-    let action;
-
-    if (existing.rows[0]) {
-      action = "updated";
-      result = await pool.query(
-        `
-          UPDATE app.confirmation_test_records
-          SET
-            operator_id = $2,
-            operator_name = $3,
-            site_name = $4,
-            machine_config_id = $5,
-            machine_name = $6,
-            reading_value = $7,
-            product = $8,
-            batch_number = $9,
-            shift_name = $10,
-            shift_work_date = $11::date,
-            remarks = $12,
-            response_fields = $13::jsonb,
-            record_timestamp = NOW()
-          WHERE id = $1
-          RETURNING *
-        `,
-        [existing.rows[0].id, operatorId, operatorName, siteName, machineConfigId, machineName, readingValue, product, batchNumber, shiftName, current.workDate, remarks, JSON.stringify(responseFields)]
-      );
-    } else {
-      action = "created";
-      result = await pool.query(
-        `
-          INSERT INTO app.confirmation_test_records (
-            operator_id, operator_name, site_name, machine_config_id, machine_name, reading_value,
-            product, batch_number, shift_name, shift_work_date, remarks, response_fields, record_timestamp
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11, $12::jsonb, NOW())
-          RETURNING *
-        `,
-        [operatorId, operatorName, siteName, machineConfigId, machineName, readingValue, product, batchNumber, shiftName, current.workDate, remarks, JSON.stringify(responseFields)]
-      );
-    }
-
-    res.status(action === "created" ? 201 : 200).json({ ok: true, action, record: result.rows[0], shift: current });
+    res.status(201).json({ ok: true, action: "created", record: result.rows[0] });
   } catch (error) {
     schemaReadyPromise = null;
     res.status(500).json({ ok: false, error: getFriendlyDbError(error) });

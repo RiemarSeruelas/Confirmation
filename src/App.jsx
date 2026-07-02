@@ -25,7 +25,6 @@ const defaultCallouts = [
 const emptyUserForm = {
   operatorName: "",
   siteName: "Savoury",
-  shiftName: "1st Shift",
 };
 
 const emptyMachineForm = {
@@ -434,7 +433,6 @@ function RegisterPage({ onBack, onRegistered }) {
           <div className="field-grid two only-basic-register">
             <label>{requiredLabel("Name")}<input value={form.operatorName} onChange={(event) => updateField("operatorName", event.target.value)} placeholder="Operator name" required /></label>
             <label>{requiredLabel("Site")}<select value={form.siteName} onChange={(event) => updateField("siteName", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
-            <label>{requiredLabel("Shift")}<select value={form.shiftName} onChange={(event) => updateField("shiftName", event.target.value)} required>{shiftOptions.map((shift) => <option key={shift.value} value={shift.value}>{shift.label}</option>)}</select></label>
           </div>
           <div className="face-capture-row compact-face-row">
             <strong>Facial Recognition</strong>
@@ -455,7 +453,7 @@ function TopBar({ user, page, setPage, onLogout }) {
     <header className="topbar">
       <div className="topbar-brand">
         <div className="mini-logo">CT</div>
-        <div><strong>Confirmation Test</strong><span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}{user?.shift_name ? ` • ${shiftDisplayName(user.shift_name)}` : ""}</span></div>
+        <div><strong>Confirmation Test</strong><span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}</span></div>
       </div>
       <nav>
         {isAdmin ? (
@@ -483,24 +481,16 @@ function RecordInputPage({ user }) {
   const [machines, setMachines] = useState([]);
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [values, setValues] = useState({});
-  const [shiftStatus, setShiftStatus] = useState(null);
   const [records, setRecords] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const assignedShift = user?.shift_name || shiftStatus?.currentShift || "1st Shift";
-  const canEditSelectedShift = Boolean(shiftStatus?.currentShift) && shiftStatus.currentShift === assignedShift;
   const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
   const fields = normalizeFields(selectedMachine?.fields);
 
   function updateValue(fieldId, value) {
     setValues((current) => ({ ...current, [fieldId]: value }));
-  }
-
-  async function loadShiftStatus() {
-    const data = await fetchJson("/api/shift-status");
-    setShiftStatus(data);
   }
 
   async function loadMachines() {
@@ -549,13 +539,12 @@ function RecordInputPage({ user }) {
           response_fields: values,
           machine_config_id: selectedMachine.id,
           machine_name: selectedMachine.machine_name,
-          shift_name: assignedShift,
           operator_id: user?.id || null,
           operator_name: userDisplayName(user),
           site_name: userSite(user),
         }),
       });
-      setMessage(data.action === "updated" ? "Response updated for this machine." : "Response submitted.");
+      setMessage("Response submitted.");
       await loadMyRecords();
     } catch (error) {
       setMessage(error.message);
@@ -565,14 +554,43 @@ function RecordInputPage({ user }) {
   }
 
   useEffect(() => {
-    loadShiftStatus().catch((error) => setMessage(error.message));
     loadMachines().catch((error) => setMessage(error.message));
     loadMyRecords();
   }, [user?.id]);
 
+  async function loadLatestMachineValues(machine) {
+    if (!machine?.id) {
+      setValues({});
+      return;
+    }
+
+    try {
+      const data = await fetchJson(`/api/dashboard/summary?machine_config_id=${machine.id}`);
+      const latest = data.latest?.[0];
+      if (!latest) {
+        setValues({});
+        return;
+      }
+
+      const latestFields = latest.response_fields && typeof latest.response_fields === "object" ? latest.response_fields : {};
+      const nextValues = { ...latestFields };
+      for (const field of normalizeFields(machine.fields)) {
+        if (nextValues[field.id] !== undefined && nextValues[field.id] !== null) continue;
+        if (field.mapsTo === "reading_value") nextValues[field.id] = latest.reading_value ?? "";
+        if (field.mapsTo === "product") nextValues[field.id] = latest.product ?? "";
+        if (field.mapsTo === "batch_number") nextValues[field.id] = latest.batch_number ?? "";
+        if (field.mapsTo === "remarks") nextValues[field.id] = latest.remarks ?? "";
+      }
+      setValues(nextValues);
+    } catch (error) {
+      setValues({});
+      setMessage(error.message);
+    }
+  }
+
   useEffect(() => {
-    setValues({});
-  }, [selectedMachineId]);
+    loadLatestMachineValues(selectedMachine);
+  }, [selectedMachineId, selectedMachine?.id]);
 
   return (
     <main className="form-page app-gradient page-pad record-page-mobile">
@@ -580,7 +598,6 @@ function RecordInputPage({ user }) {
         <form className="input-form glass-card" onSubmit={handleSubmit}>
           <div className="form-title-row">
             <div><p className="eyebrow">Record Input</p><h1>Confirmation Response</h1></div>
-            <span className={canEditSelectedShift ? "shift-badge open" : "shift-badge closed"}>{canEditSelectedShift ? "Editable now" : "Locked"}</span>
           </div>
           <label>{requiredLabel("Machine")}<select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} required>{!machines.length && <option value="">No machines configured</option>}{machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}</select></label>
           {selectedMachine?.details && <div className="machine-details-note">{selectedMachine.details}</div>}
@@ -596,7 +613,7 @@ function RecordInputPage({ user }) {
               </label>
             ))}
           </div>
-          <button type="submit" disabled={saving || !canEditSelectedShift || !selectedMachine}>{saving ? "Saving..." : "Submit / Update Response"}</button>
+          <button type="submit" disabled={saving || !selectedMachine}>{saving ? "Saving..." : "Submit Response"}</button>
           {message && <p className="message">{message}</p>}
         </form>
         <section className="side-card glass-card">
@@ -613,10 +630,10 @@ function RecordList({ records, compact = false }) {
   return (
     <div className="table-wrap">
       <table className={compact ? "compact-table" : ""}>
-        <thead><tr><th>When</th><th>Operator</th><th>Site</th><th>Machine</th><th>Reading</th><th>Product</th><th>Batch</th><th>Shift</th><th>Remarks</th></tr></thead>
-        <tbody>{records.map((record) => <tr key={record.id}><td data-label="When">{formatDateTime(record.record_timestamp)}</td><td data-label="Operator">{record.operator_name}</td><td data-label="Site">{record.site_name || "—"}</td><td data-label="Machine">{record.machine_name}</td><td data-label="Reading">{formatNumber(record.reading_value)}</td><td data-label="Product">{record.product || "—"}</td><td data-label="Batch">{record.batch_number || "—"}</td><td data-label="Shift">{shiftDisplayName(record.shift_name)}</td><td data-label="Remarks">{record.remarks || "—"}</td></tr>)}</tbody>
+        <thead><tr><th>When</th><th>Operator</th><th>Site</th><th>Machine</th><th>Reading</th><th>Product</th><th>Batch</th><th>Remarks</th></tr></thead>
+        <tbody>{records.map((record) => <tr key={record.id}><td data-label="When">{formatDateTime(record.record_timestamp)}</td><td data-label="Operator">{record.operator_name}</td><td data-label="Site">{record.site_name || "—"}</td><td data-label="Machine">{record.machine_name}</td><td data-label="Reading">{formatNumber(record.reading_value)}</td><td data-label="Product">{record.product || "—"}</td><td data-label="Batch">{record.batch_number || "—"}</td><td data-label="Remarks">{record.remarks || "—"}</td></tr>)}</tbody>
       </table>
-      <div className="mobile-record-list">{records.map((record) => <article className="mobile-log-card" key={`mobile-${record.id}`}><div className="mobile-log-top"><strong>{record.machine_name}</strong><span>{formatNumber(record.reading_value)}</span></div><div className="mobile-log-grid"><span><b>When</b>{formatDateTime(record.record_timestamp)}</span><span><b>Operator</b>{record.operator_name || "—"}</span><span><b>Site</b>{record.site_name || "—"}</span><span><b>Shift</b>{shiftDisplayName(record.shift_name)}</span><span><b>Product</b>{record.product || "—"}</span><span><b>Batch</b>{record.batch_number || "—"}</span><span className="wide"><b>Remarks</b>{record.remarks || "—"}</span></div></article>)}</div>
+      <div className="mobile-record-list">{records.map((record) => <article className="mobile-log-card" key={`mobile-${record.id}`}><div className="mobile-log-top"><strong>{record.machine_name}</strong><span>{formatNumber(record.reading_value)}</span></div><div className="mobile-log-grid"><span><b>When</b>{formatDateTime(record.record_timestamp)}</span><span><b>Operator</b>{record.operator_name || "—"}</span><span><b>Site</b>{record.site_name || "—"}</span><span><b>Product</b>{record.product || "—"}</span><span><b>Batch</b>{record.batch_number || "—"}</span><span className="wide"><b>Remarks</b>{record.remarks || "—"}</span></div></article>)}</div>
     </div>
   );
 }
@@ -665,14 +682,13 @@ function AdminRegisterPage({ adminUser }) {
             <label>{requiredLabel("Name")}<input value={userForm.operatorName} onChange={(event) => updateUserField("operatorName", event.target.value)} placeholder="Person name" required /></label>
             <label>{requiredLabel("Role")}<select value={userForm.roleName} onChange={(event) => updateUserField("roleName", event.target.value)}>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
             <label>{requiredLabel("Site")}<select value={userForm.siteName} onChange={(event) => updateUserField("siteName", event.target.value)}>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
-            <label>{requiredLabel("Shift")}<select value={userForm.shiftName} onChange={(event) => updateUserField("shiftName", event.target.value)} required>{shiftOptions.map((shift) => <option key={shift.value} value={shift.value}>{shift.label}</option>)}</select></label>
           </div>
           <div className="face-capture-row compact-face-row"><strong>Face Login Link</strong><button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button></div>
           <button type="submit" disabled={saving}>{saving ? "Saving..." : "Register"}</button>{message && <p className="message">{message}</p>}
         </form>
         <section className="glass-card dashboard-summary">
           <p className="eyebrow">Accounts</p><div className="registered-header-row"><h2>Registered People</h2><button className={deleteMode ? "delete-user-button active-delete" : "delete-user-button"} type="button" onClick={() => setDeleteMode((current) => !current)}>{deleteMode ? "Done" : "Delete"}</button></div>
-          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div><strong>{user.operator_name}</strong><span>{user.site_name} • {shiftDisplayName(user.shift_name)} • {user.role_name}</span><small>{deletingId === user.id ? "Deleting..." : user.ai_face_key ? "Face linked" : "Manual account"}</small></div></article>)}</div>
+          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div><strong>{user.operator_name}</strong><span>{user.site_name} • {user.role_name}</span><small>{deletingId === user.id ? "Deleting..." : user.ai_face_key ? "Face linked" : "Manual account"}</small></div></article>)}</div>
         </section>
       </section>
       {cameraOpen && <FaceCaptureModal title="Register Face" description="Capture this person's face for future login." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
@@ -903,7 +919,6 @@ function AdminSystemPage() {
                   <option value="machine_name">Machine</option>
                   <option value="site_name">Site</option>
                   <option value="operator_name">Operator</option>
-                  <option value="shift_name">Shift</option>
                   <option value="total_submissions">Total</option>
                   {form.fields.map((field) => <option key={field.id} value={field.id}>{field.label}</option>)}
                 </select>
@@ -939,14 +954,14 @@ function LogsPage() {
   const [machines, setMachines] = useState([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({ search: "", machine: "", site: "", shift: "", date: "" });
+  const [filters, setFilters] = useState({ search: "", machine: "", site: "", date: "" });
 
   function updateFilter(field, value) {
     setFilters((current) => ({ ...current, [field]: value }));
   }
 
   function clearFilters() {
-    setFilters({ search: "", machine: "", site: "", shift: "", date: "" });
+    setFilters({ search: "", machine: "", site: "", date: "" });
   }
 
   async function loadLogs() {
@@ -1004,7 +1019,6 @@ function LogsPage() {
     const search = filters.search.trim().toLowerCase();
     return records.filter((record) => {
       const siteMatch = !filters.site || record.site_name === filters.site;
-      const shiftMatch = !filters.shift || record.shift_name === filters.shift;
       const dateMatch = !filters.date || recordDateKey(record.record_timestamp) === filters.date;
       const machineMatch = !filters.machine || (() => {
         if (!selectedMachineOption) return true;
@@ -1022,11 +1036,10 @@ function LogsPage() {
         record.reading_value,
         record.product,
         record.batch_number,
-        record.shift_name,
         record.remarks,
         JSON.stringify(record.response_fields || {}),
       ].join(" ").toLowerCase();
-      return machineMatch && siteMatch && shiftMatch && dateMatch && (!search || haystack.includes(search));
+      return machineMatch && siteMatch && dateMatch && (!search || haystack.includes(search));
     });
   }, [records, filters, selectedMachineOption]);
 
@@ -1059,10 +1072,6 @@ function LogsPage() {
             <select value={filters.site} onChange={(event) => updateFilter("site", event.target.value)}>
               <option value="">All Sites</option>
               {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
-            </select>
-            <select value={filters.shift} onChange={(event) => updateFilter("shift", event.target.value)}>
-              <option value="">All Shifts</option>
-              {shiftOptions.map((shift) => <option key={shift.value} value={shift.value}>{shift.label}</option>)}
             </select>
             <input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} />
             <button className="ghost-button" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear</button>
@@ -1460,7 +1469,7 @@ function App() {
   const [page, setPage] = useState("auth");
   const [user, setUser] = useState(null);
   function handleAdminSkip() { setUser({ id: null, operator_name: "Temporary Admin", site_name: "Admin", role_name: "admin" }); setPage("machine"); }
-  function handleDemoUser() { setUser({ id: null, operator_name: "Temporary User", site_name: "Savoury", role_name: "operator", shift_name: "1st Shift" }); setPage("record"); }
+  function handleDemoUser() { setUser({ id: null, operator_name: "Temporary User", site_name: "Savoury", role_name: "operator" }); setPage("record"); }
   function handleLogout() { setUser(null); setPage("auth"); }
   if (page === "auth") return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(userRole(profile) === "admin" ? "machine" : "record"); }} onRegister={() => setPage("register")} onMachineView={() => setPage("machine")} onAdmin={handleAdminSkip} onDemoUser={handleDemoUser} />;
   if (page === "register") return <RegisterPage onBack={() => setPage("auth")} onRegistered={(profile) => { setUser(profile); setPage("record"); }} />;

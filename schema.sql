@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS app.face_identities (
   operator_name TEXT NOT NULL,
   employee_id TEXT DEFAULT '',
   site_name TEXT NOT NULL DEFAULT 'Savoury',
-  shift_name TEXT NOT NULL DEFAULT '1st Shift',
+  shift_name TEXT DEFAULT '',
   department TEXT DEFAULT '',
   role_name TEXT NOT NULL DEFAULT 'operator',
   email TEXT DEFAULT '',
@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS app.face_identities (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT chk_face_identities_site_name CHECK (site_name IN ('Savoury', 'Dressings', 'Admin')),
-  CONSTRAINT chk_face_identities_shift_name CHECK (shift_name IN ('1st Shift', '2nd Shift', '3rd Shift')),
   CONSTRAINT chk_face_identities_role_name CHECK (role_name IN ('operator', 'admin'))
 );
 
@@ -37,7 +36,7 @@ ALTER TABLE app.face_identities
   ADD COLUMN IF NOT EXISTS operator_name TEXT NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS employee_id TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS site_name TEXT NOT NULL DEFAULT 'Savoury',
-  ADD COLUMN IF NOT EXISTS shift_name TEXT NOT NULL DEFAULT '1st Shift',
+  ADD COLUMN IF NOT EXISTS shift_name TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS role_name TEXT NOT NULL DEFAULT 'operator',
   ADD COLUMN IF NOT EXISTS email TEXT DEFAULT '',
@@ -53,6 +52,13 @@ ALTER TABLE app.face_identities
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+ALTER TABLE app.face_identities
+  DROP CONSTRAINT IF EXISTS chk_face_identities_shift_name;
+
+ALTER TABLE app.face_identities
+  ALTER COLUMN shift_name DROP NOT NULL,
+  ALTER COLUMN shift_name SET DEFAULT '';
+
 UPDATE app.face_identities
 SET role_name = 'operator'
 WHERE role_name IS NULL OR role_name = '';
@@ -62,8 +68,8 @@ SET site_name = 'Savoury'
 WHERE site_name IS NULL OR site_name = '';
 
 UPDATE app.face_identities
-SET shift_name = '1st Shift'
-WHERE shift_name IS NULL OR shift_name = '' OR shift_name NOT IN ('1st Shift', '2nd Shift', '3rd Shift');
+SET shift_name = ''
+WHERE shift_name IS NULL OR shift_name IN ('1st Shift', '2nd Shift', '3rd Shift');
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_face_identities_ai_face_key
 ON app.face_identities(ai_face_key)
@@ -98,14 +104,13 @@ CREATE TABLE IF NOT EXISTS app.confirmation_test_records (
   reading_value NUMERIC,
   product TEXT DEFAULT '',
   batch_number TEXT DEFAULT '',
-  shift_name TEXT NOT NULL DEFAULT '1st Shift',
+  shift_name TEXT DEFAULT '',
   shift_work_date DATE,
   remarks TEXT DEFAULT '',
   record_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_confirmation_records_site_name CHECK (site_name IN ('Savoury', 'Dressings', 'Admin')),
-  CONSTRAINT chk_confirmation_records_shift_name CHECK (shift_name IN ('1st Shift', '2nd Shift', '3rd Shift'))
+  CONSTRAINT chk_confirmation_records_site_name CHECK (site_name IN ('Savoury', 'Dressings', 'Admin'))
 );
 
 ALTER TABLE app.confirmation_test_records
@@ -113,7 +118,7 @@ ALTER TABLE app.confirmation_test_records
   ADD COLUMN IF NOT EXISTS site_name TEXT NOT NULL DEFAULT 'Savoury',
   ADD COLUMN IF NOT EXISTS product TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS batch_number TEXT DEFAULT '',
-  ADD COLUMN IF NOT EXISTS shift_name TEXT NOT NULL DEFAULT '1st Shift',
+  ADD COLUMN IF NOT EXISTS shift_name TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS shift_work_date DATE,
   ADD COLUMN IF NOT EXISTS remarks TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS reading_value NUMERIC,
@@ -121,9 +126,16 @@ ALTER TABLE app.confirmation_test_records
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+ALTER TABLE app.confirmation_test_records
+  DROP CONSTRAINT IF EXISTS chk_confirmation_records_shift_name;
+
+ALTER TABLE app.confirmation_test_records
+  ALTER COLUMN shift_name DROP NOT NULL,
+  ALTER COLUMN shift_name SET DEFAULT '';
+
 UPDATE app.confirmation_test_records
-SET shift_name = '1st Shift'
-WHERE shift_name IS NULL OR shift_name = '' OR shift_name = 'Unknown Shift';
+SET shift_name = ''
+WHERE shift_name IS NULL OR shift_name = 'Unknown Shift';
 
 UPDATE app.confirmation_test_records
 SET site_name = 'Savoury'

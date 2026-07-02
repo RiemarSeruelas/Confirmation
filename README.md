@@ -31,24 +31,18 @@ app.machine_configs
 - Clean login screen with Login, Register, Machines, and Admin.
 - Light purple to light blue background.
 - Face login through your Face AI workstation.
-- Register operator with name, site, shift, and face.
+- Register operator with name, site, and face.
 - Admin skip button for now.
 - Admin can register operators or admins.
-- Admin can create machine setups: machine name, site, details, image, thresholds, input fields, required fields, and callout locations.
+- Admin can create machine setups: machine name, site, details, image, input fields, required fields, field limits, and callout locations.
 - Record input is generated from the admin machine setup.
-- Operators can submit multiple machines; same operator + same machine + same shift updates the existing response.
+- Operators can submit machine responses without retyping repeated values; the form preloads the latest saved values for the selected machine, even if another operator submitted them.
 - Admin can view submission logs and registered people.
 - Machines/dashboard reads the configured machine setup and saved confirmation records.
 
-## Shift edit windows
+## Latest record preload
 
-```text
-1st Shift: 06:00 - 14:00
-2nd Shift: 14:00 - 22:00
-3rd Shift: 22:00 - 06:00
-```
-
-The backend checks Manila time. A response can only be submitted or edited while the selected shift is active.
+Shift locking has been removed. When an operator selects a machine, the form automatically loads the latest saved response for that machine, regardless of who submitted it. The operator can adjust only what changed and submit a new log entry.
 
 ## Setup
 
@@ -113,12 +107,6 @@ Health:
 
 ```text
 GET http://localhost:5178/api/health
-```
-
-Current shift:
-
-```text
-GET http://localhost:5178/api/shift-status
 ```
 
 Records:
@@ -188,13 +176,13 @@ The dashboard is now split into two separate pages:
 - **Machines**: shows the selected machine image/interface and live callouts only.
 - **Trends**: shows reading trends, threshold status, warning system, and a side list of each machine.
 
-Threshold Min and Threshold Max are still configured in Admin → System.
+Threshold limits are configured per numeric input field in Admin → System → Input Fields.
 
 
 ## Latest update
 
 - Logs now include an automatic machine filter populated from saved machine setups and existing submissions.
-- Logs keep the existing search, site, shift, and date filters.
+- Logs keep the existing search, machine, site, and date filters.
 
 ## Latest UI update
 
