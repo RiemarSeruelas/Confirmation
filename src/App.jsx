@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+/* Shared helpers/components - kept in this file so all pages reuse one source. */
 const siteOptions = ["Savoury", "Dressings"];
 const roleOptions = ["operator", "admin"];
 const shiftOptions = [
@@ -101,7 +102,8 @@ function normalizeFields(fields) {
   return fields.map((field, index) => ({
     id: field.id || uid(`field-${index}`),
     label: field.label || `Field ${index + 1}`,
-    type: ["text", "number", "textarea"].includes(field.type) ? field.type : "text",
+    type: ["text", "number", "textarea", "image"].includes(field.type) ? field.type : "text",
+    aiTarget: field.aiTarget ?? field.ai_target ?? field.target ?? "",
     required: Boolean(field.required),
     mapsTo: field.mapsTo || "custom",
     thresholdEnabled: Boolean(field.thresholdEnabled || field.threshold_enabled),
@@ -186,7 +188,7 @@ function summarizeRecords(records = []) {
   };
 }
 
-async function fetchJson(url, options = {}) {
+export async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) throw new Error(data.error || `Request failed: ${response.status}`);
@@ -350,278 +352,248 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
   );
 }
 
-function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser }) {
-  const [faceOpen, setFaceOpen] = useState(false);
-  const [message, setMessage] = useState("");
 
-  async function handleLoginCapture(imageDataUrl) {
-    setMessage("Checking face...");
-    const data = await fetchJson("/api/face/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imageDataUrl }),
-    });
-    if (!data.matched || !data.profile) throw new Error(data.error || "No matching face found.");
-    setFaceOpen(false);
-    setMessage(`Welcome, ${data.profile.operator_name}.`);
-    onFaceLogin(data.profile);
-  }
 
-  return (
-    <main className="landing-page app-gradient">
-      <section className="login-card glass-card">
-        <div className="brand-mark">CT</div>
-        <p className="eyebrow">Confirmation Test</p>
-        <h1>Operator Confirmation</h1>
-        <p className="login-subtitle">Login, register, and monitor confirmation records in one clean app.</p>
-        <div className="login-actions">
-          <button type="button" onClick={() => setFaceOpen(true)}>Login</button>
-          <button className="secondary-button" type="button" onClick={onRegister}>Register</button>
-          <button className="secondary-button" type="button" onClick={onMachineView}>Machines</button>
-          <button className="secondary-button" type="button" onClick={onDemoUser}>Login as User</button>
-          <button className="secondary-button" type="button" onClick={onAdmin}>Admin</button>
-        </div>
-        {message && <p className="message centered center-message">{message}</p>}
-      </section>
-      {faceOpen && <FaceCaptureModal title="Face Login" description="Hold steady. The app will capture automatically." onClose={() => setFaceOpen(false)} onCapture={handleLoginCapture} autoCapture />}
-    </main>
-  );
-}
+function ImageScanModal({ field, machine, onClose, onValue }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [status, setStatus] = useState("Starting camera...");
+  const [busy, setBusy] = useState(false);
+  const [brightnessBias, setBrightnessBias] = useState(-35);
+  const [autoEnhance, setAutoEnhance] = useState(true);
+  const [cropGuideOnly, setCropGuideOnly] = useState(true);
+  const [cameraControlStatus, setCameraControlStatus] = useState("");
 
-function RegisterPage({ onBack, onRegistered }) {
-  const [form, setForm] = useState(emptyUserForm);
-  const [imageDataUrl, setImageDataUrl] = useState("");
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-
-  function updateField(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
-  }
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-    setMessage("");
-    if (!imageDataUrl) return setMessage("Capture the face first.");
-    try {
-      setSaving(true);
-      const data = await fetchJson("/api/face/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, roleName: "operator", imageDataUrl }),
-      });
-      setMessage(`Registered ${data.profile.operator_name}.`);
-      onRegistered(data.profile);
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setSaving(false);
+  function stopCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
   }
 
-  return (
-    <main className="form-page app-gradient page-pad no-topbar-pad compact-mobile-page">
-      <section className="form-layout single">
-        <form className="input-form glass-card compact-form" onSubmit={handleSubmit}>
-          <div className="form-title-row">
-            <div>
-              <p className="eyebrow">New Operator</p>
-              <h1>Register Profile</h1>
-            </div>
-            <button className="ghost-button" type="button" onClick={onBack}>Back</button>
-          </div>
-          <div className="field-grid two only-basic-register">
-            <label>{requiredLabel("Name")}<input value={form.operatorName} onChange={(event) => updateField("operatorName", event.target.value)} placeholder="Operator name" required /></label>
-            <label>{requiredLabel("Site")}<select value={form.siteName} onChange={(event) => updateField("siteName", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
-          </div>
-          <div className="face-capture-row compact-face-row">
-            <strong>Facial Recognition</strong>
-            <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake Face" : "Capture Face"}</button>
-          </div>
-          <button type="submit" disabled={saving}>{saving ? "Registering..." : "Register"}</button>
-          {message && <p className="message">{message}</p>}
-        </form>
-      </section>
-      {cameraOpen && <FaceCaptureModal title="Register Face" description="Capture a clear front-facing image." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
-    </main>
-  );
-}
-
-function TopBar({ user, page, setPage, onLogout }) {
-  const isAdmin = userRole(user) === "admin";
-  return (
-    <header className="topbar">
-      <div className="topbar-brand">
-        <div className="mini-logo">CT</div>
-        <div><strong>Confirmation Test</strong><span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}</span></div>
-      </div>
-      <nav>
-        {isAdmin ? (
-          <>
-            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
-            <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
-            <button className={page === "system" ? "active" : ""} type="button" onClick={() => setPage("system")}>System</button>
-            <button className={page === "adminRegister" ? "active" : ""} type="button" onClick={() => setPage("adminRegister")}>Register</button>
-            <button className={page === "logs" ? "active" : ""} type="button" onClick={() => setPage("logs")}>Logs</button>
-          </>
-        ) : (
-          <>
-            <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Record Input</button>
-            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
-            <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
-          </>
-        )}
-        <button type="button" onClick={onLogout}>Logout</button>
-      </nav>
-    </header>
-  );
-}
-
-function RecordInputPage({ user }) {
-  const [machines, setMachines] = useState([]);
-  const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [values, setValues] = useState({});
-  const [records, setRecords] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-
-  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
-  const fields = normalizeFields(selectedMachine?.fields);
-
-  function updateValue(fieldId, value) {
-    setValues((current) => ({ ...current, [fieldId]: value }));
+  function clampValue(value, min, max) {
+    return Math.max(min, Math.min(max, value));
   }
 
-  async function loadMachines() {
-    const data = await fetchJson(`/api/machines?site=${encodeURIComponent(userSite(user))}`);
-    const machineList = data.machines || [];
-    setMachines(machineList);
-    if (!selectedMachineId && machineList[0]) setSelectedMachineId(String(machineList[0].id));
+  function mapRange(value, inMin, inMax, outMin, outMax) {
+    if (inMax === inMin) return outMin;
+    const ratio = (value - inMin) / (inMax - inMin);
+    return outMin + ratio * (outMax - outMin);
   }
 
-  async function loadMyRecords() {
-    try {
-      setLoading(true);
-      const query = user?.id ? `?operator_id=${user.id}&limit=50` : "?limit=50";
-      const data = await fetchJson(`/api/records${query}`);
-      setRecords(data.records || []);
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function extractStandardValues() {
-    const output = { reading_value: "", product: "", batch_number: "", remarks: "" };
-    for (const field of fields) {
-      if (["reading_value", "product", "batch_number", "remarks"].includes(field.mapsTo)) output[field.mapsTo] = values[field.id] ?? "";
-    }
-    return output;
-  }
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-    setMessage("");
-    if (!selectedMachine) return setMessage("No machine is configured yet. Ask admin to create one.");
-    for (const field of fields) {
-      if (field.required && !String(values[field.id] ?? "").trim()) return setMessage(`${field.label} is required.`);
-    }
-    try {
-      setSaving(true);
-      const standard = extractStandardValues();
-      const data = await fetchJson("/api/records/upsert", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...standard,
-          response_fields: values,
-          machine_config_id: selectedMachine.id,
-          machine_name: selectedMachine.machine_name,
-          operator_id: user?.id || null,
-          operator_name: userDisplayName(user),
-          site_name: userSite(user),
-        }),
-      });
-      setMessage("Response submitted.");
-      await loadMyRecords();
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  useEffect(() => {
-    loadMachines().catch((error) => setMessage(error.message));
-    loadMyRecords();
-  }, [user?.id]);
-
-  async function loadLatestMachineValues(machine) {
-    if (!machine?.id) {
-      setValues({});
+  async function applyCameraBrightness(stream, bias = brightnessBias) {
+    const track = stream?.getVideoTracks?.()[0];
+    if (!track?.getCapabilities || !track?.applyConstraints) {
+      setCameraControlStatus("Using software brightness correction.");
       return;
     }
 
     try {
-      const data = await fetchJson(`/api/dashboard/summary?machine_config_id=${machine.id}`);
-      const latest = data.latest?.[0];
-      if (!latest) {
-        setValues({});
+      const capabilities = track.getCapabilities();
+      const advanced = {};
+
+      if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes("manual")) {
+        advanced.exposureMode = "manual";
+      }
+
+      if (capabilities.exposureCompensation) {
+        const min = Number(capabilities.exposureCompensation.min ?? -2);
+        const max = Number(capabilities.exposureCompensation.max ?? 2);
+        const mapped = mapRange(Number(bias), -80, 30, min, max);
+        advanced.exposureCompensation = clampValue(mapped, min, max);
+      }
+
+      if (capabilities.brightness) {
+        const min = Number(capabilities.brightness.min ?? 0);
+        const max = Number(capabilities.brightness.max ?? 100);
+        const mapped = mapRange(Number(bias), -80, 30, min, max);
+        advanced.brightness = clampValue(mapped, min, max);
+      }
+
+      if (!Object.keys(advanced).length) {
+        setCameraControlStatus("Using software brightness correction.");
         return;
       }
 
-      const latestFields = latest.response_fields && typeof latest.response_fields === "object" ? latest.response_fields : {};
-      const nextValues = { ...latestFields };
-      for (const field of normalizeFields(machine.fields)) {
-        if (nextValues[field.id] !== undefined && nextValues[field.id] !== null) continue;
-        if (field.mapsTo === "reading_value") nextValues[field.id] = latest.reading_value ?? "";
-        if (field.mapsTo === "product") nextValues[field.id] = latest.product ?? "";
-        if (field.mapsTo === "batch_number") nextValues[field.id] = latest.batch_number ?? "";
-        if (field.mapsTo === "remarks") nextValues[field.id] = latest.remarks ?? "";
-      }
-      setValues(nextValues);
+      await track.applyConstraints({ advanced: [advanced] });
+      setCameraControlStatus("Camera exposure adjusted when supported.");
+    } catch {
+      setCameraControlStatus("Using software brightness correction.");
+    }
+  }
+
+  async function startCamera() {
+    const help = getCameraHelp();
+    if (help) return setStatus(help);
+    if (!navigator.mediaDevices?.getUserMedia) return setStatus("Camera is not available.");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment",
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          exposureMode: { ideal: "manual" },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      await applyCameraBrightness(stream, brightnessBias);
+      setStatus("Camera ready. Lower brightness if the HMI/display looks white.");
     } catch (error) {
-      setValues({});
-      setMessage(error.message);
+      setStatus(error.name === "NotAllowedError" ? "Camera permission was blocked." : error.message || "Could not start camera.");
+    }
+  }
+
+  function autoEnhanceCanvas(context, width, height) {
+    const imageData = context.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    let totalLuma = 0;
+    const pixelCount = Math.max(1, data.length / 4);
+
+    for (let index = 0; index < data.length; index += 4) {
+      totalLuma += 0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2];
+    }
+
+    const avgLuma = totalLuma / pixelCount;
+    let multiplier = 1;
+    let contrast = 1.12;
+
+    if (avgLuma > 225) {
+      multiplier = 0.42;
+      contrast = 1.42;
+    } else if (avgLuma > 205) {
+      multiplier = 0.55;
+      contrast = 1.36;
+    } else if (avgLuma > 180) {
+      multiplier = 0.72;
+      contrast = 1.25;
+    } else if (avgLuma < 70) {
+      multiplier = 1.22;
+      contrast = 1.08;
+    }
+
+    for (let index = 0; index < data.length; index += 4) {
+      data[index] = clampValue((data[index] * multiplier - 128) * contrast + 128, 0, 255);
+      data[index + 1] = clampValue((data[index + 1] * multiplier - 128) * contrast + 128, 0, 255);
+      data[index + 2] = clampValue((data[index + 2] * multiplier - 128) * contrast + 128, 0, 255);
+    }
+
+    context.putImageData(imageData, 0, 0);
+    return avgLuma;
+  }
+
+  function captureImage() {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) throw new Error("Camera is not ready yet.");
+
+    const source = cropGuideOnly
+      ? {
+          x: Math.round(video.videoWidth * 0.12),
+          y: Math.round(video.videoHeight * 0.18),
+          width: Math.round(video.videoWidth * 0.76),
+          height: Math.round(video.videoHeight * 0.56),
+        }
+      : { x: 0, y: 0, width: video.videoWidth, height: video.videoHeight };
+
+    const maxWidth = 1280;
+    const scale = Math.min(maxWidth / source.width, 1);
+    const width = Math.max(1, Math.round(source.width * scale));
+    const height = Math.max(1, Math.round(source.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    const brightnessFactor = clampValue(1 + Number(brightnessBias) / 100, 0.18, 1.35);
+    context.filter = `brightness(${brightnessFactor}) contrast(1.18) saturate(0.92)`;
+    context.drawImage(video, source.x, source.y, source.width, source.height, 0, 0, width, height);
+    context.filter = "none";
+
+    if (autoEnhance) autoEnhanceCanvas(context, width, height);
+    return canvas.toDataURL("image/jpeg", 0.92);
+  }
+
+  async function handleScan() {
+    try {
+      setBusy(true);
+      setStatus("Capturing image with brightness correction...");
+      const imageDataUrl = captureImage();
+      setStatus("Sending to AI workstation...");
+      const data = await fetchJson("/api/ai/image-field", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl,
+          target: field?.aiTarget || field?.label || "target",
+          fieldLabel: field?.label || "Image field",
+          machineName: machine?.machine_name || "",
+        }),
+      });
+      const extractedValue = data.value ?? data.weight ?? data.reading ?? "";
+      if (extractedValue === "" || extractedValue === null || extractedValue === undefined) {
+        setStatus(`AI could not find a readable value for "${field?.aiTarget || field?.label || "target"}". Try darker brightness or move closer.`);
+        return;
+      }
+      onValue(String(extractedValue));
+      stopCamera();
+      onClose();
+    } catch (error) {
+      setStatus(error.message || "AI scan failed.");
+    } finally {
+      setBusy(false);
     }
   }
 
   useEffect(() => {
-    loadLatestMachineValues(selectedMachine);
-  }, [selectedMachineId, selectedMachine?.id]);
+    startCamera();
+    return stopCamera;
+  }, []);
+
+  useEffect(() => {
+    if (streamRef.current) applyCameraBrightness(streamRef.current, brightnessBias);
+  }, [brightnessBias]);
+
+  const videoBrightness = clampValue(1 + Number(brightnessBias) / 100, 0.18, 1.35);
 
   return (
-    <main className="form-page app-gradient page-pad record-page-mobile">
-      <section className="form-layout">
-        <form className="input-form glass-card" onSubmit={handleSubmit}>
-          <div className="form-title-row">
-            <div><p className="eyebrow">Record Input</p><h1>Confirmation Response</h1></div>
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <section className="camera-modal image-scan-modal glass-card">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">AI Image Scanner</p>
+            <h2>Scan {field?.label || "Image Field"}</h2>
+            <p>Target: <strong>{field?.aiTarget || field?.label || "target"}</strong>. The AI will extract the value beside it.</p>
           </div>
-          <label>{requiredLabel("Machine")}<select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} required>{!machines.length && <option value="">No machines configured</option>}{machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}</select></label>
-          {selectedMachine?.details && <div className="machine-details-note">{selectedMachine.details}</div>}
-          <div className="field-grid two dynamic-field-grid">
-            {fields.map((field) => (
-              <label key={field.id} className={field.type === "textarea" ? "wide-field" : ""}>
-                {field.required ? requiredLabel(field.label) : field.label}
-                {field.type === "textarea" ? (
-                  <textarea rows="3" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={field.label} required={field.required} />
-                ) : (
-                  <input type={field.type === "number" ? "number" : "text"} step="any" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={field.label} required={field.required} />
-                )}
-              </label>
-            ))}
+          <button className="icon-button" type="button" onClick={onClose} disabled={busy}>×</button>
+        </div>
+        <div className="camera-frame scan-camera-frame">
+          <video ref={videoRef} autoPlay playsInline muted style={{ filter: `brightness(${videoBrightness}) contrast(1.18) saturate(0.92)` }} />
+          <div className="scan-guide-box"><span>{cropGuideOnly ? "Only this box will be scanned" : "Keep target + value here"}</span></div>
+        </div>
+        <div className="scan-controls">
+          <label className="scan-range-label">
+            <span className="label-text">Camera brightness</span>
+            <input className="scan-range" type="range" min="-80" max="30" step="5" value={brightnessBias} onChange={(event) => setBrightnessBias(Number(event.target.value))} disabled={busy} />
+            <strong>{brightnessBias}%</strong>
+          </label>
+          <div className="scan-control-row">
+            <button className="secondary-button small" type="button" onClick={() => setBrightnessBias(-65)} disabled={busy}>Darker</button>
+            <button className="secondary-button small" type="button" onClick={() => setBrightnessBias(-35)} disabled={busy}>Auto</button>
+            <button className="secondary-button small" type="button" onClick={() => setBrightnessBias(0)} disabled={busy}>Normal</button>
           </div>
-          <button type="submit" disabled={saving || !selectedMachine}>{saving ? "Saving..." : "Submit Response"}</button>
-          {message && <p className="message">{message}</p>}
-        </form>
-        <section className="side-card glass-card">
-          <div className="records-header compact"><div><p className="eyebrow">My Logs</p><h2>Recent Responses</h2></div><button className="secondary-button" type="button" onClick={loadMyRecords} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button></div>
-          <RecordList records={records} compact />
-        </section>
+          <div className="scan-toggle-row">
+            <label className="mini-check"><input type="checkbox" checked={autoEnhance} onChange={(event) => setAutoEnhance(event.target.checked)} disabled={busy} /> Auto enhance scan</label>
+            <label className="mini-check"><input type="checkbox" checked={cropGuideOnly} onChange={(event) => setCropGuideOnly(event.target.checked)} disabled={busy} /> Scan guide box only</label>
+          </div>
+          {cameraControlStatus && <p className="scan-preview-note">{cameraControlStatus}</p>}
+        </div>
+        <p className="camera-status">{status}</p>
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" onClick={handleScan} disabled={busy}>{busy ? "Scanning..." : "Scan Image"}</button>
+        </div>
       </section>
-    </main>
+    </div>
   );
 }
 
@@ -638,301 +610,6 @@ function RecordList({ records, compact = false }) {
   );
 }
 
-function AdminRegisterPage({ adminUser }) {
-  const [userForm, setUserForm] = useState({ ...emptyUserForm, roleName: "operator" });
-  const [imageDataUrl, setImageDataUrl] = useState("");
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const [users, setUsers] = useState([]);
-  const [message, setMessage] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
-  const [deleteMode, setDeleteMode] = useState(false);
-
-  function updateUserField(field, value) { setUserForm((current) => ({ ...current, [field]: value })); }
-  async function loadUsers() { const usersData = await fetchJson("/api/admin/users"); setUsers(usersData.users || []); }
-
-  async function handleCreateUser(event) {
-    event.preventDefault();
-    setMessage("");
-    try {
-      setSaving(true);
-      const data = await fetchJson("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, imageDataUrl, registeredBy: userDisplayName(adminUser) }) });
-      setMessage(`Saved ${data.profile.operator_name} as ${data.profile.role_name}.`);
-      setUserForm({ ...emptyUserForm, roleName: "operator" });
-      setImageDataUrl("");
-      await loadUsers();
-    } catch (error) { setMessage(error.message); } finally { setSaving(false); }
-  }
-
-  async function handleDeleteUser(user) {
-    if (!window.confirm(`Delete ${user?.operator_name || "this person"}? Old submissions stay in logs.`)) return;
-    try { setDeletingId(user.id); setMessage(""); await fetchJson(`/api/admin/users/${user.id}`, { method: "DELETE" }); await loadUsers(); }
-    catch (error) { setMessage(error.message); }
-    finally { setDeletingId(null); }
-  }
-
-  useEffect(() => { loadUsers().catch((error) => setMessage(error.message)); }, []);
-
-  return (
-    <main className="admin-page app-gradient page-pad compact-mobile-page">
-      <section className="admin-grid register-grid">
-        <form className="input-form glass-card compact-form" onSubmit={handleCreateUser}>
-          <p className="eyebrow">Admin Register</p><h1>Register Anyone</h1>
-          <div className="field-grid two only-basic-register">
-            <label>{requiredLabel("Name")}<input value={userForm.operatorName} onChange={(event) => updateUserField("operatorName", event.target.value)} placeholder="Person name" required /></label>
-            <label>{requiredLabel("Role")}<select value={userForm.roleName} onChange={(event) => updateUserField("roleName", event.target.value)}>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
-            <label>{requiredLabel("Site")}<select value={userForm.siteName} onChange={(event) => updateUserField("siteName", event.target.value)}>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
-          </div>
-          <div className="face-capture-row compact-face-row"><strong>Face Login Link</strong><button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button></div>
-          <button type="submit" disabled={saving}>{saving ? "Saving..." : "Register"}</button>{message && <p className="message">{message}</p>}
-        </form>
-        <section className="glass-card dashboard-summary">
-          <p className="eyebrow">Accounts</p><div className="registered-header-row"><h2>Registered People</h2><button className={deleteMode ? "delete-user-button active-delete" : "delete-user-button"} type="button" onClick={() => setDeleteMode((current) => !current)}>{deleteMode ? "Done" : "Delete"}</button></div>
-          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div><strong>{user.operator_name}</strong><span>{user.site_name} • {user.role_name}</span><small>{deletingId === user.id ? "Deleting..." : user.ai_face_key ? "Face linked" : "Manual account"}</small></div></article>)}</div>
-        </section>
-      </section>
-      {cameraOpen && <FaceCaptureModal title="Register Face" description="Capture this person's face for future login." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
-    </main>
-  );
-}
-
-function AdminSystemPage() {
-  const [machines, setMachines] = useState([]);
-  const [form, setForm] = useState(emptyMachineForm);
-  const [selectedCalloutId, setSelectedCalloutId] = useState(defaultCallouts[0].id);
-  const [markMode, setMarkMode] = useState(null);
-  const [manageMode, setManageMode] = useState(null);
-  const [message, setMessage] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  function resetForm() {
-    setForm({ ...emptyMachineForm, fields: [], callouts: [] });
-    setSelectedCalloutId("");
-    setMarkMode(null);
-    setManageMode(null);
-    setMessage("New setup ready.");
-  }
-
-  function updateForm(field, value) { setForm((current) => ({ ...current, [field]: value })); }
-  function updateField(index, key, value) { setForm((current) => ({ ...current, fields: current.fields.map((field, i) => i === index ? { ...field, [key]: value } : field) })); }
-  function updateCallout(index, key, value) { setForm((current) => ({ ...current, callouts: current.callouts.map((callout, i) => i === index ? { ...callout, [key]: value } : callout) })); }
-
-  async function loadMachines(selectFirst = false) {
-    const data = await fetchJson("/api/admin/machines");
-    const machineList = data.machines || [];
-    setMachines(machineList);
-    if (selectFirst && machineList[0]) editMachine(machineList[0]);
-    if (selectFirst && !machineList.length) resetForm();
-    return machineList;
-  }
-
-  function editMachine(machine) {
-    const next = { ...emptyMachineForm, ...machine, fields: normalizeFields(machine.fields), callouts: normalizeCallouts(machine.callouts), threshold_min: machine.threshold_min ?? "", threshold_max: machine.threshold_max ?? "" };
-    setForm(next);
-    setSelectedCalloutId(next.callouts[0]?.id || "");
-    setMarkMode(null);
-    setManageMode(null);
-  }
-
-  async function handleImageUpload(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      setMessage("Preparing image...");
-      const compactImage = await imageFileToCompactDataUrl(file);
-      updateForm("image_data_url", compactImage);
-      setMessage("Image ready.");
-    } catch (error) {
-      setMessage(error.message);
-    }
-  }
-
-  function beginMarking(calloutId, mode) {
-    const callout = form.callouts.find((item) => item.id === calloutId);
-    setSelectedCalloutId(calloutId);
-    setMarkMode(mode);
-    setManageMode(null);
-    setMessage(mode === "card" ? `Place the ${callout?.title || "callout"} card on the map.` : `Mark the machine point for ${callout?.title || "this callout"}.`);
-  }
-
-  function handlePreviewClick(event) {
-    if (!selectedCalloutId || !markMode) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(3, Math.min(97, ((event.clientX - rect.left) / rect.width) * 100));
-    const y = Math.max(6, Math.min(94, ((event.clientY - rect.top) / rect.height) * 100));
-    const roundedX = Math.round(x);
-    const roundedY = Math.round(y);
-    const selectedName = form.callouts.find((callout) => callout.id === selectedCalloutId)?.title || "callout";
-    setForm((current) => ({
-      ...current,
-      callouts: current.callouts.map((callout) => {
-        if (callout.id !== selectedCalloutId) return callout;
-        if (markMode === "card") return { ...callout, cardX: roundedX, cardY: roundedY };
-        return { ...callout, pointX: roundedX, pointY: roundedY, x: roundedX, y: roundedY };
-      }),
-    }));
-    setMarkMode(null);
-    setMessage(`${markMode === "card" ? "Card" : "Point"} marked for ${selectedName}. Save to store it.`);
-  }
-
-  async function handleSave(event) {
-    event.preventDefault();
-    setMessage("");
-    if (!form.machine_name.trim()) return setMessage("Machine name is required.");
-    try {
-      setSaving(true);
-      const data = await fetchJson("/api/admin/machines", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
-      if (data.machine) editMachine(data.machine);
-      setMessage("Machine setup saved.");
-      await loadMachines();
-    } catch (error) { setMessage(error.message); }
-    finally { setSaving(false); }
-  }
-
-  async function handleDelete(machine) {
-    if (!machine?.id) return;
-    if (!window.confirm(`Delete ${machine.machine_name}?`)) return;
-    try {
-      await fetchJson(`/api/admin/machines/${machine.id}`, { method: "DELETE" });
-      const machineList = await loadMachines();
-      if (machineList[0]) editMachine(machineList[0]);
-      else resetForm();
-    }
-    catch (error) { setMessage(error.message); }
-  }
-
-  function handleMachineSelect(value) {
-    if (!value) return resetForm();
-    const machine = machines.find((item) => String(item.id) === String(value));
-    if (machine) editMachine(machine);
-  }
-
-  function addField() {
-    updateForm("fields", [...form.fields, { id: uid("field"), label: "New Field", type: "text", required: false, mapsTo: "custom", thresholdEnabled: false, threshold_min: "", threshold_max: "" }]);
-  }
-
-  function addCallout() {
-    const next = { id: uid("callout"), title: "New Callout", valueKey: "reading_value", cardX: 30, cardY: 30, pointX: 50, pointY: 50, x: 50, y: 50 };
-    updateForm("callouts", [...form.callouts, next]);
-    setSelectedCalloutId(next.id);
-    setMarkMode(null);
-  }
-
-  useEffect(() => { loadMachines(true).catch((error) => setMessage(error.message)); }, []);
-
-  return (
-    <main className="admin-page app-gradient page-pad system-page function-system-page">
-      <form className="glass-card system-composer" onSubmit={handleSave}>
-        <header className="system-composer-top">
-          <div>
-            <p className="eyebrow">Admin System</p>
-            <h1>Machine Builder</h1>
-          </div>
-          <div className="system-top-actions">
-            <button className={!form.id ? "new-machine-button active" : "new-machine-button"} type="button" onClick={resetForm}>+ New Setup</button>
-          </div>
-        </header>
-
-        <div className="system-workbench">
-          <section className="machine-core-panel">
-            <div className="field-grid two compact-machine-fields">
-              <label>{requiredLabel("Machine Name")}<input value={form.machine_name} onChange={(event) => updateForm("machine_name", event.target.value)} placeholder="SELO-3 Cooker 2" required /></label>
-              <label>{requiredLabel("Site")}<select value={form.site_name} onChange={(event) => updateForm("site_name", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
-            </div>
-            <label>Details<textarea rows="2" value={form.details} onChange={(event) => updateForm("details", event.target.value)} placeholder="Machine details" /></label>
-            <label>Machine Image<input type="file" accept="image/*" onChange={handleImageUpload} /></label>
-            <div className="system-function-buttons">
-              <button type="button" onClick={() => setManageMode("fields")}>Input Fields <b>{form.fields.length}</b></button>
-              <button type="button" onClick={() => setManageMode("callouts")}>Callouts <b>{form.callouts.length}</b></button>
-            </div>
-            <button className="save-machine-main" type="submit" disabled={saving}>{saving ? "Saving..." : "Save Machine Setup"}</button>
-            {message && <p className="message compact-message">{message}</p>}
-          </section>
-
-          <section className="point-map-panel">
-            <div className="point-map-head">
-              <div><p className="eyebrow">Preview</p><h2>Point Map</h2></div>
-              <div className="point-map-controls">
-                {markMode && <div className="mark-mode-pill active">{markMode === "card" ? "Place card" : "Mark point"}</div>}
-                <select className="preview-machine-select compact-map-picker" value={form.id || ""} onChange={(event) => handleMachineSelect(event.target.value)} aria-label="Select saved machine">
-                  <option value="" disabled>{machines.length ? "Saved machines" : "No machines"}</option>
-                  {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
-                </select>
-                <button className="preview-delete-button compact-delete" type="button" disabled={!form.id} onClick={() => handleDelete(form)}>Delete</button>
-              </div>
-            </div>
-            <div className={markMode ? "builder-preview locating unified-preview" : "builder-preview unified-preview"} onClick={handlePreviewClick}>
-              {form.image_data_url ? <img src={form.image_data_url} alt="Machine preview" /> : <div className="machine-visual preview-machine"><div className="vessel" /><div className="motor" /><div className="legs left" /><div className="legs right" /><div className="pipe" /></div>}
-              {markMode && <div className="preview-crosshair-hint">{markMode === "card" ? "Click card location" : "Click machine point"}</div>}
-              <svg className="callout-line-layer builder-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                {form.callouts.map((callout) => {
-                  const { point, card } = calloutLine(callout);
-                  return <line key={`line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
-                })}
-              </svg>
-              {form.callouts.map((callout) => {
-                const { point, card } = calloutLine(callout);
-                const active = selectedCalloutId === callout.id;
-                return (
-                  <div key={callout.id}>
-                    <button type="button" className={active && markMode === "point" ? "preview-target-dot active" : "preview-target-dot"} style={{ left: `${point.x}%`, top: `${point.y}%` }} onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "point"); }} title="Mark machine point" />
-                    <button type="button" className={active ? "preview-callout-card active" : "preview-callout-card"} style={{ left: `${card.x}%`, top: `${card.y}%` }} onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "card"); }} title="Place callout card">{callout.title}</button>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        </div>
-      </form>
-
-      {manageMode === "fields" && (
-        <SystemModalShell title="Input Fields" onClose={() => setManageMode(null)}>
-          <div className="modal-action-row"><button className="secondary-button" type="button" onClick={addField}>Add Field</button></div>
-          <div className="modal-list editor-list">
-            {!form.fields.length && <div className="modal-empty">No fields yet.</div>}
-            {form.fields.map((field, index) => (
-              <div className="builder-row modal-editor-row field-editor-row" key={field.id}>
-                <input value={field.label} onChange={(event) => updateField(index, "label", event.target.value)} placeholder="Label" />
-                <select value={field.type} onChange={(event) => updateField(index, "type", event.target.value)}><option value="text">Text</option><option value="number">Number</option><option value="textarea">Paragraph</option></select>
-                <select value={field.mapsTo} onChange={(event) => updateField(index, "mapsTo", event.target.value)}><option value="custom">Custom</option><option value="reading_value">Reading</option><option value="product">Product</option><option value="batch_number">Batch</option><option value="remarks">Remarks</option></select>
-                <label className="mini-check"><input type="checkbox" checked={field.required} onChange={(event) => updateField(index, "required", event.target.checked)} /> Required</label>
-                <label className="mini-check limit-check"><input type="checkbox" checked={Boolean(field.thresholdEnabled)} onChange={(event) => updateField(index, "thresholdEnabled", event.target.checked)} disabled={field.type !== "number"} /> Limit</label>
-                <input className="threshold-mini" type="number" step="any" value={field.threshold_min ?? ""} onChange={(event) => updateField(index, "threshold_min", event.target.value)} placeholder="Min" disabled={field.type !== "number" || !field.thresholdEnabled} />
-                <input className="threshold-mini" type="number" step="any" value={field.threshold_max ?? ""} onChange={(event) => updateField(index, "threshold_max", event.target.value)} placeholder="Max" disabled={field.type !== "number" || !field.thresholdEnabled} />
-                <button className="ghost-button danger" type="button" onClick={() => updateForm("fields", form.fields.filter((_, i) => i !== index))}>×</button>
-              </div>
-            ))}
-          </div>
-        </SystemModalShell>
-      )}
-
-      {manageMode === "callouts" && (
-        <SystemModalShell title="Callouts" onClose={() => setManageMode(null)}>
-          <div className="modal-action-row"><button className="secondary-button" type="button" onClick={addCallout}>Add Callout</button></div>
-          <div className="modal-list editor-list">
-            {!form.callouts.length && <div className="modal-empty">No callouts yet.</div>}
-            {form.callouts.map((callout, index) => (
-              <div className={selectedCalloutId === callout.id ? "builder-row selected callout-builder-row modal-editor-row" : "builder-row callout-builder-row modal-editor-row"} key={callout.id}>
-                <input value={callout.title} onChange={(event) => updateCallout(index, "title", event.target.value)} placeholder="Title" />
-                <select value={callout.valueKey} onChange={(event) => updateCallout(index, "valueKey", event.target.value)}>
-                  <option value="reading_value">Reading</option>
-                  <option value="machine_name">Machine</option>
-                  <option value="site_name">Site</option>
-                  <option value="operator_name">Operator</option>
-                  <option value="total_submissions">Total</option>
-                  {form.fields.map((field) => <option key={field.id} value={field.id}>{field.label}</option>)}
-                </select>
-                <button className="secondary-button small" type="button" onClick={() => beginMarking(callout.id, "card")}>Card</button>
-                <button className="secondary-button small" type="button" onClick={() => beginMarking(callout.id, "point")}>Point</button>
-                <button className="ghost-button danger" type="button" onClick={() => { updateForm("callouts", form.callouts.filter((_, i) => i !== index)); if (selectedCalloutId === callout.id) setMarkMode(null); }}>×</button>
-              </div>
-            ))}
-          </div>
-        </SystemModalShell>
-      )}
-    </main>
-  );
-}
 
 function SystemModalShell({ title, children, onClose }) {
   return (
@@ -945,148 +622,6 @@ function SystemModalShell({ title, children, onClose }) {
         {children}
       </section>
     </div>
-  );
-}
-
-function LogsPage() {
-  const [records, setRecords] = useState([]);
-  const [summary, setSummary] = useState(null);
-  const [machines, setMachines] = useState([]);
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({ search: "", machine: "", site: "", date: "" });
-
-  function updateFilter(field, value) {
-    setFilters((current) => ({ ...current, [field]: value }));
-  }
-
-  function clearFilters() {
-    setFilters({ search: "", machine: "", site: "", date: "" });
-  }
-
-  async function loadLogs() {
-    try {
-      setLoading(true);
-      setMessage("");
-      const [recordsData, summaryData, machineData] = await Promise.all([
-        fetchJson("/api/records?limit=300"),
-        fetchJson("/api/dashboard/summary"),
-        fetchJson("/api/machines").catch(() => ({ machines: [] })),
-      ]);
-      setRecords(recordsData.records || []);
-      setSummary(summaryData.stats || null);
-      setMachines(machineData.machines || []);
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const machineOptions = useMemo(() => {
-    const options = [];
-    const seen = new Set();
-
-    for (const machine of machines) {
-      const label = machine.machine_name || `Machine ${machine.id}`;
-      const value = `id:${machine.id}`;
-      options.push({ value, label, id: String(machine.id), name: label });
-      seen.add(value);
-      seen.add(`name:${label.trim().toLowerCase()}`);
-    }
-
-    for (const record of records) {
-      const name = String(record.machine_name || "").trim();
-      if (!name) continue;
-      const key = `name:${name.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      const value = record.machine_config_id ? `id:${record.machine_config_id}` : `name:${name}`;
-      if (seen.has(value)) continue;
-      options.push({ value, label: name, id: record.machine_config_id ? String(record.machine_config_id) : "", name });
-      seen.add(value);
-      seen.add(key);
-    }
-
-    return options.sort((a, b) => a.label.localeCompare(b.label));
-  }, [machines, records]);
-
-  const selectedMachineOption = useMemo(
-    () => machineOptions.find((machine) => machine.value === filters.machine),
-    [machineOptions, filters.machine]
-  );
-
-  const filteredRecords = useMemo(() => {
-    const search = filters.search.trim().toLowerCase();
-    return records.filter((record) => {
-      const siteMatch = !filters.site || record.site_name === filters.site;
-      const dateMatch = !filters.date || recordDateKey(record.record_timestamp) === filters.date;
-      const machineMatch = !filters.machine || (() => {
-        if (!selectedMachineOption) return true;
-        const recordMachineId = record.machine_config_id === null || record.machine_config_id === undefined ? "" : String(record.machine_config_id);
-        const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
-        return (
-          (selectedMachineOption.id && recordMachineId === selectedMachineOption.id) ||
-          (selectedMachineOption.name && recordMachineName === selectedMachineOption.name.trim().toLowerCase())
-        );
-      })();
-      const haystack = [
-        record.operator_name,
-        record.site_name,
-        record.machine_name,
-        record.reading_value,
-        record.product,
-        record.batch_number,
-        record.remarks,
-        JSON.stringify(record.response_fields || {}),
-      ].join(" ").toLowerCase();
-      return machineMatch && siteMatch && dateMatch && (!search || haystack.includes(search));
-    });
-  }, [records, filters, selectedMachineOption]);
-
-  const filteredSummary = useMemo(() => summarizeRecords(filteredRecords), [filteredRecords]);
-  const hasFilters = Object.values(filters).some(Boolean);
-  const activeSummary = hasFilters ? filteredSummary : summary;
-
-  useEffect(() => { loadLogs(); }, []);
-
-  return (
-    <main className="logs-page app-gradient page-pad">
-      <section className="logs-shell">
-        <aside className="logs-right">
-          <article className="stat-card glass-card"><span>Total</span><strong>{activeSummary?.total_submissions ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Operators</span><strong>{activeSummary?.unique_operators ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Savoury</span><strong>{activeSummary?.savoury_count ?? 0}</strong></article>
-          <article className="stat-card glass-card"><span>Dressings</span><strong>{activeSummary?.dressings_count ?? 0}</strong></article>
-        </aside>
-        <section className="logs-left glass-card">
-          <div className="logs-hero-inline">
-            <div><p className="eyebrow">Logs</p><h1>Submission Records</h1></div>
-            <button className="secondary-button" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button>
-          </div>
-          <div className="logs-filter-bar">
-            <input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search logs" />
-            <select value={filters.machine} onChange={(event) => updateFilter("machine", event.target.value)}>
-              <option value="">All Machines</option>
-              {machineOptions.map((machine) => <option key={machine.value} value={machine.value}>{machine.label}</option>)}
-            </select>
-            <select value={filters.site} onChange={(event) => updateFilter("site", event.target.value)}>
-              <option value="">All Sites</option>
-              {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
-            </select>
-            <input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} />
-            <button className="ghost-button" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear</button>
-          </div>
-          {filters.machine && selectedMachineOption && (
-            <div className="active-machine-filter">
-              Showing logs for <strong>{selectedMachineOption.label}</strong>
-              <button type="button" onClick={() => updateFilter("machine", "")}>Show all</button>
-            </div>
-          )}
-          {message && <p className="message">{message}</p>}
-          <RecordList records={filteredRecords} />
-        </section>
-      </section>
-    </main>
   );
 }
 
@@ -1304,20 +839,25 @@ function summaryKeyForField(field) {
 
 function buildFactorySummaryRows({ selectedMachine, latest, fields, summary, statusText, warningCount }) {
   const rows = [
-    ["Asset Name", selectedMachine?.machine_name || "No Machine"],
-    ["Status", statusText, warningCount ? "warn" : latest ? "ok" : "idle"],
-    ["Latest Record", latest ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }).format(new Date(latest.record_timestamp)) : "—"],
+    { type: "row", label: "Status", value: statusText, tone: warningCount ? "warn" : latest ? "ok" : "idle" },
+    {
+      type: "row",
+      label: "Latest Record:",
+      value: latest
+        ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }).format(new Date(latest.record_timestamp))
+        : "—",
+    },
+    { type: "row", label: "Operator:", value: latest?.operator_name || "—" },
+    { type: "divider", id: "top-divider" },
   ];
 
   for (const field of fields) {
     const key = summaryKeyForField(field);
     if (!key) continue;
-    rows.push([field.label, valueFromRecord(latest, key, summary)]);
+    rows.push({ type: "row", label: field.label, value: valueFromRecord(latest, key, summary) });
   }
 
-  rows.push(["Operator", latest?.operator_name || "—"]);
-  rows.push(["Last Update", formatDateTime(latest?.record_timestamp)]);
-
+  rows.push({ type: "divider", id: "input-divider" });
   return rows;
 }
 
@@ -1382,199 +922,6 @@ function FactoryMetricCard({ metric, records }) {
       <strong>{metric.value}<small>{metric.unit}</small></strong>
       <FactorySparkline values={seriesForMetric(records, metric.valueKey)} warning={metric.status === "warning"} />
     </article>
-  );
-}
-
-function MachineViewPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
-  const [summary, setSummary] = useState(null);
-  const [records, setRecords] = useState([]);
-  const [machines, setMachines] = useState([]);
-  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
-  const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
-  const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [message, setMessage] = useState("Loading machine feed...");
-  const [loading, setLoading] = useState(false);
-
-  async function loadMachines(site = selectedArea) {
-    const query = site ? `?site=${encodeURIComponent(site)}` : "";
-    const machineData = await fetchJson(`/api/machines${query}`);
-    const machineList = machineData.machines || [];
-    setMachines(machineList);
-
-    const stillAvailable = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
-    if (stillAvailable) {
-      setSelectedMachineId(String(stillAvailable.id));
-    } else {
-      setSelectedMachineId(machineList[0] ? String(machineList[0].id) : "");
-    }
-
-    if (!machineList.length) {
-      setRecords([]);
-      setSummary(null);
-      setMessage(`No machines configured for ${site}`);
-    }
-
-    return machineList;
-  }
-
-  async function loadDashboard(machineId = selectedMachineId, date = selectedDate) {
-    if (!machineId) return;
-
-    try {
-      setLoading(true);
-      const params = new URLSearchParams({ machine_config_id: String(machineId), limit: "500" });
-      if (date) params.set("date", date);
-      const data = await fetchJson(`/api/records?${params.toString()}`);
-      const recordList = data.records || [];
-      setRecords(recordList);
-      setSummary(summarizeRecords(recordList));
-      setMessage(recordList.length ? `Database feed for ${date || "all dates"}` : "No data for this machine/date yet");
-    } catch (error) {
-      setMessage(error.message);
-      setRecords([]);
-      setSummary(null);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadMachines(selectedArea).catch((error) => setMessage(error.message));
-  }, [selectedArea]);
-
-  useEffect(() => {
-    if (selectedMachineId) loadDashboard(selectedMachineId, selectedDate);
-  }, [selectedMachineId, selectedDate]);
-
-  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
-  const latest = records[0] || null;
-  const displayRecord = latest || {
-    machine_name: selectedMachine?.machine_name || "No Machine",
-    site_name: selectedMachine?.site_name || selectedArea,
-    operator_name: "No operator",
-  };
-  const fields = normalizeFields(selectedMachine?.fields);
-  const factoryCallouts = enhanceFactoryCallouts(selectedMachine?.callouts);
-  const metrics = factoryCallouts.map((callout) => buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields));
-  const warningCount = metrics.filter((metric) => metric.status === "warning").length;
-  const statusText = !latest ? "No Data" : warningCount ? "Attention" : "Running";
-  const isAdmin = userRole(user) === "admin";
-  const latestRows = buildFactorySummaryRows({ selectedMachine, latest, fields, summary, statusText, warningCount });
-
-  function go(target) {
-    if (target === "overview") return;
-    if (!setPage) return;
-    if (target === "alarms" || target === "reports") return setPage("logs");
-    if (target === "maintenance") return setPage(isAdmin ? "system" : "record");
-    setPage(target);
-  }
-
-  return (
-    <main className="factory-os-page">
-      <header className="factory-topbar">
-        <button className="factory-brand confirmation-brand" type="button" onClick={() => standalone ? setPage?.("auth") : go("machine")}>
-          <span className="confirmation-mark">✓</span>
-          <strong>Confirmation</strong>
-        </button>
-        <nav className="factory-nav-tabs" aria-label="Factory navigation">
-          <button type="button" onClick={() => go("overview")}>Overview</button>
-          <button className="active" type="button" onClick={() => go("machine")}>Machines</button>
-          <button type="button" onClick={() => go("trends")}>Trends</button>
-          <button type="button" onClick={() => go("alarms")}>Alarms</button>
-          <button type="button" onClick={() => go("reports")}>Reports</button>
-          {isAdmin && <button type="button" onClick={() => go("system")}>System</button>}
-        </nav>
-        <div className="factory-top-actions">
-          <label className="factory-date-chip factory-date-filter">
-            <span>Calendar</span>
-            <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
-          </label>
-          <select className="factory-area-chip factory-area-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)}>
-            {siteOptions.map((site) => <option key={site} value={site}>{site} Area</option>)}
-          </select>
-          <button className="factory-bell notification-bell" type="button" onClick={() => go("alarms")} aria-label="Notifications">
-            <span className="factory-bell-count">{warningCount || 0}</span>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M15 17H9m9-1.5c-.9-.95-1.35-2.2-1.35-3.75V9.5a4.65 4.65 0 0 0-9.3 0v2.25c0 1.55-.45 2.8-1.35 3.75h12ZM13.45 19.15a1.7 1.7 0 0 1-2.9 0" />
-            </svg>
-          </button>
-          {standalone ? (
-            <button className="factory-user-chip" type="button" onClick={() => setPage?.("auth")}>Back</button>
-          ) : (
-            <button className="factory-user-chip" type="button" onClick={onLogout}>{userDisplayName(user).split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "AD"}</button>
-          )}
-        </div>
-      </header>
-
-      <section className="factory-workspace">
-        <div className="factory-toolbar-row">
-          <div className="factory-machine-select-group">
-            <label>Select Machine</label>
-            <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={!machines.length}>
-              {!machines.length && <option value="">No machines</option>}
-              {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
-            </select>
-            <span className={warningCount ? "factory-running-dot warn" : latest ? "factory-running-dot" : "factory-running-dot idle"} />
-            <b>{statusText}</b>
-          </div>
-          <div className="factory-refresh-group">
-            <button type="button" onClick={() => loadDashboard(selectedMachineId, selectedDate)} disabled={loading || !selectedMachineId}>⟳ Refresh</button>
-            <span>Last updated: {latest ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }).format(new Date(latest.record_timestamp)) : "—"}</span>
-          </div>
-        </div>
-
-        <section className="factory-main-card">
-          <aside className="factory-summary-panel">
-            <div className="factory-panel-head">
-              <h2>Machine Summary</h2>
-              <button type="button">•••</button>
-            </div>
-            <div className="factory-summary-list">
-              {latestRows.map(([label, value, tone]) => (
-                <div key={label} className={tone ? `tone-${tone}` : ""}>
-                  <span>{label}</span>
-                  {label === "Status" ? <strong className="factory-status-badge">{value}<i /></strong> : <strong>{value}</strong>}
-                </div>
-              ))}
-            </div>
-            <div className="factory-alarm-box">
-              <span>△</span>
-              <div><strong>Active Alarms</strong><small>Unacknowledged</small></div>
-              <b>{warningCount}</b>
-            </div>
-
-          </aside>
-
-          <section className="factory-machine-stage-card">
-            <div className="factory-machine-stage">
-              <div className="factory-machine-art">
-                {selectedMachine?.image_data_url ? <img src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} /> : <FactoryPumpFallback />}
-                <svg className="factory-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  {metrics.map((metric) => {
-                    const { point, card } = calloutLine(metric);
-                    return <line key={`factory-line-${metric.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
-                  })}
-                </svg>
-                {metrics.map((metric) => {
-                  const { point, card } = calloutLine(metric);
-                  return (
-                    <div key={metric.id}>
-                      <span className={metric.status === "warning" ? "factory-target-dot warning" : "factory-target-dot"} style={{ left: `${point.x}%`, top: `${point.y}%` }} />
-                      <article className={metric.status === "warning" ? "factory-callout-card warning" : "factory-callout-card"} style={{ left: `${card.x}%`, top: `${card.y}%` }}>
-                        <div><span>{metric.title}</span><em>{metric.status === "warning" ? "♧" : "✓"}</em></div>
-                        <strong>{metric.value}<small>{metric.unit}</small></strong>
-                        <p>{metric.range}</p>
-                      </article>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-          </section>
-        </section>
-      </section>
-    </main>
   );
 }
 
@@ -1727,46 +1074,312 @@ function TrendMachineTile({ machine, miniData, isSelected, onSelect }) {
   const readingMeta = getMachineReadingMeta(machine);
   const { thresholdMin, thresholdMax } = getMachineReadingThresholds(machine);
   const latestReading = latestPoint?.reading_value ?? miniStats.avg_reading;
+  const hasImage = Boolean(machine?.image_data_url);
 
   return (
     <button type="button" className={`trend-machine-tile ${isSelected ? "active" : ""}`} onClick={onSelect}>
-      <div className="trend-machine-tile-head">
-        <div>
-          <h3>{machine.machine_name}</h3>
-          <p>{readingMeta.label}</p>
-        </div>
-        <span className={`trend-machine-status ${trendStatusClass(latestStatus)}`}>{trendMachineState(latestStatus)}</span>
+      <div className="trend-machine-thumb" aria-hidden="true">
+        {hasImage && <img src={machine.image_data_url} alt="" />}
       </div>
-      <div className="trend-machine-value-row">
-        <div>
-          <strong>{formatNumber(latestReading)}</strong>
-          <small>{readingMeta.unit || "value"}</small>
+      <div className="trend-machine-info">
+        <div className="trend-machine-tile-head">
+          <div>
+            <h3>{machine.machine_name}</h3>
+            <p>{readingMeta.label}</p>
+          </div>
+          <span className={`trend-machine-status ${trendStatusClass(latestStatus)}`}>{trendMachineState(latestStatus)}</span>
         </div>
-        <TrendSparkline trends={miniTrends} status={latestStatus} />
-      </div>
-      <div className="trend-machine-meta-row">
-        <span><b>Target:</b> {thresholdMax !== null ? formatNumber(thresholdMax) : "—"}</span>
-        <span><b>Range:</b> {formatRangeText(thresholdMin, thresholdMax)}</span>
+        <div className="trend-machine-value-row">
+          <div>
+            <strong>{formatNumber(latestReading)}</strong>
+            <small>{readingMeta.unit || "value"}</small>
+          </div>
+          <TrendSparkline trends={miniTrends} status={latestStatus} />
+        </div>
+        <div className="trend-machine-meta-row">
+          <span><b>Target:</b> {thresholdMax !== null ? formatNumber(thresholdMax) : "—"}</span>
+          <span><b>Range:</b> {formatRangeText(thresholdMin, thresholdMax)}</span>
+        </div>
       </div>
     </button>
   );
 }
 
-function TrendsPage() {
+
+
+/* Shared top navigation - every page uses this exact component. */
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function FactoryTopNav({
+  activePage = "machine",
+  user = null,
+  setPage = null,
+  onLogout = null,
+  standalone = false,
+  selectedDate,
+  onDateChange,
+  warningCount = 0,
+}) {
+  const [localDate, setLocalDate] = useState(todayKey());
+  const dateValue = selectedDate ?? localDate;
+
+  function setDate(value) {
+    if (onDateChange) onDateChange(value);
+    else setLocalDate(value);
+  }
+
+
+  function go(target) {
+    if (!setPage) return;
+    if (target === "register") return setPage("adminRegister");
+    if (target === "system") return setPage("system");
+    setPage(target);
+  }
+
+  const navItems = [
+    { id: "machine", label: "Machines" },
+    { id: "trends", label: "Trends" },
+    { id: "system", label: "System" },
+    { id: "register", label: "Register" },
+    { id: "logs", label: "Logs" },
+  ];
+
+  const initials = userDisplayName(user)
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "AD";
+
+  return (
+    <header className="factory-topbar shared-factory-topbar">
+      <button className="factory-brand confirmation-brand" type="button" onClick={() => standalone ? setPage?.("auth") : go("machine")}>
+        <span className="confirmation-mark">✓</span>
+        <strong>Confirmation</strong>
+      </button>
+
+      <nav className="factory-nav-tabs" aria-label="Main navigation">
+        {navItems.map((item) => (
+          <button key={item.id} className={activePage === item.id ? "active" : ""} type="button" onClick={() => go(item.id)}>
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
+      <div className="factory-top-actions factory-top-actions-no-calendar">
+        <button className="factory-bell notification-bell" type="button" onClick={() => go("logs")} aria-label="Notifications">
+          <span className="factory-bell-count">{warningCount || 0}</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 17H9m9-1.5c-.9-.95-1.35-2.2-1.35-3.75V9.5a4.65 4.65 0 0 0-9.3 0v2.25c0 1.55-.45 2.8-1.35 3.75h12ZM13.45 19.15a1.7 1.7 0 0 1-2.9 0" />
+          </svg>
+        </button>
+        {standalone ? (
+          <button className="factory-user-chip" type="button" onClick={() => setPage?.("auth")}>Back</button>
+        ) : (
+          <button className="factory-user-chip" type="button" onClick={onLogout}>{initials}</button>
+        )}
+      </div>
+    </header>
+  );
+}
+
+
+/* MachinesPage.jsx */
+function MachinesPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [summary, setSummary] = useState(null);
+  const [records, setRecords] = useState([]);
   const [machines, setMachines] = useState([]);
+  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
+  const [selectedMachineId, setSelectedMachineId] = useState("");
+  const [message, setMessage] = useState("Loading machine feed...");
+  const [loading, setLoading] = useState(false);
+
+  async function loadMachines(site = selectedArea) {
+    const query = site ? `?site=${encodeURIComponent(site)}` : "";
+    const machineData = await fetchJson(`/api/machines${query}`);
+    const machineList = machineData.machines || [];
+    setMachines(machineList);
+
+    const stillAvailable = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
+    if (stillAvailable) {
+      setSelectedMachineId(String(stillAvailable.id));
+    } else {
+      setSelectedMachineId(machineList[0] ? String(machineList[0].id) : "");
+    }
+
+    if (!machineList.length) {
+      setRecords([]);
+      setSummary(null);
+      setMessage(`No machines configured for ${site}`);
+    }
+
+    return machineList;
+  }
+
+  async function loadDashboard(machineId = selectedMachineId, date = selectedDate) {
+    if (!machineId) return;
+
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({ machine_config_id: String(machineId), limit: "500" });
+      if (date) params.set("date", date);
+      const data = await fetchJson(`/api/records?${params.toString()}`);
+      const recordList = data.records || [];
+      setRecords(recordList);
+      setSummary(summarizeRecords(recordList));
+      setMessage(recordList.length ? `Database feed for ${date || "all dates"}` : "No data for this machine/date yet");
+    } catch (error) {
+      setMessage(error.message);
+      setRecords([]);
+      setSummary(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMachines(selectedArea).catch((error) => setMessage(error.message));
+  }, [selectedArea]);
+
+  useEffect(() => {
+    if (selectedMachineId) loadDashboard(selectedMachineId, selectedDate);
+  }, [selectedMachineId, selectedDate]);
+
+  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
+  const latest = records[0] || null;
+  const displayRecord = latest || {
+    machine_name: selectedMachine?.machine_name || "No Machine",
+    site_name: selectedMachine?.site_name || selectedArea,
+    operator_name: "No operator",
+  };
+  const fields = normalizeFields(selectedMachine?.fields);
+  const factoryCallouts = enhanceFactoryCallouts(selectedMachine?.callouts);
+  const metrics = factoryCallouts.map((callout) => buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields));
+  const warningCount = metrics.filter((metric) => metric.status === "warning").length;
+  const statusText = !latest ? "No Data" : warningCount ? "Attention" : "Running";
+  const isAdmin = userRole(user) === "admin";
+  const latestRows = buildFactorySummaryRows({ selectedMachine, latest, fields, summary, statusText, warningCount });
+  const hasMachineImage = Boolean(selectedMachine?.image_data_url);
+  const visibleMetrics = hasMachineImage ? metrics : [];
+
+  function go(target) {
+    if (target === "overview") return;
+    if (!setPage) return;
+    if (target === "alarms" || target === "reports") return setPage("logs");
+    if (target === "maintenance") return setPage(isAdmin ? "system" : "record");
+    setPage(target);
+  }
+
+  return (
+    <main className="factory-os-page">
+      <FactoryTopNav activePage="machine" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={selectedDate} onDateChange={setSelectedDate} warningCount={warningCount} />
+
+      <section className="factory-workspace">
+        <div className="factory-toolbar-row factory-toolbar-compact">
+          <div className="factory-machine-select-group factory-machine-control-compact factory-area-machine-group">
+            <select className="factory-area-inline-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Select area">
+              {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+            </select>
+            <select className="factory-machine-picker" value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={!machines.length} aria-label="Select machine">
+              {!machines.length && <option value="">No machines</option>}
+              {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
+            </select>
+            <button className="factory-slim-refresh" type="button" onClick={() => loadDashboard(selectedMachineId, selectedDate)} disabled={loading || !selectedMachineId}>⟳ Refresh</button>
+          </div>
+        </div>
+
+        <section className="factory-main-card">
+          <aside className="factory-summary-panel factory-summary-panel-compact">
+            <div className="factory-panel-head">
+              <h2>Machine Summary</h2>
+            </div>
+            <div className="factory-summary-list factory-summary-list-soft">
+              {latestRows.map((row) => (
+                row.type === "divider" ? (
+                  <div key={row.id} className="factory-summary-divider" aria-hidden="true" />
+                ) : (
+                  <div key={row.label} className={row.tone ? `tone-${row.tone}` : ""}>
+                    <span>{row.label}</span>
+                    {row.label === "Status" ? <strong className="factory-status-badge">{row.value}<i /></strong> : <strong>{row.value}</strong>}
+                  </div>
+                )
+              ))}
+            </div>
+            <div className="factory-alarm-box factory-alarm-box-compact">
+              <span>△</span>
+              <div><strong>Active Alarms</strong><small>Unacknowledged</small></div>
+              <b>{warningCount}</b>
+            </div>
+
+          </aside>
+
+          <section className="factory-machine-stage-card">
+            <div className="factory-machine-stage">
+              <div className={hasMachineImage ? "factory-machine-art" : "factory-machine-art factory-machine-art-empty"}>
+                {hasMachineImage && <img src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} />}
+                <svg className="factory-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  {visibleMetrics.map((metric) => {
+                    const { point, card } = calloutLine(metric);
+                    return <line key={`factory-line-${metric.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
+                  })}
+                </svg>
+                {visibleMetrics.map((metric) => {
+                  const { point, card } = calloutLine(metric);
+                  return (
+                    <div key={metric.id}>
+                      <span className={metric.status === "warning" ? "factory-target-dot warning" : "factory-target-dot"} style={{ left: `${point.x}%`, top: `${point.y}%` }} />
+                      <article className={metric.status === "warning" ? "factory-callout-card warning" : "factory-callout-card"} style={{ left: `${card.x}%`, top: `${card.y}%` }}>
+                        <div><span>{metric.title}</span><em>{metric.status === "warning" ? "♧" : "✓"}</em></div>
+                        <strong>{metric.value}<small>{metric.unit}</small></strong>
+                        <p>{metric.range}</p>
+                      </article>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+
+/* TrendsPage.jsx */
+function TrendsPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [machines, setMachines] = useState([]);
+  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [trendData, setTrendData] = useState({ trends: [], warnings: [], stats: null });
   const [machineTrendMap, setMachineTrendMap] = useState({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Loading trends...");
-  const [trendLimit, setTrendLimit] = useState("120");
+  const [trendLimit, setTrendLimit] = useState("20");
 
-  async function loadMachines() {
-    const machineData = await fetchJson("/api/machines");
+  async function loadMachines(site = selectedArea) {
+    const query = site ? `?site=${encodeURIComponent(site)}` : "";
+    const machineData = await fetchJson(`/api/machines${query}`);
     const machineList = machineData.machines || [];
     setMachines(machineList);
-    if (!selectedMachineId && machineList[0]) setSelectedMachineId(String(machineList[0].id));
-    if (!machineList.length) setMessage("No machines configured yet");
+
+    const stillAvailable = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
+    if (stillAvailable) {
+      setSelectedMachineId(String(stillAvailable.id));
+    } else {
+      setSelectedMachineId(machineList[0] ? String(machineList[0].id) : "");
+    }
+
+    if (!machineList.length) {
+      setMessage(`No machines configured for ${site}`);
+      setTrendData({ trends: [], warnings: [], stats: null });
+    }
+
     return machineList;
   }
 
@@ -1804,16 +1417,16 @@ function TrendsPage() {
   }
 
   async function refreshAll() {
-    const machineList = await loadMachines();
+    const machineList = await loadMachines(selectedArea);
     const activeId = selectedMachineId || String(machineList[0]?.id || "");
     await Promise.all([loadGridSummaries(machineList), activeId ? loadTrend(activeId, trendLimit) : Promise.resolve()]);
   }
 
   useEffect(() => {
-    loadMachines()
+    loadMachines(selectedArea)
       .then((machineList) => loadGridSummaries(machineList))
       .catch((error) => setMessage(error.message));
-  }, []);
+  }, [selectedArea]);
 
   useEffect(() => {
     if (selectedMachineId) loadTrend(selectedMachineId, trendLimit);
@@ -1831,73 +1444,67 @@ function TrendsPage() {
     ? (Number(currentValue) / Number(targetValue)) * 100
     : 0;
   const currentStatus = stats.latest_status || latest?.warning_status || "no-data";
+  const isAdmin = userRole(user) === "admin";
+  const visibleMachines = machines;
+
+  function go(target) {
+    if (target === "overview") return;
+    if (!setPage) return;
+    if (target === "alarms" || target === "reports") return setPage("logs");
+    if (target === "maintenance") return setPage(isAdmin ? "system" : "record");
+    setPage(target);
+  }
 
   return (
-    <main className="trends-page confirmation-trends-page app-gradient page-pad">
-      <section className="trends-dashboard glass-card">
-        <div className="trends-dashboard-header">
-          <div>
-            <p className="eyebrow">Trends</p>
-            <h1>Production Trend Overview</h1>
-            <p className="trend-dashboard-subtitle">Database-driven trend monitoring for configured machines.</p>
-          </div>
-          <div className="trends-dashboard-toolbar">
-            <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={!machines.length}>
-              {!machines.length && <option value="">No machines</option>}
-              {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
-            </select>
-            <select value={trendLimit} onChange={(event) => setTrendLimit(event.target.value)} disabled={loading}>
-              <option value="40">Last 40 readings</option>
-              <option value="80">Last 80 readings</option>
-              <option value="120">Last 120 readings</option>
-              <option value="200">Last 200 readings</option>
-            </select>
-            <button className="secondary-button trend-dashboard-refresh" type="button" onClick={refreshAll} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
-          </div>
-        </div>
+    <main className="factory-os-page factory-trends-page">
+      <FactoryTopNav activePage="trends" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={selectedDate} onDateChange={setSelectedDate} warningCount={stats.warning_count || 0} />
 
-        {message && <p className="trend-dashboard-message">{message}</p>}
-
-        <section className="trend-overview-card">
-          <div className="trend-overview-left">
-            <div className="trend-overview-head">
+      <section className="factory-trends-workspace">
+        <section className="factory-trends-overview-card">
+          <div className="factory-trends-chart-panel">
+            <div className="factory-trends-card-head">
               <div>
-                <h2>{readingMeta.label} Trend {selectedMachine?.machine_name ? `(${selectedMachine.machine_name})` : "(All Machines)"}</h2>
-                <p>{readingMeta.unit ? `${readingMeta.label} (${readingMeta.unit})` : readingMeta.label}</p>
+                <p className="eyebrow">{selectedArea} Trend</p>
+                <h2>{readingMeta.label} {selectedMachine?.machine_name ? `(${selectedMachine.machine_name})` : "(No Machine)"}</h2>
+                <p><span className="trend-legend-dot" />{readingMeta.unit ? `${readingMeta.label} (${readingMeta.unit})` : readingMeta.label}</p>
               </div>
-              <div className="trend-overview-head-actions">
-                <span className="trend-time-chip">Last {trendLimit} Records</span>
-                <span className={`trend-current-state ${trendStatusClass(currentStatus)}`}>{trendMachineState(currentStatus)}</span>
+              <div className="factory-trends-actions">
+                <select className="factory-area-inline-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Select area">
+                  {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+                </select>
+                <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={loading || !machines.length} aria-label="Select machine">
+                  {!machines.length && <option value="">No machines</option>}
+                  {machines.map((machine) => (
+                    <option key={machine.id} value={String(machine.id)}>{machine.machine_name}</option>
+                  ))}
+                </select>
+                <button type="button" onClick={refreshAll} disabled={loading || !selectedMachineId}>{loading ? "Loading" : "Refresh"}</button>
               </div>
             </div>
             <TrendOverviewChart trends={trends} thresholdMin={thresholdMin ?? stats.threshold_min} thresholdMax={thresholdMax ?? stats.threshold_max} />
           </div>
 
-          <aside className="trend-overview-right">
-            <div>
-              <span className="trend-side-label">Current {readingMeta.label}</span>
-              <div className="trend-current-reading">
-                <strong>{formatNumber(currentValue)}</strong>
-                <small>{readingMeta.unit || "value"}</small>
-              </div>
+          <aside className="factory-trends-stats-panel">
+            <span className="trend-side-label">Current {readingMeta.label}</span>
+            <div className="trend-current-reading">
+              <strong>{formatNumber(currentValue)}</strong>
+              <small>{readingMeta.unit || "value"}</small>
             </div>
-
             <div className="trend-side-stats">
               <article><span>Average</span><strong>{formatNumber(stats.avg_reading)}</strong></article>
               <article><span>Maximum</span><strong>{formatNumber(stats.max_reading)}</strong></article>
               <article><span>Minimum</span><strong>{formatNumber(stats.min_reading)}</strong></article>
               <article><span>Target</span><strong>{targetValue !== null && targetValue !== undefined ? formatNumber(targetValue) : "—"}</strong></article>
             </div>
-
             <TrendProgressRing percent={targetPercent} />
           </aside>
         </section>
 
-        <section className="trend-machine-grid">
-          {!machines.length ? (
-            <div className="empty-state">No machines configured yet.</div>
+        <section className="factory-trends-machine-grid" aria-label="Configured machines">
+          {!visibleMachines.length ? (
+            <div className="empty-state">No machines configured for {selectedArea}.</div>
           ) : (
-            machines.map((machine) => (
+            visibleMachines.map((machine) => (
               <TrendMachineTile
                 key={machine.id}
                 machine={machine}
@@ -1908,7 +1515,1047 @@ function TrendsPage() {
             ))
           )}
         </section>
+
+        <div className="factory-trends-footer">{message} {machines.length ? `• Showing ${visibleMachines.length} of ${machines.length} machines` : ""}</div>
       </section>
+    </main>
+  );
+}
+
+
+/* LogsPage.jsx */
+function LogsPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [records, setRecords] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [machines, setMachines] = useState([]);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState({ search: "", machine: "", site: "", date: "" });
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 8;
+  const isAdmin = userRole(user) === "admin";
+
+  function updateFilter(field, value) {
+    setFilters((current) => ({ ...current, [field]: value }));
+    setCurrentPage(1);
+  }
+
+  function clearFilters() {
+    setFilters({ search: "", machine: "", site: "", date: "" });
+    setCurrentPage(1);
+  }
+
+  async function loadLogs() {
+    try {
+      setLoading(true);
+      setMessage("");
+      const [recordsData, summaryData, machineData] = await Promise.all([
+        fetchJson("/api/records?limit=300"),
+        fetchJson("/api/dashboard/summary"),
+        fetchJson("/api/machines").catch(() => ({ machines: [] })),
+      ]);
+      setRecords(recordsData.records || []);
+      setSummary(summaryData.stats || null);
+      setMachines(machineData.machines || []);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const machineOptions = useMemo(() => {
+    const options = [];
+    const seen = new Set();
+    for (const machine of machines) {
+      const label = machine.machine_name || `Machine ${machine.id}`;
+      const value = `id:${machine.id}`;
+      options.push({ value, label, id: String(machine.id), name: label });
+      seen.add(value);
+      seen.add(`name:${label.trim().toLowerCase()}`);
+    }
+    for (const record of records) {
+      const name = String(record.machine_name || "").trim();
+      if (!name) continue;
+      const key = `name:${name.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      const value = record.machine_config_id ? `id:${record.machine_config_id}` : `name:${name}`;
+      if (seen.has(value)) continue;
+      options.push({ value, label: name, id: record.machine_config_id ? String(record.machine_config_id) : "", name });
+      seen.add(value);
+      seen.add(key);
+    }
+    return options.sort((a, b) => a.label.localeCompare(b.label));
+  }, [machines, records]);
+
+  const selectedMachineOption = useMemo(() => machineOptions.find((machine) => machine.value === filters.machine), [machineOptions, filters.machine]);
+
+  const filteredRecords = useMemo(() => {
+    const search = filters.search.trim().toLowerCase();
+    return records.filter((record) => {
+      const siteMatch = !filters.site || record.site_name === filters.site;
+      const dateMatch = !filters.date || recordDateKey(record.record_timestamp) === filters.date;
+      const machineMatch = !filters.machine || (() => {
+        if (!selectedMachineOption) return true;
+        const recordMachineId = record.machine_config_id === null || record.machine_config_id === undefined ? "" : String(record.machine_config_id);
+        const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
+        return ((selectedMachineOption.id && recordMachineId === selectedMachineOption.id) || (selectedMachineOption.name && recordMachineName === selectedMachineOption.name.trim().toLowerCase()));
+      })();
+      const haystack = [record.operator_name, record.site_name, record.machine_name, record.reading_value, record.product, record.batch_number, record.remarks, JSON.stringify(record.response_fields || {})].join(" ").toLowerCase();
+      return machineMatch && siteMatch && dateMatch && (!search || haystack.includes(search));
+    });
+  }, [records, filters, selectedMachineOption]);
+
+  const filteredSummary = useMemo(() => summarizeRecords(filteredRecords), [filteredRecords]);
+  const hasFilters = Object.values(filters).some(Boolean);
+  const activeSummary = hasFilters ? filteredSummary : summary;
+  const selectedArea = filters.site || siteOptions[0];
+  const bellCount = 0;
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const paginatedRecords = filteredRecords.slice(pageStart, pageStart + pageSize);
+  const pageEnd = Math.min(filteredRecords.length, pageStart + pageSize);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  useEffect(() => { loadLogs(); }, []);
+
+  function initials(name = "User") {
+    return String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "U";
+  }
+
+  function go(target) {
+    if (target === "overview") return;
+    if (!setPage) return;
+    if (target === "alarms" || target === "reports") return setPage("logs");
+    if (target === "register") return setPage("adminRegister");
+    if (target === "logout") return onLogout?.();
+    setPage(target);
+  }
+
+  function statCards() {
+    return [
+      { key: "total", title: "Total", value: activeSummary?.total_submissions ?? 0, subtitle: "All submissions", icon: "list", tone: "blue" },
+      { key: "ops", title: "Operators", value: activeSummary?.unique_operators ?? 0, subtitle: "Active operators", icon: "user", tone: "green" },
+      { key: "sav", title: "Savoury", value: activeSummary?.savoury_count ?? 0, subtitle: "Savoury submissions", icon: "bowl", tone: "purple" },
+      { key: "dre", title: "Dressings", value: activeSummary?.dressings_count ?? 0, subtitle: "Dressings submissions", icon: "bottle", tone: "orange" },
+    ];
+  }
+
+  function pageNumbers() {
+    const pages = [];
+    for (let page = 1; page <= totalPages; page += 1) {
+      if (page === 1 || page === totalPages || Math.abs(page - safePage) <= 1) pages.push(page);
+      else if (pages[pages.length - 1] !== "…") pages.push("…");
+    }
+    return pages;
+  }
+
+  function Icon({ name }) {
+    if (name === "list") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h10M8 12h10M8 17h10M4 7h.01M4 12h.01M4 17h.01" /></svg>;
+    if (name === "user") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0" /></svg>;
+    if (name === "bowl") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14a7 7 0 0 1-14 0Zm5-5c0 1 .5 1.5 1.5 2.5M14 6c0 1 .5 1.5 1.5 2.5" /></svg>;
+    if (name === "bottle") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h4m-3 0v3l-3 4v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-7l-3-4V4" /></svg>;
+    if (name === "clipboard") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l1 2h2v14H6V6h2l1-2Zm0 5h6M9 13h6M9 17h4" /></svg>;
+    if (name === "machine") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v8H4zM7 8V5h10v3M7 16v3M17 16v3" /></svg>;
+    if (name === "trend") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17V7m0 10h16M7 14l4-4 3 2 4-5" /></svg>;
+    if (name === "settings") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 0 0 12 8.5Zm8 3.5-.9-.3a7.9 7.9 0 0 0-.5-1.2l.5-.8-1.7-1.7-.8.5c-.4-.2-.8-.4-1.2-.5L15 5h-6l-.3.9c-.4.1-.8.3-1.2.5l-.8-.5-1.7 1.7.5.8c-.2.4-.4.8-.5 1.2L4 12l.9.3c.1.4.3.8.5 1.2l-.5.8 1.7 1.7.8-.5c.4.2.8.4 1.2.5L9 19h6l.3-.9c.4-.1.8-.3 1.2-.5l.8.5 1.7-1.7-.5-.8c.2-.4.4-.8.5-1.2L20 12Z" /></svg>;
+    if (name === "register") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19a5 5 0 0 0-10 0m5-8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 8v-6m-3 3h6" /></svg>;
+    if (name === "logs") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12v14H6zM9 9h6M9 13h6M9 17h4" /></svg>;
+    if (name === "logout") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 17l5-5-5-5M20 12H9M12 19H5V5h7" /></svg>;
+    return null;
+  }
+
+  return (
+    <main className="factory-logs-page">
+      <FactoryTopNav activePage="logs" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={filters.date} onDateChange={(value) => updateFilter("date", value)} warningCount={bellCount} />
+
+      <section className="logs-dashboard-shell compact-logs-layout">
+        <section className="logs-main-panel">
+          <div className="logs-stats-row">
+            {statCards().map((card) => (
+              <article key={card.key} className={`logs-stat-card tone-${card.tone}`}>
+                <div className="logs-stat-icon"><Icon name={card.icon} /></div>
+                <div>
+                  <strong>{Number(card.value || 0).toLocaleString("en-US")}</strong>
+                  <b>{card.title}</b>
+                  <span>{card.subtitle}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <section className="logs-records-card">
+            <div className="logs-records-head">
+              <div><h1><Icon name="clipboard" />Submission Records</h1></div>
+              <button className="logs-refresh-button" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button>
+            </div>
+
+            <div className="logs-filters-grid">
+              <label className="logs-search-input">
+                <input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search by operator, product, batch..." />
+                <span>⌕</span>
+              </label>
+              <label>
+                <span>Machine</span>
+                <select value={filters.machine} onChange={(event) => updateFilter("machine", event.target.value)}>
+                  <option value="">All Machines</option>
+                  {machineOptions.map((machine) => <option key={machine.value} value={machine.value}>{machine.label}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Site</span>
+                <select value={filters.site} onChange={(event) => updateFilter("site", event.target.value)}>
+                  <option value="">All Sites</option>
+                  {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Date</span>
+                <input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} />
+              </label>
+            </div>
+
+            <div className="logs-active-filters-row">
+              <div className="logs-filter-chips">
+                {filters.date && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("date", "")}>Date: {filters.date}<i>×</i></button>}
+                {filters.machine && selectedMachineOption && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("machine", "")}>Machine: {selectedMachineOption.label}<i>×</i></button>}
+                {filters.site && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("site", "")}>Site: {filters.site}<i>×</i></button>}
+                {filters.search && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("search", "")}>Search: {filters.search}<i>×</i></button>}
+                {!hasFilters && <span className="logs-filter-hint">No active filters</span>}
+              </div>
+              <button className="logs-clear-all" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear All</button>
+            </div>
+
+            {message && <p className="message">{message}</p>}
+
+            <div className="logs-table-wrap">
+              <table className="logs-table">
+                <thead>
+                  <tr><th>When</th><th>Operator</th><th>Site</th><th>Machine</th><th>Reading</th><th>Product</th><th>Batch</th><th>Remarks</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {!paginatedRecords.length ? (
+                    <tr><td colSpan="9" className="logs-empty-cell">No submissions found for the current filters.</td></tr>
+                  ) : paginatedRecords.map((record) => (
+                    <tr key={record.id}>
+                      <td><div className="logs-when-cell"><span className="logs-cell-icon small">◷</span><span>{formatDateTime(record.record_timestamp)}</span></div></td>
+                      <td><div className="logs-operator-cell"><span className="logs-avatar">{initials(record.operator_name)}</span><span>{record.operator_name || "—"}</span></div></td>
+                      <td>{record.site_name || "—"}</td>
+                      <td>{record.machine_name || "—"}</td>
+                      <td>{formatNumber(record.reading_value)}</td>
+                      <td><span className={`logs-product-chip ${(record.site_name || "").toLowerCase().includes("dress") ? "dressings" : "savoury"}`}>{record.product || "—"}</span></td>
+                      <td>{record.batch_number || "—"}</td>
+                      <td>{record.remarks || "—"}</td>
+                      <td><span className="logs-row-status">✓</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="logs-table-footer">
+              <span>Showing {filteredRecords.length ? pageStart + 1 : 0} to {pageEnd} of {filteredRecords.length.toLocaleString("en-US")} records</span>
+              <div className="logs-pagination">
+                <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safePage <= 1}>‹</button>
+                {pageNumbers().map((item, index) => item === "…" ? <span key={`ellipsis-${index}`} className="ellipsis">…</span> : <button key={item} type="button" className={item === safePage ? "active" : ""} onClick={() => setCurrentPage(item)}>{item}</button>)}
+                <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safePage >= totalPages}>›</button>
+                <span className="logs-page-size">{pageSize} / page</span>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+
+/* RegisterPage.jsx */
+function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [userForm, setUserForm] = useState({ ...emptyUserForm, roleName: "operator" });
+  const [imageDataUrl, setImageDataUrl] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [deleteMode, setDeleteMode] = useState(false);
+
+  function updateUserField(field, value) { setUserForm((current) => ({ ...current, [field]: value })); }
+  async function loadUsers() { const usersData = await fetchJson("/api/admin/users"); setUsers(usersData.users || []); }
+
+  async function handleCreateUser(event) {
+    event.preventDefault();
+    setMessage("");
+    try {
+      setSaving(true);
+      const data = await fetchJson("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, imageDataUrl, registeredBy: userDisplayName(adminUser || user) }) });
+      setMessage(`Saved ${data.profile.operator_name} as ${data.profile.role_name}.`);
+      setUserForm({ ...emptyUserForm, roleName: "operator" });
+      setImageDataUrl("");
+      await loadUsers();
+    } catch (error) { setMessage(error.message); } finally { setSaving(false); }
+  }
+
+  async function handleDeleteUser(user) {
+    if (!window.confirm(`Delete ${user?.operator_name || "this person"}? Old submissions stay in logs.`)) return;
+    try { setDeletingId(user.id); setMessage(""); await fetchJson(`/api/admin/users/${user.id}`, { method: "DELETE" }); await loadUsers(); }
+    catch (error) { setMessage(error.message); }
+    finally { setDeletingId(null); }
+  }
+
+  useEffect(() => { loadUsers().catch((error) => setMessage(error.message)); }, []);
+
+  return (
+    <>
+      <FactoryTopNav activePage="register" user={adminUser || user} setPage={setPage} onLogout={onLogout} standalone={standalone} />
+      <main className="admin-page app-gradient page-pad compact-mobile-page">
+      <section className="admin-grid register-grid">
+        <form className="input-form glass-card compact-form" onSubmit={handleCreateUser}>
+          <p className="eyebrow">Admin Register</p><h1>Register Anyone</h1>
+          <div className="field-grid two only-basic-register">
+            <label>{requiredLabel("Name")}<input value={userForm.operatorName} onChange={(event) => updateUserField("operatorName", event.target.value)} placeholder="Person name" required /></label>
+            <label>{requiredLabel("Role")}<select value={userForm.roleName} onChange={(event) => updateUserField("roleName", event.target.value)}>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
+            <label>{requiredLabel("Site")}<select value={userForm.siteName} onChange={(event) => updateUserField("siteName", event.target.value)}>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
+          </div>
+          <div className="face-capture-row compact-face-row"><strong>Face Login Link</strong><button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button></div>
+          <button type="submit" disabled={saving}>{saving ? "Saving..." : "Register"}</button>{message && <p className="message">{message}</p>}
+        </form>
+        <section className="glass-card dashboard-summary">
+          <p className="eyebrow">Accounts</p><div className="registered-header-row"><h2>Registered People</h2><button className={deleteMode ? "delete-user-button active-delete" : "delete-user-button"} type="button" onClick={() => setDeleteMode((current) => !current)}>{deleteMode ? "Done" : "Delete"}</button></div>
+          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div className="registered-person-main"><strong>{user.operator_name}</strong><span>{user.site_name}</span>{deletingId === user.id && <small>Deleting...</small>}</div></article>)}</div>
+        </section>
+      </section>
+      {cameraOpen && <FaceCaptureModal title="Register Face" description="Capture this person's face for future login." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
+      </main>
+    </>
+  );
+}
+
+
+/* SystemRegistrationPage.jsx */
+function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [machines, setMachines] = useState([]);
+  const [form, setForm] = useState(emptyMachineForm);
+  const [selectedCalloutId, setSelectedCalloutId] = useState(defaultCallouts[0].id);
+  const [markMode, setMarkMode] = useState(null);
+  const [manageMode, setManageMode] = useState(null);
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState("Autosave ready");
+  const autosaveTimerRef = useRef(null);
+  const skipAutosaveRef = useRef(true);
+
+  function normalizeMachineForm(machine) {
+    return {
+      ...emptyMachineForm,
+      ...machine,
+      details: machine?.details || "",
+      fields: normalizeFields(machine?.fields),
+      callouts: normalizeCallouts(machine?.callouts),
+      threshold_min: machine?.threshold_min ?? "",
+      threshold_max: machine?.threshold_max ?? "",
+    };
+  }
+
+  function applyFormWithoutAutosave(next) {
+    skipAutosaveRef.current = true;
+    setForm(next);
+  }
+
+  function resetForm() {
+    applyFormWithoutAutosave({ ...emptyMachineForm, fields: [], callouts: [] });
+    setSelectedCalloutId("");
+    setMarkMode(null);
+    setManageMode(null);
+    setMessage("New setup ready.");
+    setAutosaveStatus("Enter a machine name to autosave");
+  }
+
+  function updateForm(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateField(index, key, value) {
+    setForm((current) => ({
+      ...current,
+      fields: current.fields.map((field, i) => (i === index ? { ...field, [key]: value } : field)),
+    }));
+  }
+
+  function updateCallout(index, key, value) {
+    setForm((current) => ({
+      ...current,
+      callouts: current.callouts.map((callout, i) => (i === index ? { ...callout, [key]: value } : callout)),
+    }));
+  }
+
+  async function loadMachines(selectFirst = false) {
+    const data = await fetchJson("/api/admin/machines");
+    const machineList = data.machines || [];
+    setMachines(machineList);
+    if (selectFirst && machineList[0]) editMachine(machineList[0]);
+    if (selectFirst && !machineList.length) resetForm();
+    return machineList;
+  }
+
+  function editMachine(machine) {
+    const next = normalizeMachineForm(machine);
+    applyFormWithoutAutosave(next);
+    setSelectedCalloutId(next.callouts[0]?.id || "");
+    setMarkMode(null);
+    setManageMode(null);
+    setMessage("");
+    setAutosaveStatus("Saved");
+  }
+
+  async function persistMachine(sourceForm = form, { silent = false } = {}) {
+    const cleanMachineName = String(sourceForm.machine_name || "").trim();
+    if (!cleanMachineName) {
+      if (!silent) setMessage("Machine name is required.");
+      setAutosaveStatus("Enter a machine name to autosave");
+      return null;
+    }
+
+    try {
+      setSaving(true);
+      if (silent) setAutosaveStatus("Saving...");
+      const payload = { ...sourceForm, machine_name: cleanMachineName, details: "" };
+      const data = await fetchJson("/api/admin/machines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (data.machine) {
+        const next = normalizeMachineForm(data.machine);
+        applyFormWithoutAutosave(next);
+        setSelectedCalloutId((current) => next.callouts.find((item) => item.id === current)?.id || next.callouts[0]?.id || "");
+        setMachines((current) => {
+          const exists = current.some((item) => String(item.id) === String(next.id));
+          if (exists) return current.map((item) => (String(item.id) === String(next.id) ? data.machine : item));
+          return [data.machine, ...current];
+        });
+      }
+
+      setAutosaveStatus("Saved");
+      if (!silent) setMessage("Machine setup saved.");
+      return data.machine || null;
+    } catch (error) {
+      setAutosaveStatus("Autosave failed");
+      setMessage(error.message);
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleImageUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setMessage("Preparing image...");
+      const compactImage = await imageFileToCompactDataUrl(file);
+      updateForm("image_data_url", compactImage);
+      setMessage("Image ready. Autosaving...");
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function beginMarking(calloutId, mode) {
+    const callout = form.callouts.find((item) => item.id === calloutId);
+    setSelectedCalloutId(calloutId);
+    setMarkMode(mode);
+    setManageMode("callouts");
+    setMessage(mode === "card" ? `Place the ${callout?.title || "callout"} card on the map.` : `Mark the machine point for ${callout?.title || "this callout"}.`);
+  }
+
+  function handlePreviewClick(event) {
+    if (!selectedCalloutId || !markMode) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(3, Math.min(97, ((event.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(6, Math.min(94, ((event.clientY - rect.top) / rect.height) * 100));
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    const selectedName = form.callouts.find((callout) => callout.id === selectedCalloutId)?.title || "callout";
+    setForm((current) => ({
+      ...current,
+      callouts: current.callouts.map((callout) => {
+        if (callout.id !== selectedCalloutId) return callout;
+        if (markMode === "card") return { ...callout, cardX: roundedX, cardY: roundedY };
+        return { ...callout, pointX: roundedX, pointY: roundedY, x: roundedX, y: roundedY };
+      }),
+    }));
+    setMarkMode(null);
+    setMessage(`${markMode === "card" ? "Card" : "Point"} marked for ${selectedName}. Autosaving...`);
+  }
+
+  async function handleSave(event) {
+    event.preventDefault();
+    await persistMachine(form, { silent: false });
+  }
+
+  async function handleDelete(machine) {
+    if (!machine?.id) return;
+    if (!window.confirm(`Delete ${machine.machine_name}?`)) return;
+    try {
+      await fetchJson(`/api/admin/machines/${machine.id}`, { method: "DELETE" });
+      const machineList = await loadMachines();
+      if (machineList[0]) editMachine(machineList[0]);
+      else resetForm();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function handleMachineSelect(value) {
+    if (!value) return resetForm();
+    const machine = machines.find((item) => String(item.id) === String(value));
+    if (machine) editMachine(machine);
+  }
+
+  function addField() {
+    updateForm("fields", [
+      ...form.fields,
+      { id: uid("field"), label: "New Field", type: "text", aiTarget: "", required: false, mapsTo: "custom", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
+    ]);
+  }
+
+  function addCallout() {
+    const next = { id: uid("callout"), title: "New Callout", valueKey: "reading_value", cardX: 30, cardY: 30, pointX: 50, pointY: 50, x: 50, y: 50 };
+    updateForm("callouts", [...form.callouts, next]);
+    setSelectedCalloutId(next.id);
+    setMarkMode(null);
+  }
+
+  function previewCardMeta(callout) {
+    const mappedField = form.fields.find((field) => String(field.id) === String(callout.valueKey));
+    const readingField = form.fields.find((field) => field.mapsTo === "reading_value");
+    const fallbackMin = readingField?.threshold_min || form.threshold_min || "67.0";
+    const fallbackMax = readingField?.threshold_max || form.threshold_max || "69.0";
+    const defaultRange = `Range: ${fallbackMin} – ${fallbackMax}`;
+
+    if (callout.valueKey === "reading_value") return { title: callout.title || "Reading Value", value: "333", unit: "", detail: defaultRange, tone: "warning", icon: "" };
+    if (callout.valueKey === "machine_name") return { title: callout.title || "Machine", value: form.machine_name || "Machine", unit: "", detail: "Range: — — —", tone: "success", icon: "" };
+    if (callout.valueKey === "site_name") return { title: callout.title || "Site", value: form.site_name || "Site", unit: "", detail: "Range: — — —", tone: "success", icon: "" };
+    if (callout.valueKey === "total_submissions") return { title: callout.title || "Total Submissions", value: "—", unit: "", detail: "Range: — — —", tone: "success", icon: "" };
+    return { title: callout.title || mappedField?.label || "Callout", value: mappedField?.label || callout.valueKey || "Value", unit: "", detail: "Range: — — —", tone: "success", icon: "" };
+  }
+
+  function renderFieldsEditor() {
+    return (
+      <div className="system-inline-editor">
+        <div className="system-inline-editor-head">
+          <button className="ghost-button small" type="button" onClick={() => setManageMode(null)}>← Back</button>
+          <div><p className="eyebrow">Edit</p><h2>Input Fields</h2></div>
+          <button className="secondary-button small" type="button" onClick={addField}>Add Field</button>
+        </div>
+        <div className="system-inline-list">
+          {!form.fields.length && <div className="modal-empty">No fields yet.</div>}
+          {form.fields.map((field, index) => (
+            <div className="system-editor-row field-editor-row" key={field.id}>
+              <div className="field-editor-topline">
+                <input value={field.label} onChange={(event) => updateField(index, "label", event.target.value)} placeholder="Name" />
+                <label className="mini-check"><input type="checkbox" checked={field.required} onChange={(event) => updateField(index, "required", event.target.checked)} /> Required</label>
+                <label className="mini-check"><input type="checkbox" checked={Boolean(field.thresholdEnabled)} onChange={(event) => updateField(index, "thresholdEnabled", event.target.checked)} disabled={field.type !== "number"} /> Limit</label>
+              </div>
+              <div className="field-editor-mapline">
+                <select value={field.type} onChange={(event) => updateField(index, "type", event.target.value)}>
+                  <option value="text">Text</option>
+                  <option value="number">Number</option>
+                  <option value="textarea">Paragraph</option>
+                  <option value="image">Image</option>
+                </select>
+                <select value={field.mapsTo} onChange={(event) => updateField(index, "mapsTo", event.target.value)}>
+                  <option value="custom">Custom</option>
+                  <option value="reading_value">Reading</option>
+                  <option value="product">Product</option>
+                  <option value="batch_number">Batch</option>
+                  <option value="remarks">Remarks</option>
+                </select>
+              </div>
+              <div className="field-editor-limitsline">
+                <input className="ai-target-mini" value={field.aiTarget || ""} onChange={(event) => updateField(index, "aiTarget", event.target.value)} placeholder="Target" disabled={field.type !== "image"} title="Text to find in the image, like target" />
+                <input type="number" step="any" value={field.threshold_min ?? ""} onChange={(event) => updateField(index, "threshold_min", event.target.value)} placeholder="Min" disabled={field.type !== "number" || !field.thresholdEnabled} />
+                <input type="number" step="any" value={field.threshold_max ?? ""} onChange={(event) => updateField(index, "threshold_max", event.target.value)} placeholder="Max" disabled={field.type !== "number" || !field.thresholdEnabled} />
+              </div>
+              <button className="ghost-button danger small field-remove-button" type="button" onClick={() => updateForm("fields", form.fields.filter((_, i) => i !== index))}>Remove</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderCalloutsEditor() {
+    return (
+      <div className="system-inline-editor">
+        <div className="system-inline-editor-head">
+          <button className="ghost-button small" type="button" onClick={() => setManageMode(null)}>← Back</button>
+          <div><p className="eyebrow">Edit</p><h2>Callouts</h2></div>
+          <button className="secondary-button small" type="button" onClick={addCallout}>Add Callout</button>
+        </div>
+        <div className="system-inline-list">
+          {!form.callouts.length && <div className="modal-empty">No callouts yet.</div>}
+          {form.callouts.map((callout, index) => (
+            <div className={selectedCalloutId === callout.id ? "system-editor-row callout-editor-row selected" : "system-editor-row callout-editor-row"} key={callout.id}>
+              <div className="callout-editor-titleline">
+                <input value={callout.title} onChange={(event) => updateCallout(index, "title", event.target.value)} placeholder="Name" />
+                <button className="ghost-button danger small" type="button" onClick={() => { updateForm("callouts", form.callouts.filter((_, i) => i !== index)); if (selectedCalloutId === callout.id) setMarkMode(null); }}>Remove</button>
+              </div>
+              <div className="callout-editor-actionline">
+                <select value={callout.valueKey} onChange={(event) => updateCallout(index, "valueKey", event.target.value)}>
+                  <option value="reading_value">Reading</option>
+                  <option value="machine_name">Machine</option>
+                  <option value="site_name">Site</option>
+                  <option value="operator_name">Operator</option>
+                  <option value="total_submissions">Total</option>
+                  {form.fields.map((field) => <option key={field.id} value={field.id}>{field.label}</option>)}
+                </select>
+                <button className="secondary-button small" type="button" onClick={() => beginMarking(callout.id, "card")}>Place Card</button>
+                <button className="secondary-button small" type="button" onClick={() => beginMarking(callout.id, "point")}>Mark Point</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    loadMachines(true).catch((error) => setMessage(error.message));
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (skipAutosaveRef.current) {
+      skipAutosaveRef.current = false;
+      return;
+    }
+
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+
+    if (!String(form.machine_name || "").trim()) {
+      setAutosaveStatus("Enter a machine name to autosave");
+      return;
+    }
+
+    setAutosaveStatus("Unsaved changes");
+    autosaveTimerRef.current = setTimeout(() => {
+      persistMachine(form, { silent: true });
+    }, 900);
+
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [form]);
+
+  return (
+    <>
+      <FactoryTopNav activePage="system" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} />
+      <main className="system-builder-page app-gradient">
+        <form className={manageMode ? "system-builder-shell system-builder-shell-editing" : "system-builder-shell"} onSubmit={handleSave}>
+          <section className={manageMode ? "system-builder-form-card system-builder-form-card-editing" : "system-builder-form-card"}>
+            {manageMode === "fields" ? renderFieldsEditor() : manageMode === "callouts" ? renderCalloutsEditor() : (
+              <>
+                <div className="system-builder-card-head">
+                  <div><p className="eyebrow">Setup</p><h1>Machine Builder</h1></div>
+                  <button className={!form.id ? "system-new-button active" : "system-new-button"} type="button" onClick={resetForm}>+ New</button>
+                </div>
+
+                <div className="system-builder-fields">
+                  <label>{requiredLabel("Machine Name")}<input value={form.machine_name} onChange={(event) => updateForm("machine_name", event.target.value)} placeholder="SELO-3 Pouch Packer" required /></label>
+                  <div className="system-site-upload-row">
+                    <label className="system-site-compact">{requiredLabel("Site")}<select value={form.site_name} onChange={(event) => updateForm("site_name", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
+                    <label className="system-upload-tile compact-upload-tile">
+                      <input type="file" accept="image/*" onChange={handleImageUpload} />
+                      <span className="system-upload-icon">⇧</span>
+                      <strong>{form.image_data_url ? "Change image" : "Upload image"}</strong>
+                      <small>PNG/JPG</small>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="system-builder-actions-list">
+                  <button type="button" onClick={() => setManageMode("fields")}><span>▤</span><strong>Input Fields</strong><b>{form.fields.length}</b></button>
+                  <button type="button" onClick={() => setManageMode("callouts")}><span>◎</span><strong>Callouts</strong><b>{form.callouts.length}</b></button>
+                </div>
+
+                <div className="system-autosave-row">
+                  <span className={autosaveStatus === "Saved" ? "autosave-pill saved" : "autosave-pill"}>{saving ? "Saving..." : autosaveStatus}</span>
+                  <button className="system-save-button" type="submit" disabled={saving}>{saving ? "Saving" : "Save now"}</button>
+                </div>
+                {message && <p className="message compact-message">{message}</p>}
+              </>
+            )}
+          </section>
+
+          <section className="system-point-map-card">
+            <div className="system-point-map-head">
+              <h2>Point Map</h2>
+              <div className="system-point-map-tools">
+                {markMode && <div className="system-mark-pill">{markMode === "card" ? "Place card" : "Mark point"}</div>}
+                <select className="system-map-select" value={form.id || ""} onChange={(event) => handleMachineSelect(event.target.value)} aria-label="Select saved machine">
+                  <option value="" disabled>{machines.length ? "Saved machines" : "No machines"}</option>
+                  {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
+                </select>
+                <button className="system-delete-button" type="button" disabled={!form.id} onClick={() => handleDelete(form)}>Delete</button>
+              </div>
+            </div>
+
+            <div className={`${markMode ? "system-map-stage locating" : "system-map-stage"}${form.image_data_url ? "" : " system-map-stage-empty"}`}>
+              <div className={form.image_data_url ? "system-map-canvas" : "system-map-canvas system-map-canvas-empty"} onClick={handlePreviewClick}>
+                {form.image_data_url && <img src={form.image_data_url} alt="Machine preview" draggable="false" />}
+                {markMode && <div className="preview-crosshair-hint">{markMode === "card" ? "Click card location" : "Click machine point"}</div>}
+                <svg className="factory-line-layer system-connector-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  {form.image_data_url && form.callouts.map((callout) => {
+                    const { point, card } = calloutLine(callout);
+                    return <line key={`line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
+                  })}
+                </svg>
+                {form.image_data_url && form.callouts.map((callout) => {
+                  const { point, card } = calloutLine(callout);
+                  const active = selectedCalloutId === callout.id;
+                  const meta = previewCardMeta(callout);
+                  const warning = meta.tone === "warning";
+                  return (
+                    <div key={callout.id}>
+                      <button
+                        type="button"
+                        className={warning ? "factory-target-dot warning system-clickable-dot" : "factory-target-dot system-clickable-dot"}
+                        style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                        onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "point"); }}
+                        title="Mark machine point"
+                      />
+                      <button
+                        type="button"
+                        className={warning ? `factory-callout-card warning system-builder-callout-button ${active ? "active" : ""}` : `factory-callout-card system-builder-callout-button ${active ? "active" : ""}`}
+                        style={{ left: `${card.x}%`, top: `${card.y}%` }}
+                        onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "card"); }}
+                        title="Place callout card"
+                      >
+                        <div><span>{meta.title}</span>{meta.icon && <em>{meta.icon}</em>}</div>
+                        <strong>{meta.value}<small>{meta.unit}</small></strong>
+                        <p>{meta.detail}</p>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        </form>
+      </main>
+    </>
+  );
+}
+
+
+/* App shell/auth/register/record pages */
+function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser }) {
+  const [faceOpen, setFaceOpen] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function handleLoginCapture(imageDataUrl) {
+    setMessage("Checking face...");
+    const data = await fetchJson("/api/face/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageDataUrl }),
+    });
+    if (!data.matched || !data.profile) throw new Error(data.error || "No matching face found.");
+    setFaceOpen(false);
+    setMessage(`Welcome, ${data.profile.operator_name}.`);
+    onFaceLogin(data.profile);
+  }
+
+  return (
+    <main className="landing-page app-gradient">
+      <section className="login-card glass-card">
+        <div className="brand-mark">CT</div>
+        <p className="eyebrow">Confirmation Test</p>
+        <h1>Operator Confirmation</h1>
+        <p className="login-subtitle">Login, register, and monitor confirmation records in one clean app.</p>
+        <div className="login-actions">
+          <button type="button" onClick={() => setFaceOpen(true)}>Login</button>
+          <button className="secondary-button" type="button" onClick={onRegister}>Register</button>
+          <button className="secondary-button" type="button" onClick={onMachineView}>Machines</button>
+          <button className="secondary-button" type="button" onClick={onDemoUser}>Login as User</button>
+          <button className="secondary-button" type="button" onClick={onAdmin}>Admin</button>
+        </div>
+        {message && <p className="message centered center-message">{message}</p>}
+      </section>
+      {faceOpen && <FaceCaptureModal title="Face Login" description="Hold steady. The app will capture automatically." onClose={() => setFaceOpen(false)} onCapture={handleLoginCapture} autoCapture />}
+    </main>
+  );
+}
+
+function OperatorRegisterPage({ onBack, onRegistered }) {
+  const [form, setForm] = useState(emptyUserForm);
+  const [imageDataUrl, setImageDataUrl] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function updateField(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setMessage("");
+    if (!imageDataUrl) return setMessage("Capture the face first.");
+    try {
+      setSaving(true);
+      const data = await fetchJson("/api/face/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, roleName: "operator", imageDataUrl }),
+      });
+      setMessage(`Registered ${data.profile.operator_name}.`);
+      onRegistered(data.profile);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <main className="form-page app-gradient page-pad no-topbar-pad compact-mobile-page">
+      <section className="form-layout single">
+        <form className="input-form glass-card compact-form" onSubmit={handleSubmit}>
+          <div className="form-title-row">
+            <div>
+              <p className="eyebrow">New Operator</p>
+              <h1>Register Profile</h1>
+            </div>
+            <button className="ghost-button" type="button" onClick={onBack}>Back</button>
+          </div>
+          <div className="field-grid two only-basic-register">
+            <label>{requiredLabel("Name")}<input value={form.operatorName} onChange={(event) => updateField("operatorName", event.target.value)} placeholder="Operator name" required /></label>
+            <label>{requiredLabel("Site")}<select value={form.siteName} onChange={(event) => updateField("siteName", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
+          </div>
+          <div className="face-capture-row compact-face-row">
+            <strong>Facial Recognition</strong>
+            <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake Face" : "Capture Face"}</button>
+          </div>
+          <button type="submit" disabled={saving}>{saving ? "Registering..." : "Register"}</button>
+          {message && <p className="message">{message}</p>}
+        </form>
+      </section>
+      {cameraOpen && <FaceCaptureModal title="Register Face" description="Capture a clear front-facing image." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
+    </main>
+  );
+}
+
+function TopBar({ user, page, setPage, onLogout }) {
+  const isAdmin = userRole(user) === "admin";
+  return (
+    <header className="topbar">
+      <div className="topbar-brand">
+        <div className="mini-logo">CT</div>
+        <div><strong>Confirmation Test</strong><span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}</span></div>
+      </div>
+      <nav>
+        {isAdmin ? (
+          <>
+            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
+            <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
+            <button className={page === "system" ? "active" : ""} type="button" onClick={() => setPage("system")}>System</button>
+            <button className={page === "adminRegister" ? "active" : ""} type="button" onClick={() => setPage("adminRegister")}>Register</button>
+            <button className={page === "logs" ? "active" : ""} type="button" onClick={() => setPage("logs")}>Logs</button>
+          </>
+        ) : (
+          <>
+            <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Record Input</button>
+            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
+            <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
+          </>
+        )}
+        <button type="button" onClick={onLogout}>Logout</button>
+      </nav>
+    </header>
+  );
+}
+
+function RecordInputPage({ user }) {
+  const [machines, setMachines] = useState([]);
+  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [selectedMachineId, setSelectedMachineId] = useState("");
+  const [values, setValues] = useState({});
+  const [records, setRecords] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [scanField, setScanField] = useState(null);
+
+  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
+  const fields = normalizeFields(selectedMachine?.fields);
+
+  function updateValue(fieldId, value) {
+    setValues((current) => ({ ...current, [fieldId]: value }));
+  }
+
+  async function loadMachines(site = selectedArea) {
+    const data = await fetchJson(`/api/machines?site=${encodeURIComponent(site)}`);
+    const machineList = data.machines || [];
+    setMachines(machineList);
+    const stillAvailable = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
+    if (stillAvailable) {
+      setSelectedMachineId(String(stillAvailable.id));
+    } else {
+      setSelectedMachineId(machineList[0] ? String(machineList[0].id) : "");
+    }
+  }
+
+  async function loadMyRecords() {
+    try {
+      setLoading(true);
+      const query = user?.id ? `?operator_id=${user.id}&limit=50` : "?limit=50";
+      const data = await fetchJson(`/api/records${query}`);
+      setRecords(data.records || []);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function extractStandardValues() {
+    const output = { reading_value: "", product: "", batch_number: "", remarks: "" };
+    for (const field of fields) {
+      if (["reading_value", "product", "batch_number", "remarks"].includes(field.mapsTo)) output[field.mapsTo] = values[field.id] ?? "";
+    }
+    return output;
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setMessage("");
+    if (!selectedMachine) return setMessage("No machine is configured yet. Ask admin to create one.");
+    for (const field of fields) {
+      if (field.required && !String(values[field.id] ?? "").trim()) return setMessage(`${field.label} is required.`);
+    }
+    try {
+      setSaving(true);
+      const standard = extractStandardValues();
+      const data = await fetchJson("/api/records/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...standard,
+          response_fields: values,
+          machine_config_id: selectedMachine.id,
+          machine_name: selectedMachine.machine_name,
+          operator_id: user?.id || null,
+          operator_name: userDisplayName(user),
+          site_name: selectedArea,
+        }),
+      });
+      setMessage("Response submitted.");
+      await loadMyRecords();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMachines(selectedArea).catch((error) => setMessage(error.message));
+  }, [selectedArea]);
+
+  useEffect(() => {
+    loadMyRecords();
+  }, [user?.id]);
+
+  async function loadLatestMachineValues(machine) {
+    if (!machine?.id) {
+      setValues({});
+      return;
+    }
+
+    try {
+      const data = await fetchJson(`/api/dashboard/summary?machine_config_id=${machine.id}`);
+      const latest = data.latest?.[0];
+      if (!latest) {
+        setValues({});
+        return;
+      }
+
+      const latestFields = latest.response_fields && typeof latest.response_fields === "object" ? latest.response_fields : {};
+      const nextValues = { ...latestFields };
+      for (const field of normalizeFields(machine.fields)) {
+        if (nextValues[field.id] !== undefined && nextValues[field.id] !== null) continue;
+        if (field.mapsTo === "reading_value") nextValues[field.id] = latest.reading_value ?? "";
+        if (field.mapsTo === "product") nextValues[field.id] = latest.product ?? "";
+        if (field.mapsTo === "batch_number") nextValues[field.id] = latest.batch_number ?? "";
+        if (field.mapsTo === "remarks") nextValues[field.id] = latest.remarks ?? "";
+      }
+      setValues(nextValues);
+    } catch (error) {
+      setValues({});
+      setMessage(error.message);
+    }
+  }
+
+  useEffect(() => {
+    loadLatestMachineValues(selectedMachine);
+  }, [selectedMachineId, selectedMachine?.id]);
+
+  return (
+    <main className="form-page app-gradient page-pad record-page-mobile">
+      <section className="form-layout">
+        <form className="input-form glass-card" onSubmit={handleSubmit}>
+          <div className="form-title-row">
+            <div><p className="eyebrow">Record Input</p><h1>Confirmation Response</h1></div>
+          </div>
+          <div className="record-machine-pickers">
+            <label>{requiredLabel("Area")}<select value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
+            <label>{requiredLabel("Machine")}<select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} required>{!machines.length && <option value="">No machines configured</option>}{machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}</select></label>
+          </div>
+          {selectedMachine?.details && <div className="machine-details-note">{selectedMachine.details}</div>}
+          <div className="field-grid two dynamic-field-grid">
+            {fields.map((field) => (
+              <label key={field.id} className={field.type === "textarea" || field.type === "image" ? "wide-field" : ""}>
+                {field.required ? requiredLabel(field.label) : field.label}
+                {field.type === "textarea" ? (
+                  <textarea rows="3" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={field.label} required={field.required} />
+                ) : field.type === "image" ? (
+                  <div className="image-answer-row">
+                    <input type="text" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={`AI value for ${field.aiTarget || field.label || "target"}`} required={field.required} />
+                    <button className="secondary-button image-scan-button" type="button" onClick={() => setScanField(field)}>Image</button>
+                  </div>
+                ) : (
+                  <input type={field.type === "number" ? "number" : "text"} step="any" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={field.label} required={field.required} />
+                )}
+              </label>
+            ))}
+          </div>
+          <button type="submit" disabled={saving || !selectedMachine}>{saving ? "Saving..." : "Submit Response"}</button>
+          {message && <p className="message">{message}</p>}
+        </form>
+        <section className="side-card glass-card">
+          <div className="records-header compact"><div><p className="eyebrow">My Logs</p><h2>Recent Responses</h2></div><button className="secondary-button" type="button" onClick={loadMyRecords} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button></div>
+          <RecordList records={records} compact />
+        </section>
+      </section>
+      {scanField && (
+        <ImageScanModal
+          field={scanField}
+          machine={selectedMachine}
+          onClose={() => setScanField(null)}
+          onValue={(value) => updateValue(scanField.id, value)}
+        />
+      )}
     </main>
   );
 }
@@ -1916,14 +2563,51 @@ function TrendsPage() {
 function App() {
   const [page, setPage] = useState("auth");
   const [user, setUser] = useState(null);
-  function handleAdminSkip() { setUser({ id: null, operator_name: "Temporary Admin", site_name: "Admin", role_name: "admin" }); setPage("machine"); }
-  function handleDemoUser() { setUser({ id: null, operator_name: "Temporary User", site_name: "Savoury", role_name: "operator" }); setPage("record"); }
-  function handleLogout() { setUser(null); setPage("auth"); }
-  if (page === "auth") return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(userRole(profile) === "admin" ? "machine" : "record"); }} onRegister={() => setPage("register")} onMachineView={() => setPage("machine")} onAdmin={handleAdminSkip} onDemoUser={handleDemoUser} />;
-  if (page === "register") return <RegisterPage onBack={() => setPage("auth")} onRegistered={(profile) => { setUser(profile); setPage("record"); }} />;
-  if (page === "machine" && !user) return <MachineViewPage setPage={setPage} standalone />;
-  if (page === "machine") return <MachineViewPage user={user} setPage={setPage} onLogout={handleLogout} />;
-  return <><TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} />{page === "system" ? <AdminSystemPage /> : page === "adminRegister" ? <AdminRegisterPage adminUser={user} /> : page === "logs" ? <LogsPage /> : page === "trends" ? <TrendsPage /> : <RecordInputPage user={user} />}</>;
+
+  function handleAdminSkip() {
+    setUser({ id: null, operator_name: "Temporary Admin", site_name: "Admin", role_name: "admin" });
+    setPage("machine");
+  }
+
+  function handleDemoUser() {
+    setUser({ id: null, operator_name: "Temporary User", site_name: "Savoury", role_name: "operator" });
+    setPage("record");
+  }
+
+  function handleLogout() {
+    setUser(null);
+    setPage("auth");
+  }
+
+  if (page === "auth") {
+    return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(userRole(profile) === "admin" ? "machine" : "record"); }} onRegister={() => setPage("register")} onMachineView={() => setPage("machine")} onAdmin={handleAdminSkip} onDemoUser={handleDemoUser} />;
+  }
+
+  if (page === "register") {
+    return <OperatorRegisterPage onBack={() => setPage("auth")} onRegistered={(profile) => { setUser(profile); setPage("record"); }} />;
+  }
+
+  if (page === "machine") {
+    return <MachinesPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  if (page === "trends") {
+    return <TrendsPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  if (page === "logs") {
+    return <LogsPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  if (page === "adminRegister") {
+    return <RegisterAdminPage adminUser={user} user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  if (page === "system") {
+    return <SystemRegistrationPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  return <><TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} /><RecordInputPage user={user} /></>;
 }
 
 export default App;
