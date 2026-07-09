@@ -26,14 +26,6 @@ const AI_FACE_ALIGN = process.env.AI_FACE_ALIGN !== "false";
 const AI_FACE_L2_NORMALIZE = process.env.AI_FACE_L2_NORMALIZE !== "false";
 const AI_FACE_DISTANCE_METRIC = process.env.AI_FACE_DISTANCE_METRIC || "cosine";
 const AI_FACE_SEARCH_METHOD = process.env.AI_FACE_SEARCH_METHOD || "exact";
-const AI_WORKSTATION_URL = cleanBaseUrl(
-  process.env.AI_WORKSTATION_URL ||
-    process.env.OLLAMA_URL ||
-    getDefaultAiWorkstationUrl()
-);
-const AI_WORKSTATION_MODEL = cleanModelName(process.env.AI_WORKSTATION_MODEL || process.env.OLLAMA_MODEL || "qwen3-vl:8b");
-const AI_WORKSTATION_TIMEOUT_MS = Number(process.env.AI_WORKSTATION_TIMEOUT_MS || process.env.OLLAMA_TIMEOUT_MS || 180000);
-let aiWorkstationModelCache = { url: "", expiresAt: 0, models: [] };
 
 let schemaReadyPromise = null;
 
@@ -43,40 +35,6 @@ app.use(express.json({ limit: "50mb" }));
 function cleanText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
   return String(value).trim();
-}
-
-function cleanBaseUrl(value) {
-  const text = String(value || "").trim().replace(/^['"]|['"]$/g, "");
-  return text.replace(/\/+$/, "") || "http://127.0.0.1:11434";
-}
-
-function cleanModelName(value) {
-  return cleanText(value || "qwen3-vl:8b", "qwen3-vl:8b").replace(/^['"]|['"]$/g, "");
-}
-
-function getDefaultAiWorkstationUrl() {
-  try {
-    const faceUrl = new URL(AI_FACE_BASE_URL);
-    if (faceUrl.hostname) return `${faceUrl.protocol}//${faceUrl.hostname}:11434`;
-  } catch {
-    // Use local Ollama only when no Face AI host is configured.
-  }
-  return "http://127.0.0.1:11434";
-}
-
-function compactErrorMessage(error) {
-  if (!error) return "Unknown error.";
-  if (error.name === "AbortError") return "AI workstation scan timed out.";
-  if (error.cause?.code) return `${error.message || "Request failed"} (${error.cause.code})`;
-  if (error.code) return `${error.message || "Request failed"} (${error.code})`;
-  return error.message || String(error);
-}
-
-function getAiWorkstationHelp() {
-  return (
-    `AI workstation URL currently used by this app: ${AI_WORKSTATION_URL}. ` +
-    "If this is wrong, add AI_WORKSTATION_URL=http://AI_WORKSTATION_IP:11434 in your .env, restart npm run dev, and make sure the workstation firewall allows TCP 11434."
-  );
 }
 
 function normalizeSite(value) {
@@ -179,69 +137,6 @@ async function readAiPayload(response) {
   const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) return response.json();
   return response.text();
-}
-
-async function getWorkstationModelsCached() {
-  const now = Date.now();
-  if (
-    aiWorkstationModelCache.url === AI_WORKSTATION_URL &&
-    aiWorkstationModelCache.expiresAt > now &&
-    Array.isArray(aiWorkstationModelCache.models)
-  ) {
-    return aiWorkstationModelCache.models;
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const response = await fetch(buildWorkstationUrl("/api/tags"), { signal: controller.signal });
-    const payload = await readAiPayload(response);
-    if (!response.ok) throw new Error(`AI workstation tag check returned HTTP ${response.status}.`);
-
-    const models = Array.isArray(payload?.models) ? payload.models : [];
-    aiWorkstationModelCache = {
-      url: AI_WORKSTATION_URL,
-      expiresAt: now + 60000,
-      models,
-    };
-    return models;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function isVisionModelName(modelName) {
-  return /(^|[-_:])vl($|[-_:])|vision|llava|moondream|minicpm|internvl/i.test(String(modelName || ""));
-}
-
-async function resolveAiWorkstationModel() {
-  const configuredModel = cleanModelName(AI_WORKSTATION_MODEL);
-
-  try {
-    const models = await getWorkstationModelsCached();
-    const names = models.map((model) => cleanModelName(model?.name || model?.model)).filter(Boolean);
-    if (!names.length) return configuredModel;
-
-    const exact = names.find((name) => name === configuredModel);
-    if (exact) return exact;
-
-    const lowerMatch = names.find((name) => name.toLowerCase() === configuredModel.toLowerCase());
-    if (lowerMatch) return lowerMatch;
-
-    const visionModel = names.find(isVisionModelName);
-    if (visionModel) {
-      console.warn(
-        `Configured AI_WORKSTATION_MODEL '${configuredModel}' was not found at ${AI_WORKSTATION_URL}. ` +
-          `Using available vision model '${visionModel}' instead.`
-      );
-      return visionModel;
-    }
-  } catch (error) {
-    console.warn(`Could not pre-check AI workstation models: ${compactErrorMessage(error)}`);
-  }
-
-  return configuredModel;
 }
 
 async function postFaceJson({ endpointType, imageDataUrl, operatorName = "" }) {
@@ -535,33 +430,44 @@ function getCurrentShiftInfo(date = new Date()) {
 
 
 
-const DEFAULT_MACHINE_FIELDS = [
-  { id: "reading_value", label: "Reading Value", type: "number", required: true, mapsTo: "reading_value", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "product", label: "Product", type: "text", required: false, mapsTo: "product", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "batch_number", label: "Batch Number", type: "text", required: false, mapsTo: "batch_number", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "remarks", label: "Remarks", type: "textarea", required: false, mapsTo: "remarks", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-];
+function normalizeFieldOptions(value) {
+  const source = Array.isArray(value) ? value : String(value || "").split(/[\n,|;]+/);
+  const output = [];
+  const seen = new Set();
 
-const DEFAULT_MACHINE_CALLOUTS = [
-  { id: "co-reading", title: "Reading Value", valueKey: "reading_value", cardX: 23, cardY: 33, pointX: 43, pointY: 40, x: 43, y: 40 },
-  { id: "co-machine", title: "Machine", valueKey: "machine_name", cardX: 67, cardY: 27, pointX: 62, pointY: 32, x: 62, y: 32 },
-  { id: "co-site", title: "Site", valueKey: "site_name", cardX: 68, cardY: 72, pointX: 57, pointY: 65, x: 57, y: 65 },
-  { id: "co-total", title: "Total Submissions", valueKey: "total_submissions", cardX: 82, cardY: 79, pointX: 77, pointY: 74, x: 77, y: 74 },
-];
+  for (const item of source) {
+    const option = cleanText(item);
+    const key = option.toLowerCase();
+    if (!option || seen.has(key)) continue;
+    seen.add(key);
+    output.push(option);
+  }
+
+  return output.slice(0, 40);
+}
 
 function normalizeMachineFields(fields) {
   const source = Array.isArray(fields) && fields.length ? fields : [];
-  return source.map((field, index) => ({
-    id: cleanText(field?.id, `field_${index + 1}`).replace(/[^a-zA-Z0-9_\-]/g, "_") || `field_${index + 1}`,
-    label: cleanText(field?.label, `Field ${index + 1}`),
-    type: ["text", "number", "textarea", "image"].includes(field?.type) ? field.type : "text",
-    aiTarget: cleanText(field?.aiTarget || field?.ai_target || field?.target),
-    required: Boolean(field?.required),
-    mapsTo: ["reading_value", "product", "batch_number", "remarks", "custom"].includes(field?.mapsTo) ? field.mapsTo : "custom",
-    thresholdEnabled: Boolean(field?.thresholdEnabled || field?.threshold_enabled),
-    threshold_min: field?.threshold_min === undefined || field?.threshold_min === null ? "" : String(field.threshold_min),
-    threshold_max: field?.threshold_max === undefined || field?.threshold_max === null ? "" : String(field.threshold_max),
-  })).slice(0, 30);
+  return source.map((field, index) => {
+    const type = ["text", "number", "textarea", "image", "option"].includes(field?.type) ? field.type : "text";
+    const rawOptions = field?.options ?? field?.choices ?? field?.optionValues ?? field?.optionsText;
+    const options = normalizeFieldOptions(rawOptions);
+    const finalOptions = type === "option" ? (options.length ? options : ["Yes", "No"]) : options;
+
+    return {
+      id: cleanText(field?.id, `field_${index + 1}`).replace(/[^a-zA-Z0-9_\-]/g, "_") || `field_${index + 1}`,
+      label: cleanText(field?.label, `Field ${index + 1}`),
+      type,
+      options: finalOptions,
+      optionsText: finalOptions.join("\n"),
+      aiTarget: cleanText(field?.aiTarget || field?.ai_target || field?.target),
+      required: Boolean(field?.required),
+      mapsTo: ["reading_value", "product", "batch_number", "remarks", "custom"].includes(field?.mapsTo) ? field.mapsTo : "custom",
+      thresholdEnabled: type === "number" && Boolean(field?.thresholdEnabled || field?.threshold_enabled),
+      threshold_min: field?.threshold_min === undefined || field?.threshold_min === null ? "" : String(field.threshold_min),
+      threshold_max: field?.threshold_max === undefined || field?.threshold_max === null ? "" : String(field.threshold_max),
+    };
+  }).slice(0, 30);
 }
 
 function clampPercentValue(value, fallback, min = 3, max = 97) {
@@ -646,23 +552,7 @@ async function getMachineConfigById(id) {
   return result.rows[0] || null;
 }
 
-async function ensureDefaultMachineIfEmpty() {
-  const count = await pool.query(`SELECT COUNT(*)::int AS count FROM app.machine_configs WHERE active = TRUE`);
-  if ((count.rows[0]?.count || 0) > 0) return;
-  await pool.query(
-    `
-      INSERT INTO app.machine_configs (machine_name, site_name, details, fields, callouts)
-      VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
-    `,
-    [
-      "SELO-3 Cooker 2",
-      "Savoury",
-      "Default machine setup. Admin can replace this with the real image, fields, thresholds, and callouts.",
-      JSON.stringify(DEFAULT_MACHINE_FIELDS),
-      JSON.stringify(DEFAULT_MACHINE_CALLOUTS),
-    ]
-  );
-}
+
 function validateRecordBody(body) {
   if (!cleanText(body.operator_name)) return "Operator name is required.";
   if (!cleanText(body.machine_name)) return "Machine name is required.";
@@ -671,127 +561,6 @@ function validateRecordBody(body) {
     if (!Number.isFinite(numberValue)) return "Reading value must be a valid number.";
   }
   return "";
-}
-
-
-function buildWorkstationUrl(endpointPath) {
-  const cleanPath = String(endpointPath || "").startsWith("/") ? String(endpointPath || "").slice(1) : String(endpointPath || "");
-  return new URL(cleanPath, `${AI_WORKSTATION_URL}/`).toString();
-}
-
-function imageDataUrlToBase64(imageDataUrl) {
-  const input = cleanText(imageDataUrl);
-  if (!input) throw new Error("No image was received.");
-  const match = input.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
-  const base64 = match?.[1] || input;
-  const buffer = Buffer.from(base64, "base64");
-  if (!buffer.length) throw new Error("Image conversion failed.");
-  return base64;
-}
-
-function extractFirstJsonObject(text) {
-  const source = cleanText(text);
-  if (!source) return null;
-  try { return JSON.parse(source); } catch {}
-  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) {
-    try { return JSON.parse(fenced[1].trim()); } catch {}
-  }
-  const start = source.indexOf("{");
-  const end = source.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    try { return JSON.parse(source.slice(start, end + 1)); } catch {}
-  }
-  return null;
-}
-
-function findLikelyValue(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string" || typeof value === "number") return value;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findLikelyValue(item);
-      if (found !== null && found !== undefined && found !== "") return found;
-    }
-    return null;
-  }
-  if (typeof value === "object") {
-    const keys = ["value", "reading", "number", "weight", "result", "target_value", "exact_value"];
-    for (const key of keys) {
-      if (value[key] !== null && value[key] !== undefined && value[key] !== "") return value[key];
-    }
-  }
-  return null;
-}
-
-async function scanImageWithWorkstation({ imageDataUrl, target, fieldLabel, machineName }) {
-  const base64 = imageDataUrlToBase64(imageDataUrl);
-  const cleanTarget = cleanText(target || fieldLabel || "target");
-  const modelName = await resolveAiWorkstationModel();
-  const prompt = [
-    "You are reading an industrial HMI, gauge, weighing scale, label, form, or 7-segment display.",
-    `Target label/item to find: ${cleanTarget}`,
-    "Find the number or short value beside, after, below, or nearest that target label/item.",
-    "Do not guess missing digits. Do not include units unless the unit is part of the visible value.",
-    "Return ONLY valid JSON. No markdown. No explanation.",
-    "Required JSON format: {\"target\": \"target_here\", \"value\": \"exact_value_here\"}",
-    "If the target or value is unreadable, return {\"target\": \"target_here\", \"value\": null}.",
-    machineName ? `Machine/context: ${machineName}` : "",
-  ].filter(Boolean).join("\n");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), AI_WORKSTATION_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(buildWorkstationUrl("/api/chat"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: modelName,
-        stream: false,
-        format: "json",
-        messages: [{ role: "user", content: prompt, images: [base64] }],
-      }),
-      signal: controller.signal,
-    });
-
-    const payload = await readAiPayload(response);
-    if (!response.ok) {
-      const message = typeof payload === "string" ? payload : JSON.stringify(payload);
-      const error = new Error(`AI workstation returned HTTP ${response.status}. ${message || "Check Ollama/API."}`);
-      error.statusCode = response.status >= 500 ? 502 : response.status;
-      throw error;
-    }
-
-    const content = typeof payload === "string" ? payload : cleanText(payload?.message?.content || payload?.response || JSON.stringify(payload));
-    const parsed = extractFirstJsonObject(content);
-    const directNumber = content.match(/-?\d+(?:\.\d+)?/)?.[0] || null;
-    const value = parsed ? findLikelyValue(parsed) : directNumber;
-
-    return {
-      target: parsed?.target ?? cleanTarget,
-      value: value === null || value === undefined ? null : String(value).trim(),
-      raw: compactJsonValue(payload),
-      model: modelName,
-      aiWorkstationUrl: AI_WORKSTATION_URL,
-    };
-  } catch (error) {
-    if (error.name === "AbortError") {
-      const timeoutError = new Error(`AI workstation scan timed out after ${AI_WORKSTATION_TIMEOUT_MS}ms. ${getAiWorkstationHelp()}`);
-      timeoutError.statusCode = 504;
-      throw timeoutError;
-    }
-
-    if (error instanceof TypeError || error.cause?.code || ["ENOTFOUND", "ECONNREFUSED", "ETIMEDOUT", "EHOSTUNREACH"].includes(error.code)) {
-      const connectionError = new Error(`Cannot reach AI workstation. ${compactErrorMessage(error)}. ${getAiWorkstationHelp()}`);
-      connectionError.statusCode = 502;
-      throw connectionError;
-    }
-
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 app.get("/api/health", async (_req, res) => {
@@ -818,58 +587,6 @@ app.get("/api/face/config", (_req, res) => {
     modelName: AI_FACE_MODEL_NAME,
     detectorBackend: AI_FACE_DETECTOR_BACKEND,
   });
-});
-
-
-app.get("/api/ai/workstation-health", async (_req, res) => {
-  try {
-    const models = await getWorkstationModelsCached();
-    const selectedModel = await resolveAiWorkstationModel();
-    const names = models.map((model) => model?.name || model?.model).filter(Boolean);
-
-    res.json({
-      ok: true,
-      aiWorkstationUrl: AI_WORKSTATION_URL,
-      configuredModel: AI_WORKSTATION_MODEL,
-      selectedModel,
-      configuredModelFound: names.includes(AI_WORKSTATION_MODEL),
-      availableModels: names,
-    });
-  } catch (error) {
-    res.status(error.name === "AbortError" ? 504 : 502).json({
-      ok: false,
-      aiWorkstationUrl: AI_WORKSTATION_URL,
-      configuredModel: AI_WORKSTATION_MODEL,
-      selectedModel: AI_WORKSTATION_MODEL,
-      error: `${compactErrorMessage(error)}. ${getAiWorkstationHelp()}`,
-    });
-  }
-});
-
-app.post("/api/ai/image-field", async (req, res) => {
-  try {
-    if (!req.body?.imageDataUrl) {
-      return res.status(400).json({ ok: false, error: "No image was received from the camera." });
-    }
-
-    const result = await scanImageWithWorkstation({
-      imageDataUrl: req.body?.imageDataUrl,
-      target: req.body?.target,
-      fieldLabel: req.body?.fieldLabel,
-      machineName: req.body?.machineName,
-    });
-
-    res.json({ ok: true, ...result });
-  } catch (error) {
-    const statusCode = Number(error.statusCode || 500);
-    console.error("AI image-field scan failed:", error);
-    res.status(statusCode).json({
-      ok: false,
-      error: error.message || "AI image scan failed.",
-      aiWorkstationUrl: AI_WORKSTATION_URL,
-      model: AI_WORKSTATION_MODEL,
-    });
-  }
 });
 
 app.post("/api/face/search", async (req, res) => {
@@ -1472,6 +1189,4 @@ if (isProduction) {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server ready: http://localhost:${PORT}`);
-  console.log(`AI workstation URL: ${AI_WORKSTATION_URL}`);
-  console.log(`AI workstation model: ${AI_WORKSTATION_MODEL}`);
 });

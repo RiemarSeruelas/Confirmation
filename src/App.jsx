@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 /* Shared helpers/components - kept in this file so all pages reuse one source. */
 const siteOptions = ["Savoury", "Dressings"];
+const trendSiteOptions = ["All", ...siteOptions];
 const roleOptions = ["operator", "admin"];
 const shiftOptions = [
   { value: "1st Shift", label: "1st Shift || 6:00 AM - 2:00 PM" },
@@ -9,19 +10,28 @@ const shiftOptions = [
   { value: "3rd Shift", label: "3rd Shift || 10:00 PM - 6:00 AM" },
 ];
 
-const defaultMachineFields = [
-  { id: "reading_value", label: "Reading Value", type: "number", required: true, mapsTo: "reading_value", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "product", label: "Product", type: "text", required: false, mapsTo: "product", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "batch_number", label: "Batch Number", type: "text", required: false, mapsTo: "batch_number", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-  { id: "remarks", label: "Remarks", type: "textarea", required: false, mapsTo: "remarks", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
+const variableCategoryOptions = [
+  { value: "status", label: "Status", id: "status", type: "option", options: ["Lock", "Unlock", "Open", "Close"], mapsTo: "custom" },
+  { value: "mode", label: "Mode", id: "mode", type: "option", options: ["Auto", "Manual", "Running", "Stopped"], mapsTo: "custom" },
+  { value: "parameter", label: "Parameter", id: "parameter", type: "number", options: [], mapsTo: "custom" },
 ];
 
-const defaultCallouts = [
-  { id: "co-reading", title: "Reading Value", valueKey: "reading_value", cardX: 23, cardY: 33, pointX: 43, pointY: 40 },
-  { id: "co-machine", title: "Machine", valueKey: "machine_name", cardX: 67, cardY: 27, pointX: 62, pointY: 32 },
-  { id: "co-site", title: "Site", valueKey: "site_name", cardX: 68, cardY: 72, pointX: 57, pointY: 65 },
-  { id: "co-total", title: "Total Submissions", valueKey: "total_submissions", cardX: 82, cardY: 79, pointX: 77, pointY: 74 },
-];
+function isParameterField(field = {}) {
+  return /^parameter(?:[_\s-]?\d+)?$/i.test(String(field.id || field.label || field.category || "").trim());
+}
+
+function getParameterNumberFromField(field = {}) {
+  const parts = [field.id, field.label, field.category].map((value) => String(value || "")).join(" ");
+  const match = parts.match(/parameter(?:[_\s-]?(\d+))?/i);
+  if (!match) return null;
+  return Number(match[1] || 1);
+}
+
+function nextParameterNumber(fields = []) {
+  const numbers = (fields || []).map((field) => getParameterNumberFromField(field)).filter(Number.isFinite);
+  return numbers.length ? Math.max(...numbers) + 1 : 1;
+}
+
 
 const emptyUserForm = {
   operatorName: "",
@@ -42,7 +52,7 @@ function uid(prefix = "id") {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function imageFileToCompactDataUrl(file, maxWidth = 1280, maxHeight = 820, quality = 0.82) {
+function imageFileToCompactDataUrl(file, maxWidth = 1000, maxHeight = 650, quality = 0.78) {
   return new Promise((resolve, reject) => {
     if (!file) return reject(new Error("No image selected."));
 
@@ -66,6 +76,60 @@ function imageFileToCompactDataUrl(file, maxWidth = 1280, maxHeight = 820, quali
     };
     reader.readAsDataURL(file);
   });
+}
+
+
+function useFittedImageCanvas(imageDataUrl, padding = 12) {
+  const stageRef = useRef(null);
+  const [naturalSize, setNaturalSize] = useState(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    setNaturalSize(null);
+    setCanvasSize({ width: 0, height: 0 });
+  }, [imageDataUrl]);
+
+  useEffect(() => {
+    if (!imageDataUrl || !naturalSize || !stageRef.current) return undefined;
+
+    function fitImageToStage() {
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      const rect = stage.getBoundingClientRect();
+      const availableWidth = Math.max(1, rect.width - padding);
+      const availableHeight = Math.max(1, rect.height - padding);
+      const scale = Math.min(availableWidth / naturalSize.width, availableHeight / naturalSize.height);
+
+      setCanvasSize({
+        width: Math.max(1, Math.floor(naturalSize.width * scale)),
+        height: Math.max(1, Math.floor(naturalSize.height * scale)),
+      });
+    }
+
+    fitImageToStage();
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fitImageToStage) : null;
+    if (resizeObserver) resizeObserver.observe(stageRef.current);
+    window.addEventListener("resize", fitImageToStage);
+
+    return () => {
+      if (resizeObserver) resizeObserver.disconnect();
+      window.removeEventListener("resize", fitImageToStage);
+    };
+  }, [imageDataUrl, naturalSize, padding]);
+
+  function handleImageLoad(event) {
+    const image = event.currentTarget;
+    if (image.naturalWidth && image.naturalHeight) {
+      setNaturalSize({ width: image.naturalWidth, height: image.naturalHeight });
+    }
+  }
+
+  const canvasStyle = imageDataUrl && canvasSize.width && canvasSize.height
+    ? { width: `${canvasSize.width}px`, height: `${canvasSize.height}px` }
+    : undefined;
+
+  return { stageRef, canvasStyle, handleImageLoad };
 }
 
 function requiredLabel(text) {
@@ -97,19 +161,196 @@ function formatNumber(value, decimals = 2) {
   return numberValue.toFixed(decimals);
 }
 
+function splitFieldOptions(value) {
+  const source = Array.isArray(value) ? value : String(value || "").split(/[\n,|;]+/);
+  const output = [];
+  const seen = new Set();
+
+  for (const item of source) {
+    const option = String(item || "").trim();
+    const key = option.toLowerCase();
+    if (!option || seen.has(key)) continue;
+    seen.add(key);
+    output.push(option);
+  }
+
+  return output.slice(0, 40);
+}
+
+function optionsToText(options) {
+  return splitFieldOptions(options).join("\n");
+}
+
+function normalizeMachinePrefix(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function stripMachinePrefixLabel(label, machineName) {
+  const raw = String(label || "").trim();
+  const prefix = normalizeMachinePrefix(machineName);
+  if (!raw || !prefix) return raw;
+  const normalized = normalizeMachinePrefix(raw);
+  if (!normalized.startsWith(prefix) || normalized === prefix) return raw;
+
+  const suffixNormalized = normalized.slice(prefix.length);
+  const suffixStart = raw.search(new RegExp(suffixNormalized.split("").map((char) => `${char}[^a-zA-Z0-9]*`).join(""), "i"));
+  if (suffixStart >= 0) {
+    const suffix = raw.slice(suffixStart).replace(/^[\s_\-:]+/, "").trim();
+    if (suffix) return suffix;
+  }
+
+  return raw.replace(new RegExp(`^${String(machineName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\s_\-:]*`, "i"), "").trim() || raw;
+}
+
+function normalizeVariableKey(value, fallback = "variable") {
+  const cleaned = String(value || "").trim().replace(/[^a-zA-Z0-9_\-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned || fallback;
+}
+
+function makeFieldIdFromLabel(label, existingFields = []) {
+  const base = normalizeVariableKey(label, "variable");
+  const seen = new Set((existingFields || []).map((field) => String(field.id)));
+  if (!seen.has(base)) return base;
+  let index = 2;
+  while (seen.has(`${base}_${index}`)) index += 1;
+  return `${base}_${index}`;
+}
+
+function visibleVariableName(field, machineName = "") {
+  return stripMachinePrefixLabel(field?.label || field?.id || "Variable", machineName) || "Variable";
+}
+
+function makeCalloutForField(field, index = 0) {
+  return {
+    id: `callout-${field.id || index}`,
+    title: field.label || `Variable ${index + 1}`,
+    valueKey: field.id,
+    cardX: Math.min(88, 18 + (index % 4) * 18),
+    cardY: Math.min(88, 18 + Math.floor(index / 4) * 16),
+    pointX: 50,
+    pointY: 50,
+    x: 50,
+    y: 50,
+  };
+}
+
+function variableCategoryFromField(field = {}) {
+  const categoryValue = String(field.category || "").toLowerCase();
+  const normalizedId = normalizeVariableKey(field.id || field.label || "", "").toLowerCase();
+  if (categoryValue === "status" || normalizedId === "status") return variableCategoryOptions[0];
+  if (categoryValue === "mode" || normalizedId === "mode") return variableCategoryOptions[1];
+  if (categoryValue === "parameter" || normalizedId.startsWith("parameter") || isParameterField(field)) return variableCategoryOptions[2];
+  return variableCategoryOptions[0];
+}
+
+function makeFieldFromCategory(categoryValue, existingFields = []) {
+  const category = variableCategoryOptions.find((item) => item.value === categoryValue) || variableCategoryOptions[0];
+  const options = splitFieldOptions(category.options);
+
+  if (category.value === "parameter") {
+    const parameterNumber = nextParameterNumber(existingFields);
+    return {
+      id: `parameter_${parameterNumber}`,
+      label: `Parameter ${parameterNumber}`,
+      category: "parameter",
+      type: "number",
+      options: [],
+      optionsText: "",
+      aiTarget: "",
+      required: false,
+      mapsTo: parameterNumber === 1 ? "reading_value" : "custom",
+      thresholdEnabled: false,
+      threshold_min: "",
+      threshold_max: "",
+    };
+  }
+
+  return {
+    id: category.id,
+    label: category.label,
+    category: category.value,
+    type: category.type,
+    options,
+    optionsText: optionsToText(options),
+    aiTarget: "",
+    required: false,
+    mapsTo: category.mapsTo || "custom",
+    thresholdEnabled: false,
+    threshold_min: "",
+    threshold_max: "",
+  };
+}
+
+function applyCategoryToField(field, categoryValue, existingFields = []) {
+  const category = variableCategoryOptions.find((item) => item.value === categoryValue) || variableCategoryOptions[0];
+  const options = splitFieldOptions(category.options);
+  const otherFields = existingFields.filter((item) => item !== field && String(item.id) !== String(field.id));
+
+  if (category.value === "parameter") {
+    const existingNumber = getParameterNumberFromField(field);
+    const parameterNumber = Number.isFinite(existingNumber) ? existingNumber : nextParameterNumber(otherFields);
+    return {
+      ...field,
+      id: `parameter_${parameterNumber}`,
+      label: `Parameter ${parameterNumber}`,
+      category: "parameter",
+      type: "number",
+      options: [],
+      optionsText: "",
+      mapsTo: parameterNumber === 1 ? "reading_value" : "custom",
+      thresholdEnabled: Boolean(field.thresholdEnabled),
+    };
+  }
+
+  return {
+    ...field,
+    id: category.id,
+    label: category.label,
+    category: category.value,
+    type: category.type,
+    options,
+    optionsText: optionsToText(options),
+    mapsTo: category.mapsTo || "custom",
+    thresholdEnabled: category.type === "number" ? Boolean(field.thresholdEnabled) : false,
+  };
+}
+
+function cleanCalloutsForFields(callouts = [], fields = []) {
+  const fieldsById = new Map((fields || []).map((field) => [String(field.id), field]));
+  const seen = new Set();
+  const cleaned = [];
+
+  for (const callout of normalizeCallouts(callouts)) {
+    const field = fieldsById.get(String(callout.valueKey));
+    if (!field || seen.has(String(field.id))) continue;
+    seen.add(String(field.id));
+    cleaned.push({ ...callout, id: `callout-${field.id}`, valueKey: field.id, title: field.label });
+  }
+
+  return cleaned;
+}
+
 function normalizeFields(fields) {
   if (!Array.isArray(fields) || !fields.length) return [];
-  return fields.map((field, index) => ({
-    id: field.id || uid(`field-${index}`),
-    label: field.label || `Field ${index + 1}`,
-    type: ["text", "number", "textarea", "image"].includes(field.type) ? field.type : "text",
-    aiTarget: field.aiTarget ?? field.ai_target ?? field.target ?? "",
-    required: Boolean(field.required),
-    mapsTo: field.mapsTo || "custom",
-    thresholdEnabled: Boolean(field.thresholdEnabled || field.threshold_enabled),
-    threshold_min: field.threshold_min ?? field.thresholdMin ?? "",
-    threshold_max: field.threshold_max ?? field.thresholdMax ?? "",
-  }));
+  return fields.map((field, index) => {
+    const type = ["text", "number", "textarea", "image", "option"].includes(field.type) ? field.type : "text";
+    const options = splitFieldOptions(field.options ?? field.choices ?? field.optionValues ?? field.optionsText);
+
+    return {
+      id: field.id || uid(`field-${index}`),
+      label: field.label || `Field ${index + 1}`,
+      category: field.category || variableCategoryFromField(field)?.value || "parameter",
+      type,
+      options: type === "option" ? (options.length ? options : ["Yes", "No"]) : options,
+      optionsText: type === "option" ? optionsToText(options.length ? options : ["Yes", "No"]) : optionsToText(options),
+      aiTarget: field.aiTarget ?? field.ai_target ?? field.target ?? "",
+      required: Boolean(field.required),
+      mapsTo: field.mapsTo || "custom",
+      thresholdEnabled: Boolean(field.thresholdEnabled || field.threshold_enabled),
+      threshold_min: field.threshold_min ?? field.thresholdMin ?? "",
+      threshold_max: field.threshold_max ?? field.thresholdMax ?? "",
+    };
+  });
 }
 
 function clampPercent(value, fallback = 50, min = 3, max = 97) {
@@ -1107,6 +1348,180 @@ function TrendMachineTile({ machine, miniData, isSelected, onSelect }) {
 
 
 
+function getTrendFieldOptions(machine) {
+  const fields = normalizeFields(machine?.fields);
+  const readingMeta = getMachineReadingMeta(machine);
+  const options = [{ key: "reading_value", label: readingMeta.label || "Reading", unit: readingMeta.unit || "" }];
+  for (const field of fields) {
+    const isNumeric = field.type === "number" || field.mapsTo === "reading_value";
+    if (!isNumeric) continue;
+    const key = field.mapsTo === "reading_value" ? "reading_value" : field.id;
+    if (options.some((option) => option.key === key)) continue;
+    options.push({ key, label: field.label || field.id, unit: field.unit || field.suffix || "" });
+  }
+  return options;
+}
+
+function preferredTrendField(machine) {
+  const fields = normalizeFields(machine?.fields);
+  const mappedReading = fields.find((field) => field.mapsTo === "reading_value");
+  if (mappedReading) return { key: "reading_value", label: mappedReading.label || "Reading", unit: mappedReading.unit || mappedReading.suffix || "" };
+  const firstNumber = fields.find((field) => field.type === "number");
+  if (firstNumber) return { key: firstNumber.id, label: firstNumber.label || firstNumber.id, unit: firstNumber.unit || firstNumber.suffix || "" };
+  return getTrendFieldOptions(machine)[0];
+}
+
+function numericTrendValueFromRecord(record, key = "reading_value") {
+  let value = key === "reading_value" ? record?.reading_value : record?.response_fields?.[key];
+  if ((value === null || value === undefined || value === "") && key !== "reading_value") value = record?.[key];
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function buildTrendPayloadFromRecords(machine, records = [], valueKey = "reading_value") {
+  const fields = normalizeFields(machine?.fields);
+  const field = fields.find((item) => item.id === valueKey || (item.mapsTo === "reading_value" && valueKey === "reading_value"));
+  const machineThresholds = getMachineReadingThresholds(machine);
+  const thresholdMin = field?.thresholdEnabled && field.threshold_min !== "" ? Number(field.threshold_min) : machineThresholds.thresholdMin;
+  const thresholdMax = field?.thresholdEnabled && field.threshold_max !== "" ? Number(field.threshold_max) : machineThresholds.thresholdMax;
+  const safeMin = Number.isFinite(thresholdMin) ? thresholdMin : null;
+  const safeMax = Number.isFinite(thresholdMax) ? thresholdMax : null;
+
+  const trends = [...records]
+    .sort((a, b) => new Date(a.record_timestamp).getTime() - new Date(b.record_timestamp).getTime() || Number(a.id || 0) - Number(b.id || 0))
+    .map((record) => {
+      const reading = numericTrendValueFromRecord(record, valueKey);
+      const below = Number.isFinite(reading) && Number.isFinite(safeMin) && reading < safeMin;
+      const above = Number.isFinite(reading) && Number.isFinite(safeMax) && reading > safeMax;
+      return {
+        ...record,
+        reading_value: reading,
+        trend_value_key: valueKey,
+        threshold_min: safeMin,
+        threshold_max: safeMax,
+        warning_status: below ? "below" : above ? "above" : Number.isFinite(reading) ? "normal" : "no-reading",
+        warning_message: below
+          ? `Below threshold: ${reading} < ${safeMin}`
+          : above
+            ? `Above threshold: ${reading} > ${safeMax}`
+            : "",
+      };
+    });
+
+  const numericReadings = trends.map((row) => row.reading_value).filter((value) => Number.isFinite(value));
+  const warnings = trends.filter((row) => row.warning_status === "below" || row.warning_status === "above");
+  const latest = [...trends].reverse().find((row) => Number.isFinite(row.reading_value)) || trends[trends.length - 1] || null;
+
+  return {
+    trends,
+    warnings,
+    latest,
+    stats: {
+      points: trends.length,
+      numeric_points: numericReadings.length,
+      warning_count: warnings.length,
+      latest_status: latest?.warning_status || "no-data",
+      min_reading: numericReadings.length ? Math.min(...numericReadings) : null,
+      max_reading: numericReadings.length ? Math.max(...numericReadings) : null,
+      avg_reading: numericReadings.length ? numericReadings.reduce((sum, value) => sum + value, 0) / numericReadings.length : null,
+      threshold_min: safeMin,
+      threshold_max: safeMax,
+    },
+  };
+}
+
+function TrendCompareChart({ seriesItems = [] }) {
+  const prepared = seriesItems.map((series, seriesIndex) => {
+    const points = (series.data?.trends || [])
+      .map((item, pointIndex) => ({
+        ...item,
+        reading: Number(item.reading_value),
+        time: new Date(item.record_timestamp).getTime(),
+        pointIndex,
+      }))
+      .filter((item) => Number.isFinite(item.reading));
+    return { ...series, seriesIndex, points };
+  });
+
+  const allPoints = prepared.flatMap((series) => series.points);
+  if (allPoints.length < 2 || !prepared.some((series) => series.points.length >= 2)) {
+    return <div className="trend-overview-empty">Add at least 2 numeric readings from any selected machine to draw a comparison.</div>;
+  }
+
+  const values = allPoints.map((point) => point.reading);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max === min ? 1 : max - min;
+  const width = 100;
+  const height = 60;
+  const chartTop = 5;
+  const chartBottom = height - 6;
+  const finiteTimes = allPoints.map((point) => point.time).filter(Number.isFinite);
+  const minTime = finiteTimes.length ? Math.min(...finiteTimes) : 0;
+  const maxTime = finiteTimes.length ? Math.max(...finiteTimes) : minTime;
+  const timeRange = maxTime === minTime ? 1 : maxTime - minTime;
+
+  function xForPoint(point, points) {
+    if (Number.isFinite(point.time) && maxTime !== minTime) return ((point.time - minTime) / timeRange) * width;
+    return points.length <= 1 ? width / 2 : (point.pointIndex / (points.length - 1)) * width;
+  }
+
+  function yForValue(value) {
+    return chartBottom - ((value - min) / range) * (chartBottom - chartTop);
+  }
+
+  return (
+    <div className="trend-overview-chart-wrap trend-compare-chart-wrap">
+      <svg className="trend-overview-chart trend-compare-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-label="Selected machine comparison chart">
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = chartTop + (chartBottom - chartTop) * ratio;
+          return <line key={ratio} className="trend-overview-gridline" x1="0" y1={y} x2="100" y2={y} />;
+        })}
+        {prepared.map((series) => {
+          if (series.points.length < 2) return null;
+          const path = series.points.map((point, index) => {
+            const x = xForPoint(point, series.points);
+            const y = yForValue(point.reading);
+            return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+          }).join(" ");
+          return <path key={series.id} className={`trend-series-line series-${series.seriesIndex % 6}`} d={path} />;
+        })}
+      </svg>
+      <div className="trend-overview-axis y"><span>{formatNumber(max)}</span><span>{formatNumber((max + min) / 2)}</span><span>{formatNumber(min)}</span></div>
+      <div className="trend-overview-axis x"><span>{finiteTimes.length ? formatTrendTime(minTime) : "Start"}</span><span>{finiteTimes.length ? formatTrendTime(minTime + timeRange / 2) : "Middle"}</span><span>{finiteTimes.length ? formatTrendTime(maxTime) : "End"}</span></div>
+    </div>
+  );
+}
+
+function TrendVsGrid({ seriesItems = [] }) {
+  if (!seriesItems.length) return null;
+  return (
+    <div className={`trend-vs-grid columns-${Math.min(seriesItems.length, 4)}`}>
+      {seriesItems.map((series, index) => {
+        const stats = series.data?.stats || {};
+        const latest = series.data?.latest || [...(series.data?.trends || [])].reverse().find((item) => Number.isFinite(Number(item.reading_value))) || null;
+        return (
+          <article key={series.id} className="trend-vs-card">
+            <div className="trend-vs-card-head">
+              <span className={`trend-series-swatch series-${index % 6}`} />
+              <div>
+                <strong>{series.machine.machine_name}</strong>
+                <small>{series.machine.site_name || "—"} • {series.label || "Reading"}</small>
+              </div>
+            </div>
+            <div className="trend-vs-card-body">
+              <div><span>Current</span><strong>{formatNumber(latest?.reading_value ?? stats.avg_reading)}</strong></div>
+              <div><span>Average</span><strong>{formatNumber(stats.avg_reading)}</strong></div>
+              <div><span>Min</span><strong>{formatNumber(stats.min_reading)}</strong></div>
+              <div><span>Max</span><strong>{formatNumber(stats.max_reading)}</strong></div>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 /* Shared top navigation - every page uses this exact component. */
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -1191,7 +1606,7 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
   const [summary, setSummary] = useState(null);
   const [records, setRecords] = useState([]);
   const [machines, setMachines] = useState([]);
-  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [selectedArea, setSelectedArea] = useState("All");
   const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [message, setMessage] = useState("Loading machine feed...");
@@ -1263,6 +1678,7 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
   const isAdmin = userRole(user) === "admin";
   const latestRows = buildFactorySummaryRows({ selectedMachine, latest, fields, summary, statusText, warningCount });
   const hasMachineImage = Boolean(selectedMachine?.image_data_url);
+  const machineImageMap = useFittedImageCanvas(selectedMachine?.image_data_url || "", 16);
   const visibleMetrics = hasMachineImage ? metrics : [];
 
   function go(target) {
@@ -1317,9 +1733,9 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
           </aside>
 
           <section className="factory-machine-stage-card">
-            <div className="factory-machine-stage">
+            <div ref={machineImageMap.stageRef} className="factory-machine-stage">
               <div className={hasMachineImage ? "factory-machine-art" : "factory-machine-art factory-machine-art-empty"}>
-                {hasMachineImage && <img src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} />}
+                {hasMachineImage && <img src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} onLoad={machineImageMap.handleImageLoad} />}
                 <svg className="factory-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                   {visibleMetrics.map((metric) => {
                     const { point, card } = calloutLine(metric);
@@ -1352,62 +1768,88 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
 
 /* TrendsPage.jsx */
 function TrendsPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
-  const [machines, setMachines] = useState([]);
-  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [allMachines, setAllMachines] = useState([]);
+  const [selectedArea, setSelectedArea] = useState("All");
   const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
   const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [trendData, setTrendData] = useState({ trends: [], warnings: [], stats: null });
+  const [selectedValueKey, setSelectedValueKey] = useState("reading_value");
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [selectedSeries, setSelectedSeries] = useState([]);
+  const [seriesTrendMap, setSeriesTrendMap] = useState({});
   const [machineTrendMap, setMachineTrendMap] = useState({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("Loading trends...");
-  const [trendLimit, setTrendLimit] = useState("20");
+  const [trendLimit, setTrendLimit] = useState("80");
 
-  async function loadMachines(site = selectedArea) {
-    const query = site ? `?site=${encodeURIComponent(site)}` : "";
-    const machineData = await fetchJson(`/api/machines${query}`);
+  const machinesForArea = useMemo(
+    () => selectedArea === "All"
+      ? allMachines
+      : allMachines.filter((machine) => String(machine.site_name || "").toLowerCase() === String(selectedArea).toLowerCase()),
+    [allMachines, selectedArea]
+  );
+
+  const selectedPickerMachine = allMachines.find((machine) => String(machine.id) === String(selectedMachineId)) || machinesForArea[0] || allMachines[0] || null;
+  const currentMachineFieldOptions = selectedPickerMachine ? getTrendFieldOptions(selectedPickerMachine).filter((option) => option.key !== "reading_value" || option.label) : [];
+
+  async function loadMachines() {
+    const machineData = await fetchJson("/api/machines");
     const machineList = machineData.machines || [];
-    setMachines(machineList);
+    setAllMachines(machineList);
 
-    const stillAvailable = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
-    if (stillAvailable) {
-      setSelectedMachineId(String(stillAvailable.id));
-    } else {
-      setSelectedMachineId(machineList[0] ? String(machineList[0].id) : "");
+    const areaMachines = selectedArea === "All" ? machineList : machineList.filter((machine) => String(machine.site_name || "").toLowerCase() === String(selectedArea).toLowerCase());
+    const pickerStillAvailable = machineList.some((machine) => String(machine.id) === String(selectedMachineId));
+    if (!pickerStillAvailable) setSelectedMachineId(String(areaMachines[0]?.id || machineList[0]?.id || ""));
+
+    if (!selectedSeries.length && areaMachines[0]) {
+      const field = preferredTrendField(areaMachines[0]);
+      setSelectedValueKey(field.key);
+      setSelectedSeries([{ id: `${areaMachines[0].id}:${field.key}`, machineId: String(areaMachines[0].id), valueKey: field.key, label: field.label, unit: field.unit }]);
     }
 
-    if (!machineList.length) {
-      setMessage(`No machines configured for ${site}`);
-      setTrendData({ trends: [], warnings: [], stats: null });
-    }
-
+    if (!machineList.length) setMessage("No machines configured yet.");
     return machineList;
   }
 
-  async function loadTrend(machineId = selectedMachineId, limit = trendLimit) {
-    if (!machineId) return;
-    try {
-      setLoading(true);
-      const data = await fetchJson(`/api/dashboard/trends?machine_config_id=${encodeURIComponent(machineId)}&limit=${encodeURIComponent(limit)}`);
-      setTrendData({ trends: data.trends || [], warnings: data.warnings || [], stats: data.stats || null });
-      setMessage(data.trends?.length ? "Live trend data from the database" : "No trend data yet for this machine");
-    } catch (error) {
-      setMessage(error.message);
-      setTrendData({ trends: [], warnings: [], stats: null });
-    } finally {
-      setLoading(false);
-    }
+  async function loadTrendForMachine(machine, valueKey, limit = trendLimit) {
+    if (!machine?.id) return { trends: [], warnings: [], latest: null, stats: null };
+    const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machine.id)}&limit=${encodeURIComponent(limit)}`);
+    return buildTrendPayloadFromRecords(machine, data.records || [], valueKey);
   }
 
-  async function loadGridSummaries(machineList = machines) {
+  async function loadSelectedSeries(machineList = allMachines, seriesList = selectedSeries) {
+    if (!seriesList.length) {
+      setSeriesTrendMap({});
+      return {};
+    }
+
+    const entries = await Promise.all(seriesList.map(async (series) => {
+      const machine = machineList.find((item) => String(item.id) === String(series.machineId));
+      if (!machine) return [series.id, { trends: [], warnings: [], latest: null, stats: null }];
+      try {
+        const data = await loadTrendForMachine(machine, series.valueKey, trendLimit);
+        return [series.id, data];
+      } catch {
+        return [series.id, { trends: [], warnings: [], latest: null, stats: null }];
+      }
+    }));
+
+    const nextMap = Object.fromEntries(entries);
+    setSeriesTrendMap(nextMap);
+    return nextMap;
+  }
+
+  async function loadGridSummaries(machineList = allMachines) {
     if (!machineList.length) {
       setMachineTrendMap({});
       return;
     }
 
-    const entries = await Promise.all(machineList.map(async (machine) => {
+    const visibleMachines = selectedArea === "All" ? machineList : machineList.filter((machine) => String(machine.site_name || "").toLowerCase() === String(selectedArea).toLowerCase());
+    const entries = await Promise.all(visibleMachines.map(async (machine) => {
       try {
-        const data = await fetchJson(`/api/dashboard/trends?machine_config_id=${encodeURIComponent(machine.id)}&limit=24`);
-        return [String(machine.id), { trends: data.trends || [], warnings: data.warnings || [], stats: data.stats || null }];
+        const field = preferredTrendField(machine);
+        const data = await loadTrendForMachine(machine, field.key, 24);
+        return [String(machine.id), data];
       } catch {
         return [String(machine.id), { trends: [], warnings: [], stats: null }];
       }
@@ -1417,35 +1859,101 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
   }
 
   async function refreshAll() {
-    const machineList = await loadMachines(selectedArea);
-    const activeId = selectedMachineId || String(machineList[0]?.id || "");
-    await Promise.all([loadGridSummaries(machineList), activeId ? loadTrend(activeId, trendLimit) : Promise.resolve()]);
+    try {
+      setLoading(true);
+      const machineList = await loadMachines();
+      await Promise.all([loadGridSummaries(machineList), loadSelectedSeries(machineList, selectedSeries)]);
+      setMessage(selectedSeries.length ? "Live comparison data from the database" : "Pick variables to compare.");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function addSelectedSeries(machine = selectedPickerMachine, field = null) {
+    if (!machine) return;
+    const pickedField = field || getTrendFieldOptions(machine).find((option) => option.key === selectedValueKey) || preferredTrendField(machine);
+    if (!pickedField) return;
+    const seriesId = `${machine.id}:${pickedField.key}`;
+    if (selectedSeries.some((series) => series.id === seriesId)) {
+      setMessage(`${machine.machine_name} • ${pickedField.label} is already in comparison.`);
+      return;
+    }
+    const nextSeries = [...selectedSeries, { id: seriesId, machineId: String(machine.id), valueKey: pickedField.key, label: pickedField.label, unit: pickedField.unit }];
+    setSelectedSeries(nextSeries);
+    loadSelectedSeries(allMachines, nextSeries).catch((error) => setMessage(error.message));
+  }
+
+  function toggleSeriesSelection(machine, field) {
+    const seriesId = `${machine.id}:${field.key}`;
+    const existing = selectedSeries.some((series) => series.id === seriesId);
+    setSelectedValueKey(field.key);
+    if (existing) {
+      removeSelectedSeries(seriesId);
+      return;
+    }
+    addSelectedSeries(machine, field);
+  }
+
+  function removeSelectedSeries(seriesId) {
+    const nextSeries = selectedSeries.filter((series) => series.id !== seriesId);
+    setSelectedSeries(nextSeries);
+    setSeriesTrendMap((current) => {
+      const next = { ...current };
+      delete next[seriesId];
+      return next;
+    });
+  }
+
+  function clearSelectedSeries() {
+    setSelectedSeries([]);
+    setSeriesTrendMap({});
+    setMessage("Comparison cleared. Pick variables again.");
   }
 
   useEffect(() => {
-    loadMachines(selectedArea)
-      .then((machineList) => loadGridSummaries(machineList))
+    loadMachines()
+      .then((machineList) => Promise.all([loadGridSummaries(machineList), loadSelectedSeries(machineList, selectedSeries)]))
       .catch((error) => setMessage(error.message));
-  }, [selectedArea]);
+  }, []);
 
   useEffect(() => {
-    if (selectedMachineId) loadTrend(selectedMachineId, trendLimit);
-  }, [selectedMachineId, trendLimit]);
+    if (!allMachines.length) return;
+    const areaMachines = selectedArea === "All" ? allMachines : allMachines.filter((machine) => String(machine.site_name || "").toLowerCase() === String(selectedArea).toLowerCase());
+    setSelectedMachineId((current) => areaMachines.some((machine) => String(machine.id) === String(current)) ? current : String(areaMachines[0]?.id || allMachines[0]?.id || ""));
+    loadGridSummaries(allMachines).catch((error) => setMessage(error.message));
+  }, [selectedArea, allMachines.length]);
 
-  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0] || null;
-  const trends = trendData.trends || [];
-  const stats = trendData.stats || {};
-  const latest = trends[trends.length - 1] || null;
-  const readingMeta = getMachineReadingMeta(selectedMachine);
-  const { thresholdMin, thresholdMax } = getMachineReadingThresholds(selectedMachine);
-  const currentValue = latest?.reading_value ?? stats.avg_reading;
-  const targetValue = thresholdMax ?? stats.max_reading ?? null;
-  const targetPercent = Number.isFinite(Number(currentValue)) && Number.isFinite(Number(targetValue)) && Number(targetValue) !== 0
-    ? (Number(currentValue) / Number(targetValue)) * 100
-    : 0;
-  const currentStatus = stats.latest_status || latest?.warning_status || "no-data";
+  useEffect(() => {
+    if (!selectedPickerMachine) return;
+    const field = getTrendFieldOptions(selectedPickerMachine).find((option) => option.key === selectedValueKey) || preferredTrendField(selectedPickerMachine);
+    if (field?.key) setSelectedValueKey(field.key);
+  }, [selectedPickerMachine?.id]);
+
+  useEffect(() => {
+    if (allMachines.length && selectedSeries.length) loadSelectedSeries(allMachines, selectedSeries).catch((error) => setMessage(error.message));
+    if (!selectedSeries.length) setSeriesTrendMap({});
+  }, [selectedSeries, allMachines.length]);
+
+  useEffect(() => {
+    if (selectedSeries.length) loadSelectedSeries(allMachines, selectedSeries).catch((error) => setMessage(error.message));
+  }, [trendLimit]);
+
+  const seriesItems = selectedSeries.map((series) => {
+    const machine = allMachines.find((item) => String(item.id) === String(series.machineId));
+    return {
+      ...series,
+      machine,
+      title: machine ? `${machine.site_name || "—"} • ${machine.machine_name}` : "Missing machine",
+      data: seriesTrendMap[series.id] || { trends: [], warnings: [], latest: null, stats: null },
+    };
+  }).filter((series) => series.machine);
+
+  const firstSeries = seriesItems[0] || null;
+  const totalWarnings = seriesItems.reduce((sum, series) => sum + Number(series.data?.stats?.warning_count || 0), 0);
+  const visibleMachines = machinesForArea;
   const isAdmin = userRole(user) === "admin";
-  const visibleMachines = machines;
 
   function go(target) {
     if (target === "overview") return;
@@ -1457,46 +1965,91 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
 
   return (
     <main className="factory-os-page factory-trends-page">
-      <FactoryTopNav activePage="trends" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={selectedDate} onDateChange={setSelectedDate} warningCount={stats.warning_count || 0} />
+      <FactoryTopNav activePage="trends" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={selectedDate} onDateChange={setSelectedDate} warningCount={totalWarnings} />
 
-      <section className="factory-trends-workspace">
-        <section className="factory-trends-overview-card">
-          <div className="factory-trends-chart-panel">
-            <div className="factory-trends-card-head">
+      <section className="factory-trends-workspace clean-trends-workspace">
+        <section className="clean-trends-layout">
+          <div className="clean-trends-graph-card">
+            <div className="clean-trends-head">
               <div>
-                <p className="eyebrow">{selectedArea} Trend</p>
-                <h2>{readingMeta.label} {selectedMachine?.machine_name ? `(${selectedMachine.machine_name})` : "(No Machine)"}</h2>
-                <p><span className="trend-legend-dot" />{readingMeta.unit ? `${readingMeta.label} (${readingMeta.unit})` : readingMeta.label}</p>
+                <p className="eyebrow">Trends</p>
+                <h2>{seriesItems.length ? `${seriesItems.length} selected data source${seriesItems.length > 1 ? "s" : ""}` : "No selected data source"}</h2>
               </div>
-              <div className="factory-trends-actions">
-                <select className="factory-area-inline-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Select area">
-                  {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+              <div className="clean-trends-controls">
+                <select value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Filter site">
+                  {trendSiteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
                 </select>
-                <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={loading || !machines.length} aria-label="Select machine">
-                  {!machines.length && <option value="">No machines</option>}
-                  {machines.map((machine) => (
-                    <option key={machine.id} value={String(machine.id)}>{machine.machine_name}</option>
-                  ))}
-                </select>
-                <button type="button" onClick={refreshAll} disabled={loading || !selectedMachineId}>{loading ? "Loading" : "Refresh"}</button>
+                <button type="button" onClick={refreshAll} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
               </div>
             </div>
-            <TrendOverviewChart trends={trends} thresholdMin={thresholdMin ?? stats.threshold_min} thresholdMax={thresholdMax ?? stats.threshold_max} />
+
+            <TrendCompareChart seriesItems={seriesItems} />
           </div>
 
-          <aside className="factory-trends-stats-panel">
-            <span className="trend-side-label">Current {readingMeta.label}</span>
-            <div className="trend-current-reading">
-              <strong>{formatNumber(currentValue)}</strong>
-              <small>{readingMeta.unit || "value"}</small>
+          <aside className="clean-compare-card">
+            <div className="clean-compare-head">
+              <div>
+                <p className="eyebrow">Comparison</p>
+                <h2>{seriesItems.length ? `${seriesItems.length} VS` : "Pick machines"}</h2>
+              </div>
+              <div className="clean-compare-actions">
+                <button className="secondary-button small" type="button" onClick={() => setCompareOpen((open) => !open)}>{compareOpen ? "Done" : "Compare"}</button>
+                <button className="ghost-button small" type="button" onClick={clearSelectedSeries} disabled={!seriesItems.length}>Clear</button>
+              </div>
             </div>
-            <div className="trend-side-stats">
-              <article><span>Average</span><strong>{formatNumber(stats.avg_reading)}</strong></article>
-              <article><span>Maximum</span><strong>{formatNumber(stats.max_reading)}</strong></article>
-              <article><span>Minimum</span><strong>{formatNumber(stats.min_reading)}</strong></article>
-              <article><span>Target</span><strong>{targetValue !== null && targetValue !== undefined ? formatNumber(targetValue) : "—"}</strong></article>
+
+            {compareOpen && (
+              <div className="clean-compare-picker">
+                {!visibleMachines.length ? (
+                  <p className="empty-state">No machines for this site.</p>
+                ) : visibleMachines.map((machine) => {
+                  const options = getTrendFieldOptions(machine);
+                  return (
+                    <article key={machine.id} className="clean-picker-machine">
+                      <strong>{machine.machine_name}</strong>
+                      <span>{machine.site_name || "—"}</span>
+                      <div>
+                        {options.map((option) => {
+                          const active = selectedSeries.some((series) => String(series.machineId) === String(machine.id) && series.valueKey === option.key);
+                          return (
+                            <button key={`${machine.id}:${option.key}`} type="button" className={active ? "active" : ""} onClick={() => toggleSeriesSelection(machine, option)}>
+                              {active ? "✓ " : "+ "}{option.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="clean-vs-grid">
+              {!seriesItems.length ? (
+                <p className="empty-state">Click Compare, then select machine variables to graph.</p>
+              ) : seriesItems.map((series, index) => {
+                const stats = series.data?.stats || {};
+                const latest = series.data?.latest || [...(series.data?.trends || [])].reverse().find((item) => Number.isFinite(Number(item.reading_value))) || null;
+                return (
+                  <article key={series.id} className="clean-vs-card">
+                    <div className="clean-vs-title">
+                      <span className={`trend-series-swatch series-${index % 6}`} />
+                      <div>
+                        <strong>{series.machine.machine_name}</strong>
+                        <small>{series.machine.site_name || "—"} • {series.label || "Reading"}</small>
+                      </div>
+                      <button className="ghost-button small" type="button" onClick={() => removeSelectedSeries(series.id)}>×</button>
+                    </div>
+                    <div className="clean-vs-values">
+                      <div><span>Current</span><b>{formatNumber(latest?.reading_value ?? stats.avg_reading)}</b></div>
+                      <div><span>Avg</span><b>{formatNumber(stats.avg_reading)}</b></div>
+                      <div><span>Min</span><b>{formatNumber(stats.min_reading)}</b></div>
+                      <div><span>Max</span><b>{formatNumber(stats.max_reading)}</b></div>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
-            <TrendProgressRing percent={targetPercent} />
           </aside>
         </section>
 
@@ -1509,14 +2062,17 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
                 key={machine.id}
                 machine={machine}
                 miniData={machineTrendMap[String(machine.id)] || { trends: [], stats: null }}
-                isSelected={String(machine.id) === String(selectedMachineId)}
-                onSelect={() => setSelectedMachineId(String(machine.id))}
+                isSelected={selectedSeries.some((series) => String(series.machineId) === String(machine.id))}
+                onSelect={() => {
+                  setSelectedArea(machine.site_name || selectedArea);
+                  setSelectedMachineId(String(machine.id));
+                }}
               />
             ))
           )}
         </section>
 
-        <div className="factory-trends-footer">{message} {machines.length ? `• Showing ${visibleMachines.length} of ${machines.length} machines` : ""}</div>
+        <div className="factory-trends-footer">{message} {visibleMachines.length ? `• Showing ${visibleMachines.length} of ${allMachines.length} machines` : ""}</div>
       </section>
     </main>
   );
@@ -1543,6 +2099,10 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
   function clearFilters() {
     setFilters({ search: "", machine: "", site: "", date: "" });
     setCurrentPage(1);
+  }
+
+  function toggleSiteFilter(site) {
+    updateFilter("site", filters.site === site ? "" : site);
   }
 
   async function loadLogs() {
@@ -1590,6 +2150,46 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
 
   const selectedMachineOption = useMemo(() => machineOptions.find((machine) => machine.value === filters.machine), [machineOptions, filters.machine]);
 
+  function machineForRecord(record) {
+    const recordMachineId = record.machine_config_id === null || record.machine_config_id === undefined ? "" : String(record.machine_config_id);
+    const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
+    return machines.find((machine) => String(machine.id) === recordMachineId) || machines.find((machine) => String(machine.machine_name || "").trim().toLowerCase() === recordMachineName) || null;
+  }
+
+  function activeFieldsForRecord(record) {
+    const machine = machineForRecord(record);
+    return machine ? normalizeFields(machine.fields) : [];
+  }
+
+  function recordFieldIsActive(record, key) {
+    const machine = machineForRecord(record);
+    if (!machine) return true;
+    const fields = normalizeFields(machine.fields);
+    if (key === "reading_value" && record.reading_value !== null && record.reading_value !== undefined) {
+      return fields.some((field) => field.mapsTo === "reading_value" || field.id === "reading_value");
+    }
+    if (["product", "batch_number", "remarks"].includes(key)) {
+      return fields.some((field) => field.mapsTo === key || field.id === key);
+    }
+    return fields.some((field) => field.id === key);
+  }
+
+  function cleanRecordValue(record, key) {
+    if (!recordFieldIsActive(record, key)) return "—";
+    if (key === "reading_value") return formatNumber(record.reading_value);
+    if (key === "product") return record.product || "—";
+    if (key === "batch_number") return record.batch_number || "—";
+    if (key === "remarks") return record.remarks || "—";
+    const value = record.response_fields?.[key];
+    return value === null || value === undefined || value === "" ? "—" : String(value);
+  }
+
+  function activeResponseText(record) {
+    const fields = activeFieldsForRecord(record);
+    if (!fields.length) return "";
+    return fields.map((field) => cleanRecordValue(record, field.id)).filter((value) => value && value !== "—").join(" ");
+  }
+
   const filteredRecords = useMemo(() => {
     const search = filters.search.trim().toLowerCase();
     return records.filter((record) => {
@@ -1601,15 +2201,23 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
         const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
         return ((selectedMachineOption.id && recordMachineId === selectedMachineOption.id) || (selectedMachineOption.name && recordMachineName === selectedMachineOption.name.trim().toLowerCase()));
       })();
-      const haystack = [record.operator_name, record.site_name, record.machine_name, record.reading_value, record.product, record.batch_number, record.remarks, JSON.stringify(record.response_fields || {})].join(" ").toLowerCase();
+      const haystack = [
+        record.operator_name,
+        record.site_name,
+        record.machine_name,
+        cleanRecordValue(record, "reading_value"),
+        cleanRecordValue(record, "product"),
+        cleanRecordValue(record, "batch_number"),
+        cleanRecordValue(record, "remarks"),
+        activeResponseText(record),
+      ].join(" ").toLowerCase();
       return machineMatch && siteMatch && dateMatch && (!search || haystack.includes(search));
     });
-  }, [records, filters, selectedMachineOption]);
+  }, [records, filters, selectedMachineOption, machines]);
 
   const filteredSummary = useMemo(() => summarizeRecords(filteredRecords), [filteredRecords]);
   const hasFilters = Object.values(filters).some(Boolean);
   const activeSummary = hasFilters ? filteredSummary : summary;
-  const selectedArea = filters.site || siteOptions[0];
   const bellCount = 0;
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
@@ -1638,10 +2246,9 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
 
   function statCards() {
     return [
-      { key: "total", title: "Total", value: activeSummary?.total_submissions ?? 0, subtitle: "All submissions", icon: "list", tone: "blue" },
-      { key: "ops", title: "Operators", value: activeSummary?.unique_operators ?? 0, subtitle: "Active operators", icon: "user", tone: "green" },
-      { key: "sav", title: "Savoury", value: activeSummary?.savoury_count ?? 0, subtitle: "Savoury submissions", icon: "bowl", tone: "purple" },
-      { key: "dre", title: "Dressings", value: activeSummary?.dressings_count ?? 0, subtitle: "Dressings submissions", icon: "bottle", tone: "orange" },
+      { key: "total", title: "Total", value: activeSummary?.total_submissions ?? 0, subtitle: "All submissions", icon: "list", tone: "blue", site: "" },
+      { key: "sav", title: "Savoury", value: activeSummary?.savoury_count ?? 0, subtitle: "Savoury submissions", icon: "bowl", tone: "purple", site: "Savoury" },
+      { key: "dre", title: "Dressings", value: activeSummary?.dressings_count ?? 0, subtitle: "Dressings submissions", icon: "bottle", tone: "orange", site: "Dressings" },
     ];
   }
 
@@ -1660,12 +2267,6 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
     if (name === "bowl") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14a7 7 0 0 1-14 0Zm5-5c0 1 .5 1.5 1.5 2.5M14 6c0 1 .5 1.5 1.5 2.5" /></svg>;
     if (name === "bottle") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h4m-3 0v3l-3 4v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-7l-3-4V4" /></svg>;
     if (name === "clipboard") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l1 2h2v14H6V6h2l1-2Zm0 5h6M9 13h6M9 17h4" /></svg>;
-    if (name === "machine") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v8H4zM7 8V5h10v3M7 16v3M17 16v3" /></svg>;
-    if (name === "trend") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17V7m0 10h16M7 14l4-4 3 2 4-5" /></svg>;
-    if (name === "settings") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 0 0 12 8.5Zm8 3.5-.9-.3a7.9 7.9 0 0 0-.5-1.2l.5-.8-1.7-1.7-.8.5c-.4-.2-.8-.4-1.2-.5L15 5h-6l-.3.9c-.4.1-.8.3-1.2.5l-.8-.5-1.7 1.7.5.8c-.2.4-.4.8-.5 1.2L4 12l.9.3c.1.4.3.8.5 1.2l-.5.8 1.7 1.7.8-.5c.4.2.8.4 1.2.5L9 19h6l.3-.9c.4-.1.8-.3 1.2-.5l.8.5 1.7-1.7-.5-.8c.2-.4.4-.8.5-1.2L20 12Z" /></svg>;
-    if (name === "register") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19a5 5 0 0 0-10 0m5-8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 8v-6m-3 3h6" /></svg>;
-    if (name === "logs") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12v14H6zM9 9h6M9 13h6M9 17h4" /></svg>;
-    if (name === "logout") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 17l5-5-5-5M20 12H9M12 19H5V5h7" /></svg>;
     return null;
   }
 
@@ -1673,100 +2274,107 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
     <main className="factory-logs-page">
       <FactoryTopNav activePage="logs" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={filters.date} onDateChange={(value) => updateFilter("date", value)} warningCount={bellCount} />
 
-      <section className="logs-dashboard-shell compact-logs-layout">
-        <section className="logs-main-panel">
-          <div className="logs-stats-row">
-            {statCards().map((card) => (
-              <article key={card.key} className={`logs-stat-card tone-${card.tone}`}>
-                <div className="logs-stat-icon"><Icon name={card.icon} /></div>
-                <div>
-                  <strong>{Number(card.value || 0).toLocaleString("en-US")}</strong>
-                  <b>{card.title}</b>
-                  <span>{card.subtitle}</span>
-                </div>
-              </article>
-            ))}
+      <section className="logs-dashboard-shell logs-split-dashboard">
+        <aside className="logs-filter-panel">
+          <div className="logs-filter-panel-head">
+            <div><p className="eyebrow">Filters</p><h1>Logs</h1></div>
+            <button className="logs-refresh-button small" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
           </div>
 
-          <section className="logs-records-card">
-            <div className="logs-records-head">
-              <div><h1><Icon name="clipboard" />Submission Records</h1></div>
-              <button className="logs-refresh-button" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button>
-            </div>
+          <div className="logs-stats-row logs-stats-column">
+            {statCards().map((card) => {
+              const active = card.site ? filters.site === card.site : !filters.site;
+              return (
+                <button key={card.key} type="button" className={`logs-stat-card tone-${card.tone} ${active ? "active" : ""}`} onClick={() => card.site ? toggleSiteFilter(card.site) : updateFilter("site", "") }>
+                  <div className="logs-stat-icon"><Icon name={card.icon} /></div>
+                  <div>
+                    <strong>{Number(card.value || 0).toLocaleString("en-US")}</strong>
+                    <b>{card.title}</b>
+                    <span>{card.subtitle}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
 
-            <div className="logs-filters-grid">
-              <label className="logs-search-input">
-                <input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search by operator, product, batch..." />
-                <span>⌕</span>
-              </label>
-              <label>
-                <span>Machine</span>
-                <select value={filters.machine} onChange={(event) => updateFilter("machine", event.target.value)}>
-                  <option value="">All Machines</option>
-                  {machineOptions.map((machine) => <option key={machine.value} value={machine.value}>{machine.label}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>Site</span>
-                <select value={filters.site} onChange={(event) => updateFilter("site", event.target.value)}>
-                  <option value="">All Sites</option>
-                  {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>Date</span>
-                <input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} />
-              </label>
-            </div>
-
-            <div className="logs-active-filters-row">
-              <div className="logs-filter-chips">
-                {filters.date && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("date", "")}>Date: {filters.date}<i>×</i></button>}
-                {filters.machine && selectedMachineOption && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("machine", "")}>Machine: {selectedMachineOption.label}<i>×</i></button>}
-                {filters.site && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("site", "")}>Site: {filters.site}<i>×</i></button>}
-                {filters.search && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("search", "")}>Search: {filters.search}<i>×</i></button>}
-                {!hasFilters && <span className="logs-filter-hint">No active filters</span>}
-              </div>
-              <button className="logs-clear-all" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear All</button>
-            </div>
-
-            {message && <p className="message">{message}</p>}
-
-            <div className="logs-table-wrap">
-              <table className="logs-table">
-                <thead>
-                  <tr><th>When</th><th>Operator</th><th>Site</th><th>Machine</th><th>Reading</th><th>Product</th><th>Batch</th><th>Remarks</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {!paginatedRecords.length ? (
-                    <tr><td colSpan="9" className="logs-empty-cell">No submissions found for the current filters.</td></tr>
-                  ) : paginatedRecords.map((record) => (
-                    <tr key={record.id}>
-                      <td><div className="logs-when-cell"><span className="logs-cell-icon small">◷</span><span>{formatDateTime(record.record_timestamp)}</span></div></td>
-                      <td><div className="logs-operator-cell"><span className="logs-avatar">{initials(record.operator_name)}</span><span>{record.operator_name || "—"}</span></div></td>
-                      <td>{record.site_name || "—"}</td>
-                      <td>{record.machine_name || "—"}</td>
-                      <td>{formatNumber(record.reading_value)}</td>
-                      <td><span className={`logs-product-chip ${(record.site_name || "").toLowerCase().includes("dress") ? "dressings" : "savoury"}`}>{record.product || "—"}</span></td>
-                      <td>{record.batch_number || "—"}</td>
-                      <td>{record.remarks || "—"}</td>
-                      <td><span className="logs-row-status">✓</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="logs-table-footer">
-              <span>Showing {filteredRecords.length ? pageStart + 1 : 0} to {pageEnd} of {filteredRecords.length.toLocaleString("en-US")} records</span>
-              <div className="logs-pagination">
-                <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safePage <= 1}>‹</button>
-                {pageNumbers().map((item, index) => item === "…" ? <span key={`ellipsis-${index}`} className="ellipsis">…</span> : <button key={item} type="button" className={item === safePage ? "active" : ""} onClick={() => setCurrentPage(item)}>{item}</button>)}
-                <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safePage >= totalPages}>›</button>
-                <span className="logs-page-size">{pageSize} / page</span>
+          <div className="logs-side-filters">
+            <label className="logs-search-input">
+              <span>Search</span>
+              <input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Operator, product, batch..." />
+            </label>
+            <label>
+              <span>Machine</span>
+              <select value={filters.machine} onChange={(event) => updateFilter("machine", event.target.value)}>
+                <option value="">All Machines</option>
+                {machineOptions.map((machine) => <option key={machine.value} value={machine.value}>{machine.label}</option>)}
+              </select>
+            </label>
+            <div className="logs-site-filter-group">
+              <span>Site</span>
+              <div className="logs-site-buttons">
+                <button type="button" className={!filters.site ? "active" : ""} onClick={() => updateFilter("site", "")}>All</button>
+                {siteOptions.map((site) => <button key={site} type="button" className={filters.site === site ? "active" : ""} onClick={() => toggleSiteFilter(site)}>{site}</button>)}
               </div>
             </div>
-          </section>
+            <label>
+              <span>Date</span>
+              <input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} />
+            </label>
+          </div>
+
+          <div className="logs-active-filters-row logs-side-active-filters">
+            <div className="logs-filter-chips">
+              {filters.date && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("date", "")}>Date: {filters.date}<i>×</i></button>}
+              {filters.machine && selectedMachineOption && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("machine", "")}>Machine: {selectedMachineOption.label}<i>×</i></button>}
+              {filters.site && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("site", "")}>Site: {filters.site}<i>×</i></button>}
+              {filters.search && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("search", "")}>Search: {filters.search}<i>×</i></button>}
+              {!hasFilters && <span className="logs-filter-hint">No active filters</span>}
+            </div>
+            <button className="logs-clear-all" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear All</button>
+          </div>
+        </aside>
+
+        <section className="logs-records-card logs-results-card">
+          <div className="logs-records-head">
+            <div><h1><Icon name="clipboard" />Submission Records</h1><p>{filteredRecords.length.toLocaleString("en-US")} clean records shown</p></div>
+          </div>
+
+          {message && <p className="message">{message}</p>}
+
+          <div className="logs-table-wrap">
+            <table className="logs-table">
+              <thead>
+                <tr><th>When</th><th>Operator</th><th>Site</th><th>Machine</th><th>Reading</th><th>Product</th><th>Batch</th><th>Remarks</th><th></th></tr>
+              </thead>
+              <tbody>
+                {!paginatedRecords.length ? (
+                  <tr><td colSpan="9" className="logs-empty-cell">No submissions found for the current filters.</td></tr>
+                ) : paginatedRecords.map((record) => (
+                  <tr key={record.id}>
+                    <td><div className="logs-when-cell"><span className="logs-cell-icon small">◷</span><span>{formatDateTime(record.record_timestamp)}</span></div></td>
+                    <td><div className="logs-operator-cell"><span className="logs-avatar">{initials(record.operator_name)}</span><span>{record.operator_name || "—"}</span></div></td>
+                    <td>{record.site_name || "—"}</td>
+                    <td>{record.machine_name || "—"}</td>
+                    <td>{cleanRecordValue(record, "reading_value")}</td>
+                    <td><span className={`logs-product-chip ${(record.site_name || "").toLowerCase().includes("dress") ? "dressings" : "savoury"}`}>{cleanRecordValue(record, "product")}</span></td>
+                    <td>{cleanRecordValue(record, "batch_number")}</td>
+                    <td>{cleanRecordValue(record, "remarks")}</td>
+                    <td><span className="logs-row-status">✓</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="logs-table-footer">
+            <span>Showing {filteredRecords.length ? pageStart + 1 : 0} to {pageEnd} of {filteredRecords.length.toLocaleString("en-US")} records</span>
+            <div className="logs-pagination">
+              <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safePage <= 1}>‹</button>
+              {pageNumbers().map((item, index) => item === "…" ? <span key={`ellipsis-${index}`} className="ellipsis">…</span> : <button key={item} type="button" className={item === safePage ? "active" : ""} onClick={() => setCurrentPage(item)}>{item}</button>)}
+              <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safePage >= totalPages}>›</button>
+              <span className="logs-page-size">{pageSize} / page</span>
+            </div>
+          </div>
         </section>
       </section>
     </main>
@@ -1841,22 +2449,30 @@ function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLo
 function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
   const [machines, setMachines] = useState([]);
   const [form, setForm] = useState(emptyMachineForm);
-  const [selectedCalloutId, setSelectedCalloutId] = useState(defaultCallouts[0].id);
+  const [selectedCalloutId, setSelectedCalloutId] = useState("");
   const [markMode, setMarkMode] = useState(null);
   const [manageMode, setManageMode] = useState(null);
+  const [selectedVariableId, setSelectedVariableId] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState("Autosave ready");
   const autosaveTimerRef = useRef(null);
   const skipAutosaveRef = useRef(true);
+  const systemImageMap = useFittedImageCanvas(form.image_data_url, 18);
 
   function normalizeMachineForm(machine) {
+    const fields = normalizeFields(machine?.fields).map((field) => ({
+      ...field,
+      label: stripMachinePrefixLabel(field.label, machine?.machine_name),
+    }));
+    const callouts = cleanCalloutsForFields(machine?.callouts, fields);
+
     return {
       ...emptyMachineForm,
       ...machine,
       details: machine?.details || "",
-      fields: normalizeFields(machine?.fields),
-      callouts: normalizeCallouts(machine?.callouts),
+      fields,
+      callouts,
       threshold_min: machine?.threshold_min ?? "",
       threshold_max: machine?.threshold_max ?? "",
     };
@@ -1872,6 +2488,7 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     setSelectedCalloutId("");
     setMarkMode(null);
     setManageMode(null);
+    setSelectedVariableId("");
     setMessage("New setup ready.");
     setAutosaveStatus("Enter a machine name to autosave");
   }
@@ -1881,10 +2498,71 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
   }
 
   function updateField(index, key, value) {
+    setForm((current) => {
+      const oldField = current.fields[index];
+      if (!oldField) return current;
+
+      const nextFields = current.fields.map((field, i) => {
+        if (i !== index) return field;
+        if (key === "id") {
+          const nextId = normalizeVariableKey(value, oldField.id || `variable_${index + 1}`);
+          return { ...field, id: nextId };
+        }
+        return { ...field, [key]: value };
+      });
+
+      const nextField = nextFields[index];
+      const nextCallouts = current.callouts.map((callout) => {
+        if (String(callout.valueKey) !== String(oldField.id)) return callout;
+        if (key === "id") return { ...callout, id: `callout-${nextField.id}`, valueKey: nextField.id };
+        if (key === "label") return { ...callout, title: value || nextField.id };
+        return callout;
+      });
+
+      if (key === "id") setSelectedVariableId(nextField.id);
+      return { ...current, fields: nextFields, callouts: nextCallouts };
+    });
+  }
+
+  function updateFieldType(index, value) {
     setForm((current) => ({
       ...current,
-      fields: current.fields.map((field, i) => (i === index ? { ...field, [key]: value } : field)),
+      fields: current.fields.map((field, i) => {
+        if (i !== index) return field;
+        const next = { ...field, type: value };
+        if (value === "option" && !splitFieldOptions(next.options ?? next.optionsText).length) {
+          next.options = ["Yes", "No"];
+          next.optionsText = "Yes\nNo";
+        }
+        if (value !== "number") next.thresholdEnabled = false;
+        return next;
+      }),
     }));
+  }
+
+  function updateFieldOptions(index, value) {
+    setForm((current) => ({
+      ...current,
+      fields: current.fields.map((field, i) => (
+        i === index ? { ...field, optionsText: value, options: splitFieldOptions(value) } : field
+      )),
+    }));
+  }
+
+  function updateFieldCategory(index, categoryValue) {
+    setForm((current) => {
+      const oldField = current.fields[index];
+      if (!oldField) return current;
+      const nextField = applyCategoryToField(oldField, categoryValue, current.fields);
+      const nextFields = current.fields.map((field, i) => (i === index ? nextField : field));
+      const nextCallouts = current.callouts.map((callout) => {
+        if (String(callout.valueKey) !== String(oldField.id)) return callout;
+        return { ...callout, id: `callout-${nextField.id}`, valueKey: nextField.id, title: nextField.label };
+      });
+      setSelectedVariableId(nextField.id);
+      setSelectedCalloutId(`callout-${nextField.id}`);
+      return { ...current, fields: nextFields, callouts: cleanCalloutsForFields(nextCallouts, nextFields) };
+    });
   }
 
   function updateCallout(index, key, value) {
@@ -1909,6 +2587,7 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     setSelectedCalloutId(next.callouts[0]?.id || "");
     setMarkMode(null);
     setManageMode(null);
+    setSelectedVariableId(next.fields[0]?.id || "");
     setMessage("");
     setAutosaveStatus("Saved");
   }
@@ -1924,7 +2603,14 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     try {
       setSaving(true);
       if (silent) setAutosaveStatus("Saving...");
-      const payload = { ...sourceForm, machine_name: cleanMachineName, details: "" };
+      const cleanFields = normalizeFields(sourceForm.fields);
+      const payload = {
+        ...sourceForm,
+        machine_name: cleanMachineName,
+        details: "",
+        fields: cleanFields,
+        callouts: cleanCalloutsForFields(sourceForm.callouts, cleanFields),
+      };
       const data = await fetchJson("/api/admin/machines", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1958,7 +2644,7 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      setMessage("Preparing image...");
+      setMessage("Preparing image and resizing it...");
       const compactImage = await imageFileToCompactDataUrl(file);
       updateForm("image_data_url", compactImage);
       setMessage("Image ready. Autosaving...");
@@ -1969,10 +2655,12 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
 
   function beginMarking(calloutId, mode) {
     const callout = form.callouts.find((item) => item.id === calloutId);
+    const field = form.fields.find((item) => String(item.id) === String(callout?.valueKey));
     setSelectedCalloutId(calloutId);
+    if (field) setSelectedVariableId(field.id);
     setMarkMode(mode);
-    setManageMode("callouts");
-    setMessage(mode === "card" ? `Place the ${callout?.title || "callout"} card on the map.` : `Mark the machine point for ${callout?.title || "this callout"}.`);
+    setManageMode("variable");
+    setMessage(mode === "card" ? `Place the ${field?.label || callout?.title || "variable"} card on the map.` : `Mark the machine point for ${field?.label || callout?.title || "this variable"}.`);
   }
 
   function handlePreviewClick(event) {
@@ -2019,113 +2707,232 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     if (machine) editMachine(machine);
   }
 
+  function getCalloutForField(field) {
+    if (!field) return null;
+    return form.callouts.find((callout) => String(callout.valueKey) === String(field.id)) || null;
+  }
+
+  function openVariable(fieldId) {
+    const field = form.fields.find((item) => String(item.id) === String(fieldId));
+    if (!field) return;
+    setSelectedVariableId(field.id);
+    const existing = getCalloutForField(field);
+    if (existing) {
+      setSelectedCalloutId(existing.id);
+    } else {
+      const next = makeCalloutForField(field, form.fields.findIndex((item) => item.id === field.id));
+      setForm((current) => ({ ...current, callouts: [...current.callouts, next] }));
+      setSelectedCalloutId(next.id);
+    }
+    setManageMode("variable");
+    setMarkMode(null);
+  }
+
+  function addVariable() {
+    const existingCategories = new Set(form.fields.map((field) => variableCategoryFromField(field)?.value));
+    let nextCategory = "parameter";
+    if (!existingCategories.has("status")) nextCategory = "status";
+    else if (!existingCategories.has("mode")) nextCategory = "mode";
+    const field = makeFieldFromCategory(nextCategory, form.fields);
+    const callout = makeCalloutForField(field, form.fields.length);
+    setForm((current) => ({
+      ...current,
+      fields: [...current.fields, field],
+      callouts: cleanCalloutsForFields([...current.callouts, callout], [...current.fields, field]),
+    }));
+    setSelectedVariableId(field.id);
+    setSelectedCalloutId(callout.id);
+    setManageMode("variable");
+    setMarkMode(null);
+  }
+
+  function ensureVariableCallout(field) {
+    if (!field) return null;
+    const existing = getCalloutForField(field);
+    if (existing) return existing;
+    const next = makeCalloutForField(field, form.fields.findIndex((item) => item.id === field.id));
+    updateForm("callouts", [...form.callouts, next]);
+    return next;
+  }
+
+  function removeVariable(fieldId) {
+    const field = form.fields.find((item) => String(item.id) === String(fieldId));
+    if (!field) return;
+    setForm((current) => ({
+      ...current,
+      fields: current.fields.filter((item) => String(item.id) !== String(fieldId)),
+      callouts: current.callouts.filter((callout) => String(callout.valueKey) !== String(fieldId)),
+    }));
+    setSelectedVariableId("");
+    setSelectedCalloutId("");
+    setMarkMode(null);
+    setManageMode(null);
+  }
+
   function addField() {
-    updateForm("fields", [
-      ...form.fields,
-      { id: uid("field"), label: "New Field", type: "text", aiTarget: "", required: false, mapsTo: "custom", thresholdEnabled: false, threshold_min: "", threshold_max: "" },
-    ]);
+    addVariable();
   }
 
   function addCallout() {
-    const next = { id: uid("callout"), title: "New Callout", valueKey: "reading_value", cardX: 30, cardY: 30, pointX: 50, pointY: 50, x: 50, y: 50 };
-    updateForm("callouts", [...form.callouts, next]);
-    setSelectedCalloutId(next.id);
-    setMarkMode(null);
+    addVariable();
   }
 
   function previewCardMeta(callout) {
     const mappedField = form.fields.find((field) => String(field.id) === String(callout.valueKey));
-    const readingField = form.fields.find((field) => field.mapsTo === "reading_value");
-    const fallbackMin = readingField?.threshold_min || form.threshold_min || "67.0";
-    const fallbackMax = readingField?.threshold_max || form.threshold_max || "69.0";
-    const defaultRange = `Range: ${fallbackMin} – ${fallbackMax}`;
-
-    if (callout.valueKey === "reading_value") return { title: callout.title || "Reading Value", value: "333", unit: "", detail: defaultRange, tone: "warning", icon: "" };
-    if (callout.valueKey === "machine_name") return { title: callout.title || "Machine", value: form.machine_name || "Machine", unit: "", detail: "Range: — — —", tone: "success", icon: "" };
-    if (callout.valueKey === "site_name") return { title: callout.title || "Site", value: form.site_name || "Site", unit: "", detail: "Range: — — —", tone: "success", icon: "" };
-    if (callout.valueKey === "total_submissions") return { title: callout.title || "Total Submissions", value: "—", unit: "", detail: "Range: — — —", tone: "success", icon: "" };
-    return { title: callout.title || mappedField?.label || "Callout", value: mappedField?.label || callout.valueKey || "Value", unit: "", detail: "Range: — — —", tone: "success", icon: "" };
+    const title = mappedField ? visibleVariableName(mappedField, form.machine_name) : (callout.title || "Value");
+    const min = mappedField?.thresholdEnabled ? mappedField.threshold_min : "";
+    const max = mappedField?.thresholdEnabled ? mappedField.threshold_max : "";
+    const detail = min || max ? `Range: ${min || "—"} – ${max || "—"}` : "Range: — — —";
+    return {
+      title,
+      value: "—",
+      unit: "",
+      detail,
+      tone: mappedField?.thresholdEnabled ? "warning" : "success",
+      icon: "",
+    };
   }
 
-  function renderFieldsEditor() {
-    return (
-      <div className="system-inline-editor">
-        <div className="system-inline-editor-head">
-          <button className="ghost-button small" type="button" onClick={() => setManageMode(null)}>← Back</button>
-          <div><p className="eyebrow">Edit</p><h2>Input Fields</h2></div>
-          <button className="secondary-button small" type="button" onClick={addField}>Add Field</button>
+  function renderVariableEditor() {
+    const fieldIndex = form.fields.findIndex((field) => String(field.id) === String(selectedVariableId));
+    const field = form.fields[fieldIndex];
+    const callout = getCalloutForField(field);
+
+    if (!field) {
+      return (
+        <div className="system-inline-editor variable-editor-empty">
+          <div className="system-inline-editor-head">
+            <button className="ghost-button small" type="button" onClick={() => setManageMode(null)}>← Back</button>
+            <div><p className="eyebrow">Variable</p><h2>No variable selected</h2></div>
+            <button className="secondary-button small" type="button" onClick={addVariable}>Add Variable</button>
+          </div>
+          <div className="empty-state">Pick a variable from the list or add a new one.</div>
         </div>
-        <div className="system-inline-list">
-          {!form.fields.length && <div className="modal-empty">No fields yet.</div>}
-          {form.fields.map((field, index) => (
-            <div className="system-editor-row field-editor-row" key={field.id}>
-              <div className="field-editor-topline">
-                <input value={field.label} onChange={(event) => updateField(index, "label", event.target.value)} placeholder="Name" />
-                <label className="mini-check"><input type="checkbox" checked={field.required} onChange={(event) => updateField(index, "required", event.target.checked)} /> Required</label>
-                <label className="mini-check"><input type="checkbox" checked={Boolean(field.thresholdEnabled)} onChange={(event) => updateField(index, "thresholdEnabled", event.target.checked)} disabled={field.type !== "number"} /> Limit</label>
-              </div>
-              <div className="field-editor-mapline">
-                <select value={field.type} onChange={(event) => updateField(index, "type", event.target.value)}>
-                  <option value="text">Text</option>
-                  <option value="number">Number</option>
-                  <option value="textarea">Paragraph</option>
-                  <option value="image">Image</option>
-                </select>
-                <select value={field.mapsTo} onChange={(event) => updateField(index, "mapsTo", event.target.value)}>
-                  <option value="custom">Custom</option>
-                  <option value="reading_value">Reading</option>
-                  <option value="product">Product</option>
-                  <option value="batch_number">Batch</option>
-                  <option value="remarks">Remarks</option>
-                </select>
-              </div>
-              <div className="field-editor-limitsline">
-                <input className="ai-target-mini" value={field.aiTarget || ""} onChange={(event) => updateField(index, "aiTarget", event.target.value)} placeholder="Target" disabled={field.type !== "image"} title="Text to find in the image, like target" />
-                <input type="number" step="any" value={field.threshold_min ?? ""} onChange={(event) => updateField(index, "threshold_min", event.target.value)} placeholder="Min" disabled={field.type !== "number" || !field.thresholdEnabled} />
-                <input type="number" step="any" value={field.threshold_max ?? ""} onChange={(event) => updateField(index, "threshold_max", event.target.value)} placeholder="Max" disabled={field.type !== "number" || !field.thresholdEnabled} />
-              </div>
-              <button className="ghost-button danger small field-remove-button" type="button" onClick={() => updateForm("fields", form.fields.filter((_, i) => i !== index))}>Remove</button>
+      );
+    }
+
+    const activeCallout = callout || makeCalloutForField(field, fieldIndex);
+
+    function handleVariableIdChange(value) {
+      updateField(fieldIndex, "id", value);
+    }
+
+    function handlePlace(mode) {
+      const nextCallout = ensureVariableCallout(field) || activeCallout;
+      setSelectedCalloutId(nextCallout.id);
+      beginMarking(nextCallout.id, mode);
+    }
+
+    function categoryDropdownValue() {
+      const category = variableCategoryFromField(field)?.value || "parameter";
+      if (category !== "parameter") return category;
+      return field.id || `parameter_${getParameterNumberFromField(field) || 1}`;
+    }
+
+    function parameterChoices() {
+      return normalizeFields(form.fields)
+        .filter((item) => variableCategoryFromField(item)?.value === "parameter")
+        .map((item, index) => ({ value: item.id, label: item.label || `Parameter ${index + 1}` }));
+    }
+
+    function handleCategoryDropdown(value) {
+      if (value === "add_parameter") {
+        const parameterField = makeFieldFromCategory("parameter", form.fields);
+        const parameterCallout = makeCalloutForField(parameterField, form.fields.length);
+        setForm((current) => ({
+          ...current,
+          fields: [...current.fields, parameterField],
+          callouts: cleanCalloutsForFields([...current.callouts, parameterCallout], [...current.fields, parameterField]),
+        }));
+        setSelectedVariableId(parameterField.id);
+        setSelectedCalloutId(parameterCallout.id);
+        return;
+      }
+
+      if (value === "status" || value === "mode" || value === "parameter") {
+        updateFieldCategory(fieldIndex, value);
+        return;
+      }
+
+      const target = form.fields.find((item) => String(item.id) === String(value));
+      if (target) openVariable(target.id);
+    }
+
+    return (
+      <div className="system-inline-editor variable-editor-panel">
+        <div className="system-inline-editor-head">
+          <button className="ghost-button small" type="button" onClick={() => { setManageMode(null); setMarkMode(null); }}>← Back</button>
+          <div><p className="eyebrow">Variable Setup</p><h2>{field.label || field.id}</h2></div>
+          <button className="ghost-button danger small" type="button" onClick={() => removeVariable(field.id)}>Remove</button>
+        </div>
+
+        <div className="variable-editor-body">
+          <label>Variable category
+            <select value={categoryDropdownValue()} onChange={(event) => handleCategoryDropdown(event.target.value)}>
+              <option value="status">Status</option>
+              <option value="mode">Mode</option>
+              {parameterChoices().map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              <option value="add_parameter">+ Add Parameter</option>
+            </select>
+          </label>
+          <label>User label
+            <input value={field.label} onChange={(event) => updateField(fieldIndex, "label", event.target.value)} placeholder="Status" />
+          </label>
+          <label>Database key
+            <input value={field.id} onChange={(event) => handleVariableIdChange(event.target.value)} placeholder="status" />
+          </label>
+
+          <label>Input type
+            <select value={field.type} onChange={(event) => updateFieldType(fieldIndex, event.target.value)}>
+              <option value="text">Text</option>
+              <option value="number">Number</option>
+              <option value="textarea">Paragraph</option>
+              <option value="option">Option</option>
+              <option value="image">Image</option>
+            </select>
+          </label>
+
+          <div className="variable-switch-row compact-switch-row">
+            <label className="check-pill"><input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(fieldIndex, "required", event.target.checked)} /> Required</label>
+            <label className="check-pill"><input type="checkbox" checked={Boolean(field.thresholdEnabled)} onChange={(event) => updateField(fieldIndex, "thresholdEnabled", event.target.checked)} disabled={field.type !== "number"} /> Limit</label>
+          </div>
+
+          {field.type === "option" && (
+            <label>Choices
+              <textarea rows="4" value={field.optionsText ?? optionsToText(field.options)} onChange={(event) => updateFieldOptions(fieldIndex, event.target.value)} placeholder={"Lock\nUnlock\nOpen\nClose"} />
+            </label>
+          )}
+
+          {field.type === "image" && (
+            <label>Target / Targets
+              <input value={field.aiTarget || ""} onChange={(event) => updateField(fieldIndex, "aiTarget", event.target.value)} placeholder="target or targets" />
+            </label>
+          )}
+
+          <div className="variable-editor-two compact-threshold-grid">
+            <label>Min
+              <input type="number" step="any" value={field.threshold_min ?? ""} onChange={(event) => updateField(fieldIndex, "threshold_min", event.target.value)} placeholder="Min" disabled={field.type !== "number" || !field.thresholdEnabled} />
+            </label>
+            <label>Max
+              <input type="number" step="any" value={field.threshold_max ?? ""} onChange={(event) => updateField(fieldIndex, "threshold_max", event.target.value)} placeholder="Max" disabled={field.type !== "number" || !field.thresholdEnabled} />
+            </label>
+          </div>
+
+          <div className="variable-map-tools">
+            <div>
+              <strong>Point map</strong>
+              <span>Place the value card anywhere, then mark the machine point.</span>
             </div>
-          ))}
+            <div className="variable-map-buttons">
+              <button className="secondary-button small" type="button" onClick={() => handlePlace("card")}>Place Card</button>
+              <button className="secondary-button small" type="button" onClick={() => handlePlace("point")}>Mark Point</button>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
-  function renderCalloutsEditor() {
-    return (
-      <div className="system-inline-editor">
-        <div className="system-inline-editor-head">
-          <button className="ghost-button small" type="button" onClick={() => setManageMode(null)}>← Back</button>
-          <div><p className="eyebrow">Edit</p><h2>Callouts</h2></div>
-          <button className="secondary-button small" type="button" onClick={addCallout}>Add Callout</button>
-        </div>
-        <div className="system-inline-list">
-          {!form.callouts.length && <div className="modal-empty">No callouts yet.</div>}
-          {form.callouts.map((callout, index) => (
-            <div className={selectedCalloutId === callout.id ? "system-editor-row callout-editor-row selected" : "system-editor-row callout-editor-row"} key={callout.id}>
-              <div className="callout-editor-titleline">
-                <input value={callout.title} onChange={(event) => updateCallout(index, "title", event.target.value)} placeholder="Name" />
-                <button className="ghost-button danger small" type="button" onClick={() => { updateForm("callouts", form.callouts.filter((_, i) => i !== index)); if (selectedCalloutId === callout.id) setMarkMode(null); }}>Remove</button>
-              </div>
-              <div className="callout-editor-actionline">
-                <select value={callout.valueKey} onChange={(event) => updateCallout(index, "valueKey", event.target.value)}>
-                  <option value="reading_value">Reading</option>
-                  <option value="machine_name">Machine</option>
-                  <option value="site_name">Site</option>
-                  <option value="operator_name">Operator</option>
-                  <option value="total_submissions">Total</option>
-                  {form.fields.map((field) => <option key={field.id} value={field.id}>{field.label}</option>)}
-                </select>
-                <button className="secondary-button small" type="button" onClick={() => beginMarking(callout.id, "card")}>Place Card</button>
-                <button className="secondary-button small" type="button" onClick={() => beginMarking(callout.id, "point")}>Mark Point</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
 
   useEffect(() => {
     loadMachines(true).catch((error) => setMessage(error.message));
@@ -2157,13 +2964,16 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     };
   }, [form]);
 
+
+  const visibleCallouts = cleanCalloutsForFields(form.callouts, form.fields);
+
   return (
     <>
       <FactoryTopNav activePage="system" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} />
       <main className="system-builder-page app-gradient">
         <form className={manageMode ? "system-builder-shell system-builder-shell-editing" : "system-builder-shell"} onSubmit={handleSave}>
           <section className={manageMode ? "system-builder-form-card system-builder-form-card-editing" : "system-builder-form-card"}>
-            {manageMode === "fields" ? renderFieldsEditor() : manageMode === "callouts" ? renderCalloutsEditor() : (
+            {manageMode === "variable" ? renderVariableEditor() : (
               <>
                 <div className="system-builder-card-head">
                   <div><p className="eyebrow">Setup</p><h1>Machine Builder</h1></div>
@@ -2183,9 +2993,34 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
                   </div>
                 </div>
 
-                <div className="system-builder-actions-list">
-                  <button type="button" onClick={() => setManageMode("fields")}><span>▤</span><strong>Input Fields</strong><b>{form.fields.length}</b></button>
-                  <button type="button" onClick={() => setManageMode("callouts")}><span>◎</span><strong>Callouts</strong><b>{form.callouts.length}</b></button>
+                <div className="system-variable-list-card">
+                  <div className="system-variable-list-head">
+                    <div>
+                      <p className="eyebrow">Variables</p>
+                      <strong>{form.fields.length} configured</strong>
+                    </div>
+                    <button className="secondary-button small" type="button" onClick={addVariable}>Add Variable</button>
+                  </div>
+                  <div className="system-variable-list">
+                    {!form.fields.length && <div className="empty-state">No variables yet. Add Status, Mode, or Parameters.</div>}
+                    {form.fields.map((field) => {
+                      const callout = getCalloutForField(field);
+                      return (
+                        <button
+                          type="button"
+                          key={field.id}
+                          className={String(selectedVariableId) === String(field.id) ? "system-variable-item active" : "system-variable-item"}
+                          onClick={() => openVariable(field.id)}
+                        >
+                          <span>
+                            <strong>{visibleVariableName(field, form.machine_name)}</strong>
+                            <small>{field.id}</small>
+                          </span>
+                          <em>{field.type}{callout ? " • mapped" : ""}</em>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="system-autosave-row">
@@ -2210,17 +3045,27 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
               </div>
             </div>
 
-            <div className={`${markMode ? "system-map-stage locating" : "system-map-stage"}${form.image_data_url ? "" : " system-map-stage-empty"}`}>
-              <div className={form.image_data_url ? "system-map-canvas" : "system-map-canvas system-map-canvas-empty"} onClick={handlePreviewClick}>
-                {form.image_data_url && <img src={form.image_data_url} alt="Machine preview" draggable="false" />}
+            <div ref={systemImageMap.stageRef} className={`${markMode ? "system-map-stage locating" : "system-map-stage"}${form.image_data_url ? "" : " system-map-stage-empty"}`}>
+              <div
+                className={form.image_data_url ? "system-map-canvas" : "system-map-canvas system-map-canvas-empty"}
+                onClick={handlePreviewClick}
+              >
+                {form.image_data_url && (
+                  <img
+                    src={form.image_data_url}
+                    alt="Machine preview"
+                    draggable="false"
+                    onLoad={systemImageMap.handleImageLoad}
+                  />
+                )}
                 {markMode && <div className="preview-crosshair-hint">{markMode === "card" ? "Click card location" : "Click machine point"}</div>}
                 <svg className="factory-line-layer system-connector-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  {form.image_data_url && form.callouts.map((callout) => {
+                  {form.image_data_url && visibleCallouts.map((callout) => {
                     const { point, card } = calloutLine(callout);
                     return <line key={`line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
                   })}
                 </svg>
-                {form.image_data_url && form.callouts.map((callout) => {
+                {form.image_data_url && visibleCallouts.map((callout) => {
                   const { point, card } = calloutLine(callout);
                   const active = selectedCalloutId === callout.id;
                   const meta = previewCardMeta(callout);
@@ -2388,7 +3233,7 @@ function TopBar({ user, page, setPage, onLogout }) {
 
 function RecordInputPage({ user }) {
   const [machines, setMachines] = useState([]);
-  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [selectedArea, setSelectedArea] = useState("All");
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [values, setValues] = useState({});
   const [records, setRecords] = useState([]);
@@ -2534,6 +3379,13 @@ function RecordInputPage({ user }) {
                     <input type="text" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={`AI value for ${field.aiTarget || field.label || "target"}`} required={field.required} />
                     <button className="secondary-button image-scan-button" type="button" onClick={() => setScanField(field)}>Image</button>
                   </div>
+                ) : field.type === "option" ? (
+                  <select className="option-answer-select" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} required={field.required}>
+                    <option value="">Select {field.label}</option>
+                    {splitFieldOptions(field.options ?? field.optionsText).map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
                 ) : (
                   <input type={field.type === "number" ? "number" : "text"} step="any" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={field.label} required={field.required} />
                 )}

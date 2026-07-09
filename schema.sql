@@ -176,8 +176,8 @@ CREATE TABLE IF NOT EXISTS app.machine_configs (
   image_data_url TEXT DEFAULT '',
   threshold_min NUMERIC,
   threshold_max NUMERIC,
-  fields JSONB NOT NULL DEFAULT '[{"id":"reading_value","label":"Reading Value","type":"number","required":true,"mapsTo":"reading_value"},{"id":"product","label":"Product","type":"text","required":false,"mapsTo":"product"},{"id":"batch_number","label":"Batch Number","type":"text","required":false,"mapsTo":"batch_number"},{"id":"remarks","label":"Remarks","type":"textarea","required":false,"mapsTo":"remarks"}]'::jsonb,
-  callouts JSONB NOT NULL DEFAULT '[{"id":"co-reading","title":"Reading Value","valueKey":"reading_value","cardX":23,"cardY":33,"pointX":43,"pointY":40,"x":43,"y":40},{"id":"co-machine","title":"Machine","valueKey":"machine_name","cardX":67,"cardY":27,"pointX":62,"pointY":32,"x":62,"y":32},{"id":"co-site","title":"Site","valueKey":"site_name","cardX":68,"cardY":72,"pointX":57,"pointY":65,"x":57,"y":65},{"id":"co-total","title":"Total Submissions","valueKey":"total_submissions","cardX":82,"cardY":79,"pointX":77,"pointY":74,"x":77,"y":74}]'::jsonb,
+  fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+  callouts JSONB NOT NULL DEFAULT '[]'::jsonb,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -196,6 +196,10 @@ ALTER TABLE app.machine_configs
   ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE,
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE app.machine_configs
+  ALTER COLUMN fields SET DEFAULT '[]'::jsonb,
+  ALTER COLUMN callouts SET DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_machine_configs_active_site
 ON app.machine_configs(active, site_name, machine_name);
