@@ -1184,3 +1184,90 @@ th { background: #fbfdff; color: #4d5d7a; font-weight: 950; }
   .clean-vs-grid,
   .logs-site-buttons { grid-template-columns: 1fr; }
 }
+
+/* Final trend cleanup: machine click selects trend, comparison list scrolls, current-only cards */
+.clean-compare-card {
+  max-height: 100%;
+  overflow: hidden;
+}
+.clean-vs-scroll-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 340px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: .48rem;
+  padding-right: .15rem;
+  align-content: start;
+}
+.compact-current-card {
+  padding: .5rem .55rem;
+}
+.clean-current-only {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .45rem .55rem;
+  border-radius: 8px;
+  background: #f6f9ff;
+}
+.clean-current-only span {
+  color: var(--muted);
+  font-size: .58rem;
+  font-weight: 950;
+}
+.clean-current-only b {
+  color: var(--text);
+  font-size: .8rem;
+  line-height: 1;
+}
+.clean-vs-scroll-list .clean-vs-card {
+  box-shadow: none;
+}
+.machine-only-picker {
+  max-height: 185px;
+  overflow: auto;
+  display: grid;
+  gap: .42rem;
+}
+.machine-only-picker .clean-picker-machine {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: .5rem;
+  text-align: left;
+  cursor: pointer;
+}
+.machine-only-picker .clean-picker-machine:hover,
+.machine-only-picker .clean-picker-machine.active {
+  border-color: rgba(15,107,255,.35);
+  background: #f8fbff;
+}
+.machine-only-picker .clean-picker-machine em {
+  font-style: normal;
+  font-size: .6rem;
+  font-weight: 950;
+  color: var(--blue);
+  padding: .2rem .42rem;
+  border-radius: 999px;
+  background: #eef5ff;
+}
+.clean-trends-workspace .trend-machine-tile {
+  cursor: pointer;
+}
+.clean-trends-workspace .trend-machine-tile.active {
+  border-color: rgba(15,107,255,.55);
+  box-shadow: 0 0 0 2px rgba(15,107,255,.12), 0 10px 20px rgba(15,107,255,.10);
+}
+.clean-compare-head,
+.clean-trends-head {
+  flex: 0 0 auto;
+}
+.clean-trends-graph-card {
+  overflow: hidden;
+}

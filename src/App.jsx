@@ -1445,7 +1445,7 @@ function TrendCompareChart({ seriesItems = [] }) {
 
   const allPoints = prepared.flatMap((series) => series.points);
   if (allPoints.length < 2 || !prepared.some((series) => series.points.length >= 2)) {
-    return <div className="trend-overview-empty">Add at least 2 numeric readings from any selected machine to draw a comparison.</div>;
+    return <div className="trend-overview-empty">Click a machine below to draw its trend.</div>;
   }
 
   const values = allPoints.map((point) => point.reading);
@@ -1772,13 +1772,12 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
   const [selectedArea, setSelectedArea] = useState("All");
   const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
   const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [selectedValueKey, setSelectedValueKey] = useState("reading_value");
   const [compareOpen, setCompareOpen] = useState(false);
   const [selectedSeries, setSelectedSeries] = useState([]);
   const [seriesTrendMap, setSeriesTrendMap] = useState({});
   const [machineTrendMap, setMachineTrendMap] = useState({});
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("Loading trends...");
+  const [message, setMessage] = useState("Click a machine to show its trend.");
   const [trendLimit, setTrendLimit] = useState("80");
 
   const machinesForArea = useMemo(
@@ -1788,24 +1787,15 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     [allMachines, selectedArea]
   );
 
-  const selectedPickerMachine = allMachines.find((machine) => String(machine.id) === String(selectedMachineId)) || machinesForArea[0] || allMachines[0] || null;
-  const currentMachineFieldOptions = selectedPickerMachine ? getTrendFieldOptions(selectedPickerMachine).filter((option) => option.key !== "reading_value" || option.label) : [];
+  const selectedMachineIds = useMemo(
+    () => new Set(selectedSeries.map((series) => String(series.machineId))),
+    [selectedSeries]
+  );
 
   async function loadMachines() {
     const machineData = await fetchJson("/api/machines");
     const machineList = machineData.machines || [];
     setAllMachines(machineList);
-
-    const areaMachines = selectedArea === "All" ? machineList : machineList.filter((machine) => String(machine.site_name || "").toLowerCase() === String(selectedArea).toLowerCase());
-    const pickerStillAvailable = machineList.some((machine) => String(machine.id) === String(selectedMachineId));
-    if (!pickerStillAvailable) setSelectedMachineId(String(areaMachines[0]?.id || machineList[0]?.id || ""));
-
-    if (!selectedSeries.length && areaMachines[0]) {
-      const field = preferredTrendField(areaMachines[0]);
-      setSelectedValueKey(field.key);
-      setSelectedSeries([{ id: `${areaMachines[0].id}:${field.key}`, machineId: String(areaMachines[0].id), valueKey: field.key, label: field.label, unit: field.unit }]);
-    }
-
     if (!machineList.length) setMessage("No machines configured yet.");
     return machineList;
   }
@@ -1858,42 +1848,46 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     setMachineTrendMap(Object.fromEntries(entries));
   }
 
-  async function refreshAll() {
-    try {
-      setLoading(true);
-      const machineList = await loadMachines();
-      await Promise.all([loadGridSummaries(machineList), loadSelectedSeries(machineList, selectedSeries)]);
-      setMessage(selectedSeries.length ? "Live comparison data from the database" : "Pick variables to compare.");
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
+  function machineSeries(machine) {
+    if (!machine) return [];
+    return getTrendFieldOptions(machine).map((field) => ({
+      id: `${machine.id}:${field.key}`,
+      machineId: String(machine.id),
+      valueKey: field.key,
+      label: field.label || "Reading",
+      unit: field.unit || "",
+    }));
   }
 
-  function addSelectedSeries(machine = selectedPickerMachine, field = null) {
-    if (!machine) return;
-    const pickedField = field || getTrendFieldOptions(machine).find((option) => option.key === selectedValueKey) || preferredTrendField(machine);
-    if (!pickedField) return;
-    const seriesId = `${machine.id}:${pickedField.key}`;
-    if (selectedSeries.some((series) => series.id === seriesId)) {
-      setMessage(`${machine.machine_name} • ${pickedField.label} is already in comparison.`);
-      return;
-    }
-    const nextSeries = [...selectedSeries, { id: seriesId, machineId: String(machine.id), valueKey: pickedField.key, label: pickedField.label, unit: pickedField.unit }];
+  function applySeries(nextSeries, nextMessage = "Trend updated.") {
     setSelectedSeries(nextSeries);
     loadSelectedSeries(allMachines, nextSeries).catch((error) => setMessage(error.message));
+    setMessage(nextMessage);
   }
 
-  function toggleSeriesSelection(machine, field) {
-    const seriesId = `${machine.id}:${field.key}`;
-    const existing = selectedSeries.some((series) => series.id === seriesId);
-    setSelectedValueKey(field.key);
-    if (existing) {
-      removeSelectedSeries(seriesId);
-      return;
+  function selectMachineTrend(machine) {
+    if (!machine) return;
+    const nextSeries = machineSeries(machine);
+    setSelectedMachineId(String(machine.id));
+    applySeries(nextSeries, `${machine.machine_name} trend selected.`);
+  }
+
+  function toggleMachineCompare(machine) {
+    if (!machine) return;
+    const id = String(machine.id);
+    const alreadySelected = selectedSeries.some((series) => String(series.machineId) === id);
+    let nextSeries;
+
+    if (alreadySelected) {
+      nextSeries = selectedSeries.filter((series) => String(series.machineId) !== id);
+    } else {
+      const existingIds = new Set(selectedSeries.map((series) => series.id));
+      const additions = machineSeries(machine).filter((series) => !existingIds.has(series.id));
+      nextSeries = [...selectedSeries, ...additions];
     }
-    addSelectedSeries(machine, field);
+
+    setSelectedMachineId(id);
+    applySeries(nextSeries, alreadySelected ? `${machine.machine_name} removed from comparison.` : `${machine.machine_name} added to comparison.`);
   }
 
   function removeSelectedSeries(seriesId) {
@@ -1904,37 +1898,39 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
       delete next[seriesId];
       return next;
     });
+    if (!nextSeries.length) setMessage("Click a machine to show its trend.");
   }
 
   function clearSelectedSeries() {
+    setSelectedMachineId("");
     setSelectedSeries([]);
     setSeriesTrendMap({});
-    setMessage("Comparison cleared. Pick variables again.");
+    setMessage("Click a machine to show its trend.");
+  }
+
+  async function refreshAll() {
+    try {
+      setLoading(true);
+      const machineList = await loadMachines();
+      await Promise.all([loadGridSummaries(machineList), loadSelectedSeries(machineList, selectedSeries)]);
+      setMessage(selectedSeries.length ? "Live trend data refreshed." : "Click a machine to show its trend.");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     loadMachines()
-      .then((machineList) => Promise.all([loadGridSummaries(machineList), loadSelectedSeries(machineList, selectedSeries)]))
+      .then((machineList) => loadGridSummaries(machineList))
       .catch((error) => setMessage(error.message));
   }, []);
 
   useEffect(() => {
     if (!allMachines.length) return;
-    const areaMachines = selectedArea === "All" ? allMachines : allMachines.filter((machine) => String(machine.site_name || "").toLowerCase() === String(selectedArea).toLowerCase());
-    setSelectedMachineId((current) => areaMachines.some((machine) => String(machine.id) === String(current)) ? current : String(areaMachines[0]?.id || allMachines[0]?.id || ""));
     loadGridSummaries(allMachines).catch((error) => setMessage(error.message));
   }, [selectedArea, allMachines.length]);
-
-  useEffect(() => {
-    if (!selectedPickerMachine) return;
-    const field = getTrendFieldOptions(selectedPickerMachine).find((option) => option.key === selectedValueKey) || preferredTrendField(selectedPickerMachine);
-    if (field?.key) setSelectedValueKey(field.key);
-  }, [selectedPickerMachine?.id]);
-
-  useEffect(() => {
-    if (allMachines.length && selectedSeries.length) loadSelectedSeries(allMachines, selectedSeries).catch((error) => setMessage(error.message));
-    if (!selectedSeries.length) setSeriesTrendMap({});
-  }, [selectedSeries, allMachines.length]);
 
   useEffect(() => {
     if (selectedSeries.length) loadSelectedSeries(allMachines, selectedSeries).catch((error) => setMessage(error.message));
@@ -1950,18 +1946,8 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     };
   }).filter((series) => series.machine);
 
-  const firstSeries = seriesItems[0] || null;
   const totalWarnings = seriesItems.reduce((sum, series) => sum + Number(series.data?.stats?.warning_count || 0), 0);
   const visibleMachines = machinesForArea;
-  const isAdmin = userRole(user) === "admin";
-
-  function go(target) {
-    if (target === "overview") return;
-    if (!setPage) return;
-    if (target === "alarms" || target === "reports") return setPage("logs");
-    if (target === "maintenance") return setPage(isAdmin ? "system" : "record");
-    setPage(target);
-  }
 
   return (
     <main className="factory-os-page factory-trends-page">
@@ -1973,7 +1959,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
             <div className="clean-trends-head">
               <div>
                 <p className="eyebrow">Trends</p>
-                <h2>{seriesItems.length ? `${seriesItems.length} selected data source${seriesItems.length > 1 ? "s" : ""}` : "No selected data source"}</h2>
+                <h2>{seriesItems.length ? `${seriesItems.length} selected data source${seriesItems.length > 1 ? "s" : ""}` : "No selected trend"}</h2>
               </div>
               <div className="clean-trends-controls">
                 <select value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Filter site">
@@ -1990,7 +1976,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
             <div className="clean-compare-head">
               <div>
                 <p className="eyebrow">Comparison</p>
-                <h2>{seriesItems.length ? `${seriesItems.length} VS` : "Pick machines"}</h2>
+                <h2>{selectedMachineIds.size ? `${selectedMachineIds.size} machine${selectedMachineIds.size > 1 ? "s" : ""}` : "No machine"}</h2>
               </div>
               <div className="clean-compare-actions">
                 <button className="secondary-button small" type="button" onClick={() => setCompareOpen((open) => !open)}>{compareOpen ? "Done" : "Compare"}</button>
@@ -1999,39 +1985,30 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
             </div>
 
             {compareOpen && (
-              <div className="clean-compare-picker">
+              <div className="clean-compare-picker machine-only-picker">
                 {!visibleMachines.length ? (
                   <p className="empty-state">No machines for this site.</p>
                 ) : visibleMachines.map((machine) => {
-                  const options = getTrendFieldOptions(machine);
+                  const active = selectedSeries.some((series) => String(series.machineId) === String(machine.id));
                   return (
-                    <article key={machine.id} className="clean-picker-machine">
+                    <button key={machine.id} type="button" className={active ? "clean-picker-machine active" : "clean-picker-machine"} onClick={() => toggleMachineCompare(machine)}>
                       <strong>{machine.machine_name}</strong>
                       <span>{machine.site_name || "—"}</span>
-                      <div>
-                        {options.map((option) => {
-                          const active = selectedSeries.some((series) => String(series.machineId) === String(machine.id) && series.valueKey === option.key);
-                          return (
-                            <button key={`${machine.id}:${option.key}`} type="button" className={active ? "active" : ""} onClick={() => toggleSeriesSelection(machine, option)}>
-                              {active ? "✓ " : "+ "}{option.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </article>
+                      <em>{active ? "Remove" : "Add"}</em>
+                    </button>
                   );
                 })}
               </div>
             )}
 
-            <div className="clean-vs-grid">
+            <div className="clean-vs-grid clean-vs-scroll-list">
               {!seriesItems.length ? (
-                <p className="empty-state">Click Compare, then select machine variables to graph.</p>
+                <p className="empty-state">Click a machine below to show its trend. Use Compare to add more machines.</p>
               ) : seriesItems.map((series, index) => {
                 const stats = series.data?.stats || {};
                 const latest = series.data?.latest || [...(series.data?.trends || [])].reverse().find((item) => Number.isFinite(Number(item.reading_value))) || null;
                 return (
-                  <article key={series.id} className="clean-vs-card">
+                  <article key={series.id} className="clean-vs-card compact-current-card">
                     <div className="clean-vs-title">
                       <span className={`trend-series-swatch series-${index % 6}`} />
                       <div>
@@ -2040,11 +2017,9 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
                       </div>
                       <button className="ghost-button small" type="button" onClick={() => removeSelectedSeries(series.id)}>×</button>
                     </div>
-                    <div className="clean-vs-values">
-                      <div><span>Current</span><b>{formatNumber(latest?.reading_value ?? stats.avg_reading)}</b></div>
-                      <div><span>Avg</span><b>{formatNumber(stats.avg_reading)}</b></div>
-                      <div><span>Min</span><b>{formatNumber(stats.min_reading)}</b></div>
-                      <div><span>Max</span><b>{formatNumber(stats.max_reading)}</b></div>
+                    <div className="clean-current-only">
+                      <span>Current</span>
+                      <b>{formatNumber(latest?.reading_value ?? stats.avg_reading)}</b>
                     </div>
                   </article>
                 );
@@ -2062,11 +2037,8 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
                 key={machine.id}
                 machine={machine}
                 miniData={machineTrendMap[String(machine.id)] || { trends: [], stats: null }}
-                isSelected={selectedSeries.some((series) => String(series.machineId) === String(machine.id))}
-                onSelect={() => {
-                  setSelectedArea(machine.site_name || selectedArea);
-                  setSelectedMachineId(String(machine.id));
-                }}
+                isSelected={String(selectedMachineId) === String(machine.id) || selectedMachineIds.has(String(machine.id))}
+                onSelect={() => selectMachineTrend(machine)}
               />
             ))
           )}
