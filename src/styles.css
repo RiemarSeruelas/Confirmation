@@ -390,7 +390,7 @@ button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 24
   box-shadow: 0 16px 34px rgba(46,70,122,.10);
   user-select: none;
 }
-.factory-line-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; }
+.factory-line-layer { display: block; position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; }
 .factory-line-layer line { stroke: rgba(38,120,255,.66); stroke-width: .58; stroke-dasharray: 1.05 .85; vector-effect: non-scaling-stroke; }
 .factory-target-dot { position: absolute; z-index: 5; width: 8px; height: 8px; min-height: 8px; padding: 0; display: block; transform: translate(-50%, -50%); border-radius: 999px; background: var(--blue); border: 2px solid #fff; box-shadow: 0 0 0 3px rgba(15,107,255,.16), 0 4px 9px rgba(46,70,122,.13); }
 .factory-target-dot.warning { background: var(--orange); box-shadow: 0 0 0 3px rgba(255,122,26,.17), 0 5px 10px rgba(46,70,122,.14); }
@@ -901,4 +901,11 @@ th { background: #fbfdff; color: #4d5d7a; font-weight: 950; }
   .compact-logs-layout .logs-filters-grid {
     grid-template-columns: 1fr;
   }
+}
+
+
+/* Restore point-map connector arrows/lines after the revert. */
+.factory-machine-art:not(.factory-machine-art-empty) > .factory-line-layer,
+.system-map-canvas:not(.system-map-canvas-empty) > .factory-line-layer {
+  display: block;
 }
