@@ -909,3 +909,121 @@ th { background: #fbfdff; color: #4d5d7a; font-weight: 950; }
 .system-map-canvas:not(.system-map-canvas-empty) > .factory-line-layer {
   display: block;
 }
+
+
+/* Multi-machine trend comparison */
+.trend-multi-machine-chart .trend-series-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.trend-series-line.series-0, .trend-series-swatch.series-0 { stroke: #0f6bff; background: #0f6bff; }
+.trend-series-line.series-1, .trend-series-swatch.series-1 { stroke: #ff7a1a; background: #ff7a1a; }
+.trend-series-line.series-2, .trend-series-swatch.series-2 { stroke: #22c55e; background: #22c55e; }
+.trend-series-line.series-3, .trend-series-swatch.series-3 { stroke: #705cff; background: #705cff; }
+.trend-series-line.series-4, .trend-series-swatch.series-4 { stroke: #ef4444; background: #ef4444; }
+.trend-series-line.series-5, .trend-series-swatch.series-5 { stroke: #0891b2; background: #0891b2; }
+.trend-series-line.series-6, .trend-series-swatch.series-6 { stroke: #a855f7; background: #a855f7; }
+.trend-series-line.series-7, .trend-series-swatch.series-7 { stroke: #14b8a6; background: #14b8a6; }
+
+.trends-compare-stats-panel {
+  overflow: hidden;
+}
+.trend-side-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .65rem;
+}
+.trend-side-header-row strong {
+  display: block;
+  font-size: 1.1rem;
+  line-height: 1.05;
+}
+.trend-compare-series-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: .55rem;
+  padding-right: .18rem;
+}
+.trend-compare-series-card {
+  padding: .65rem;
+  border-radius: 14px;
+  background: rgba(255,255,255,.92);
+  border: 1px solid var(--line-soft);
+  box-shadow: var(--shadow-soft);
+}
+.trend-compare-series-head {
+  display: flex;
+  align-items: flex-start;
+  gap: .48rem;
+  margin-bottom: .55rem;
+}
+.trend-series-swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: .25rem;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgba(15,107,255,.10);
+}
+.trend-compare-series-head div {
+  min-width: 0;
+  flex: 1;
+}
+.trend-compare-series-head strong,
+.trend-compare-series-head small {
+  display: block;
+}
+.trend-compare-series-head small {
+  color: var(--muted);
+  font-size: .66rem;
+  font-weight: 850;
+}
+.trend-compare-current-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .45rem;
+}
+.trend-compare-current-grid article {
+  padding: .48rem .55rem;
+  border-radius: 10px;
+  background: #f5f8ff;
+}
+.trend-compare-current-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: .62rem;
+  font-weight: 900;
+}
+.trend-compare-current-grid strong {
+  display: block;
+  margin-top: .12rem;
+  font-size: .9rem;
+}
+
+/* Keep logs footer visible without browser zoom-out */
+.factory-logs-page {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.logs-dashboard-shell {
+  height: calc(100dvh - var(--nav-h));
+  min-height: 0;
+  overflow: hidden;
+}
+.logs-main-panel,
+.logs-records-card {
+  min-height: 0;
+}
+.logs-records-card {
+  overflow: hidden;
+}
+.logs-table-wrap {
+  min-height: 0;
+}

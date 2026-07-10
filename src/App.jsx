@@ -335,6 +335,16 @@ function userRole(user) {
   return user?.role_name || "operator";
 }
 
+function isAdminUser(user) {
+  return userRole(user) === "admin";
+}
+
+function canAccessPage(user, page, standalone = false) {
+  if (standalone || !user) return ["auth", "register", "machine", "trends"].includes(page);
+  if (isAdminUser(user)) return true;
+  return ["record", "machine", "trends"].includes(page);
+}
+
 function valueFromRecord(record, key, summary) {
   if (!record && key !== "total_submissions") return "—";
   if (key === "total_submissions") return summary?.total_submissions ?? 0;
@@ -654,7 +664,7 @@ function ImageScanModal({ field, machine, onClose, onValue }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: "environment",
+          facingMode: "user",
           width: { ideal: 1920 },
           height: { ideal: 1080 },
           exposureMode: { ideal: "manual" },
@@ -664,7 +674,7 @@ function ImageScanModal({ field, machine, onClose, onValue }) {
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       await applyCameraBrightness(stream, brightnessBias);
-      setStatus("Camera ready. Lower brightness if the HMI/display looks white.");
+      setStatus("Front camera ready. Lower brightness if the target looks white.");
     } catch (error) {
       setStatus(error.name === "NotAllowedError" ? "Camera permission was blocked." : error.message || "Could not start camera.");
     }
@@ -1109,15 +1119,17 @@ function enhanceFactoryCallouts(configuredCallouts) {
 
 function buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields) {
   const rawValue = getRawValueFromRecord(displayRecord, callout.valueKey, summary);
-  const unit = inferMetricUnit(callout.title, callout.valueKey);
+  const field = fields.find((item) => String(item.id) === String(callout.valueKey));
+  const isNumericField = field?.type === "number";
+  const unit = isNumericField ? inferMetricUnit(callout.title, callout.valueKey) : "";
   const thresholds = getMetricThresholds(selectedMachine, fields, callout.valueKey, callout.title);
-  const status = metricStatus(rawValue, thresholds.min, thresholds.max);
+  const status = isNumericField ? metricStatus(rawValue, thresholds.min, thresholds.max) : "normal";
   return {
     ...callout,
     rawValue,
     value: compactMetricValue(rawValue),
     unit,
-    range: rangeText(thresholds.min, thresholds.max, unit),
+    range: isNumericField ? rangeText(thresholds.min, thresholds.max, unit) : "",
     status,
   };
 }
@@ -1300,6 +1312,70 @@ function TrendOverviewChart({ trends = [], thresholdMin, thresholdMax }) {
   );
 }
 
+
+function TrendMultiMachineChart({ seriesItems = [] }) {
+  const prepared = seriesItems.map((series, seriesIndex) => {
+    const points = (series.data?.trends || [])
+      .map((item, pointIndex) => ({
+        ...item,
+        reading: Number(item.reading_value),
+        time: new Date(item.record_timestamp).getTime(),
+        pointIndex,
+      }))
+      .filter((item) => Number.isFinite(item.reading));
+    return { ...series, seriesIndex, points };
+  }).filter((series) => series.points.length);
+
+  const allPoints = prepared.flatMap((series) => series.points);
+  if (allPoints.length < 2 || !prepared.some((series) => series.points.length >= 2)) {
+    return <div className="trend-overview-empty">Select machines with at least 2 numeric readings to draw the trend.</div>;
+  }
+
+  const values = allPoints.map((point) => point.reading);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max === min ? 1 : max - min;
+  const width = 100;
+  const height = 60;
+  const chartTop = 5;
+  const chartBottom = height - 6;
+  const finiteTimes = allPoints.map((point) => point.time).filter(Number.isFinite);
+  const minTime = finiteTimes.length ? Math.min(...finiteTimes) : 0;
+  const maxTime = finiteTimes.length ? Math.max(...finiteTimes) : minTime;
+  const timeRange = maxTime === minTime ? 1 : maxTime - minTime;
+
+  function xForPoint(point, points) {
+    if (Number.isFinite(point.time) && maxTime !== minTime) return ((point.time - minTime) / timeRange) * width;
+    return points.length <= 1 ? width / 2 : (point.pointIndex / (points.length - 1)) * width;
+  }
+
+  function yForValue(value) {
+    return chartBottom - ((value - min) / range) * (chartBottom - chartTop);
+  }
+
+  return (
+    <div className="trend-overview-chart-wrap trend-multi-machine-chart-wrap">
+      <svg className="trend-overview-chart trend-multi-machine-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-label="Selected machine trend comparison chart">
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = chartTop + (chartBottom - chartTop) * ratio;
+          return <line key={ratio} className="trend-overview-gridline" x1="0" y1={y} x2="100" y2={y} />;
+        })}
+        {prepared.map((series) => {
+          if (series.points.length < 2) return null;
+          const path = series.points.map((point, index) => {
+            const x = xForPoint(point, series.points);
+            const y = yForValue(point.reading);
+            return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+          }).join(" ");
+          return <path key={series.id} className={`trend-series-line series-${series.seriesIndex % 8}`} d={path} />;
+        })}
+      </svg>
+      <div className="trend-overview-axis y"><span>{formatNumber(max)}</span><span>{formatNumber((max + min) / 2)}</span><span>{formatNumber(min)}</span></div>
+      <div className="trend-overview-axis x"><span>{finiteTimes.length ? formatTrendTime(minTime) : "Start"}</span><span>{finiteTimes.length ? formatTrendTime(minTime + timeRange / 2) : "Middle"}</span><span>{finiteTimes.length ? formatTrendTime(maxTime) : "End"}</span></div>
+    </div>
+  );
+}
+
 function TrendSparkline({ trends = [], status = "normal" }) {
   const points = trends
     .map((item) => Number(item.reading_value))
@@ -1414,20 +1490,31 @@ function FactoryTopNav({
   }
 
 
+  const isAdmin = isAdminUser(user);
+
   function go(target) {
     if (!setPage) return;
-    if (target === "register") return setPage("adminRegister");
-    if (target === "system") return setPage("system");
-    setPage(target);
+    const resolved = target === "register" ? "adminRegister" : target;
+    if (!isAdmin && ["adminRegister", "system", "logs"].includes(resolved)) {
+      setPage("record");
+      return;
+    }
+    setPage(resolved);
   }
 
-  const navItems = [
-    { id: "machine", label: "Machines" },
-    { id: "trends", label: "Trends" },
-    { id: "system", label: "System" },
-    { id: "register", label: "Register" },
-    { id: "logs", label: "Logs" },
-  ];
+  const navItems = isAdmin
+    ? [
+      { id: "machine", label: "Machines" },
+      { id: "trends", label: "Trends" },
+      { id: "system", label: "System" },
+      { id: "register", label: "Register" },
+      { id: "logs", label: "Logs" },
+    ]
+    : [
+      { id: "record", label: "Submit" },
+      { id: "machine", label: "Machines" },
+      { id: "trends", label: "Trends" },
+    ];
 
   const initials = userDisplayName(user)
     .split(" ")
@@ -1452,12 +1539,14 @@ function FactoryTopNav({
       </nav>
 
       <div className="factory-top-actions factory-top-actions-no-calendar">
-        <button className="factory-bell notification-bell" type="button" onClick={() => go("logs")} aria-label="Notifications">
-          <span className="factory-bell-count">{warningCount || 0}</span>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M15 17H9m9-1.5c-.9-.95-1.35-2.2-1.35-3.75V9.5a4.65 4.65 0 0 0-9.3 0v2.25c0 1.55-.45 2.8-1.35 3.75h12ZM13.45 19.15a1.7 1.7 0 0 1-2.9 0" />
-          </svg>
-        </button>
+        {isAdmin && (
+          <button className="factory-bell notification-bell" type="button" onClick={() => go("logs")} aria-label="Notifications">
+            <span className="factory-bell-count">{warningCount || 0}</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15 17H9m9-1.5c-.9-.95-1.35-2.2-1.35-3.75V9.5a4.65 4.65 0 0 0-9.3 0v2.25c0 1.55-.45 2.8-1.35 3.75h12ZM13.45 19.15a1.7 1.7 0 0 1-2.9 0" />
+            </svg>
+          </button>
+        )}
         {standalone ? (
           <button className="factory-user-chip" type="button" onClick={() => setPage?.("auth")}>Back</button>
         ) : (
@@ -1618,7 +1707,7 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
                       <article className={metric.status === "warning" ? "factory-callout-card warning" : "factory-callout-card"} style={{ left: `${card.x}%`, top: `${card.y}%` }}>
                         <div><span>{metric.title}</span><em>{metric.status === "warning" ? "♧" : "✓"}</em></div>
                         <strong>{metric.value}<small>{metric.unit}</small></strong>
-                        <p>{metric.range}</p>
+                        {metric.range && <p>{metric.range}</p>}
                       </article>
                     </div>
                   );
@@ -1640,11 +1729,12 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
   const [selectedArea, setSelectedArea] = useState("");
   const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
   const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [trendData, setTrendData] = useState({ trends: [], warnings: [], stats: null });
+  const [selectedMachineIds, setSelectedMachineIds] = useState([]);
+  const [seriesTrendMap, setSeriesTrendMap] = useState({});
   const [machineTrendMap, setMachineTrendMap] = useState({});
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("Loading trends...");
-  const [trendLimit, setTrendLimit] = useState("20");
+  const [message, setMessage] = useState("Select machines to draw trends.");
+  const [trendLimit, setTrendLimit] = useState("80");
 
   async function loadMachines(site = selectedArea) {
     const query = site ? `?site=${encodeURIComponent(site)}` : "";
@@ -1652,33 +1742,43 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     const machineList = machineData.machines || [];
     setMachines(machineList);
 
-    const stillAvailable = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
-    if (stillAvailable) setSelectedMachineId(String(stillAvailable.id));
-    else setSelectedMachineId("");
+    const validIds = new Set(machineList.map((machine) => String(machine.id)));
+    setSelectedMachineIds((current) => current.filter((id) => validIds.has(String(id))));
+    setSelectedMachineId((current) => validIds.has(String(current)) ? current : String(machineList[0]?.id || ""));
 
     if (!machineList.length) {
       setMessage(site ? `No machines configured for ${site}` : "No machines configured yet.");
-      setTrendData({ field: null, trends: [], warnings: [], stats: null });
+      setSeriesTrendMap({});
     }
 
     return machineList;
   }
 
-  async function loadTrend(machineId = selectedMachineId, limit = trendLimit, machineList = machines) {
-    if (!machineId) return;
-    try {
-      setLoading(true);
-      const machine = machineList.find((item) => String(item.id) === String(machineId)) || machines.find((item) => String(item.id) === String(machineId));
-      const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machineId)}&limit=${encodeURIComponent(limit)}`);
-      const nextTrend = buildTrendDataFromRecords(machine, data.records || []);
-      setTrendData(nextTrend);
-      setMessage(nextTrend.stats?.numeric_points ? `${nextTrend.field?.label || "Numeric"} trend selected.` : "No numeric trend data yet for this machine");
-    } catch (error) {
-      setMessage(error.message);
-      setTrendData({ field: null, trends: [], warnings: [], stats: null });
-    } finally {
-      setLoading(false);
+  async function loadTrendForMachine(machineId, limit = trendLimit, machineList = machines) {
+    if (!machineId) return { field: null, trends: [], warnings: [], stats: null };
+    const machine = machineList.find((item) => String(item.id) === String(machineId)) || machines.find((item) => String(item.id) === String(machineId));
+    const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machineId)}&limit=${encodeURIComponent(limit)}`);
+    return buildTrendDataFromRecords(machine, data.records || []);
+  }
+
+  async function loadSelectedSeries(machineIds = selectedMachineIds, machineList = machines) {
+    if (!machineIds.length) {
+      setSeriesTrendMap({});
+      return {};
     }
+
+    const entries = await Promise.all(machineIds.map(async (machineId) => {
+      try {
+        const data = await loadTrendForMachine(machineId, trendLimit, machineList);
+        return [String(machineId), data];
+      } catch {
+        return [String(machineId), { field: null, trends: [], warnings: [], stats: null }];
+      }
+    }));
+
+    const nextMap = Object.fromEntries(entries);
+    setSeriesTrendMap(nextMap);
+    return nextMap;
   }
 
   async function loadGridSummaries(machineList = machines) {
@@ -1700,34 +1800,65 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
   }
 
   async function refreshAll() {
-    const machineList = await loadMachines(selectedArea);
-    const activeId = selectedMachineId;
-    await Promise.all([loadGridSummaries(machineList), activeId ? loadTrend(activeId, trendLimit, machineList) : Promise.resolve(setTrendData({ field: null, trends: [], warnings: [], stats: null }))]);
+    try {
+      setLoading(true);
+      const machineList = await loadMachines(selectedArea);
+      await Promise.all([loadGridSummaries(machineList), loadSelectedSeries(selectedMachineIds, machineList)]);
+      setMessage(selectedMachineIds.length ? "Live trend comparison from the database." : "Select machines to draw trends.");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleMachine(machineId) {
+    const id = String(machineId);
+    setSelectedMachineId(id);
+    setSelectedMachineIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function addSelectedMachine() {
+    if (!selectedMachineId) return;
+    setSelectedMachineIds((current) => current.includes(String(selectedMachineId)) ? current : [...current, String(selectedMachineId)]);
+  }
+
+  function clearSelectedMachines() {
+    setSelectedMachineIds([]);
+    setSeriesTrendMap({});
+    setMessage("Selection cleared. Select machines to draw trends.");
   }
 
   useEffect(() => {
     loadMachines(selectedArea)
-      .then((machineList) => loadGridSummaries(machineList))
+      .then((machineList) => Promise.all([loadGridSummaries(machineList), loadSelectedSeries(selectedMachineIds, machineList)]))
       .catch((error) => setMessage(error.message));
   }, [selectedArea]);
 
   useEffect(() => {
-    if (selectedMachineId) loadTrend(selectedMachineId, trendLimit);
-  }, [selectedMachineId, trendLimit]);
+    if (machines.length && selectedMachineIds.length) loadSelectedSeries(selectedMachineIds, machines).catch((error) => setMessage(error.message));
+    if (!selectedMachineIds.length) setSeriesTrendMap({});
+  }, [selectedMachineIds, trendLimit, machines.length]);
 
-  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || null;
-  const trends = trendData.trends || [];
-  const stats = trendData.stats || {};
-  const latest = [...trends].reverse().find((item) => Number.isFinite(Number(item.reading_value))) || trends[trends.length - 1] || null;
-  const readingMeta = getMachineReadingMeta(selectedMachine, trendData.field);
-  const thresholdMin = trendData.stats?.threshold_min ?? null;
-  const thresholdMax = trendData.stats?.threshold_max ?? null;
-  const currentValue = latest?.reading_value ?? stats.avg_reading;
-  const targetValue = thresholdMax ?? stats.max_reading ?? null;
-  const targetPercent = Number.isFinite(Number(currentValue)) && Number.isFinite(Number(targetValue)) && Number(targetValue) !== 0
-    ? (Number(currentValue) / Number(targetValue)) * 100
-    : 0;
-  const currentStatus = stats.latest_status || latest?.warning_status || "no-data";
+  const seriesItems = selectedMachineIds.map((machineId) => {
+    const machine = machines.find((item) => String(item.id) === String(machineId));
+    if (!machine) return null;
+    const data = seriesTrendMap[String(machineId)] || { field: null, trends: [], warnings: [], stats: null };
+    const latest = [...(data.trends || [])].reverse().find((item) => Number.isFinite(Number(item.reading_value))) || null;
+    const stats = data.stats || {};
+    const meta = getMachineReadingMeta(machine, data.field);
+    return {
+      id: String(machineId),
+      machine,
+      data,
+      latest,
+      stats,
+      meta,
+      currentValue: latest?.reading_value ?? stats.avg_reading,
+    };
+  }).filter(Boolean);
+
+  const totalWarnings = seriesItems.reduce((sum, item) => sum + Number(item.stats?.warning_count || 0), 0);
   const isAdmin = userRole(user) === "admin";
   const visibleMachines = machines;
 
@@ -1741,16 +1872,16 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
 
   return (
     <main className="factory-os-page factory-trends-page">
-      <FactoryTopNav activePage="trends" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={selectedDate} onDateChange={setSelectedDate} warningCount={stats.warning_count || 0} />
+      <FactoryTopNav activePage="trends" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={selectedDate} onDateChange={setSelectedDate} warningCount={totalWarnings} />
 
       <section className="factory-trends-workspace">
         <section className="factory-trends-overview-card">
           <div className="factory-trends-chart-panel">
             <div className="factory-trends-card-head">
               <div>
-                <p className="eyebrow">Trend</p>
-                <h2>{readingMeta.label} {selectedMachine?.machine_name ? `(${selectedMachine.machine_name})` : "(No Machine)"}</h2>
-                <p><span className="trend-legend-dot" />{readingMeta.unit ? `${readingMeta.label} (${readingMeta.unit})` : readingMeta.label}</p>
+                <p className="eyebrow">Trend Comparison</p>
+                <h2>{seriesItems.length ? `${seriesItems.length} selected machine${seriesItems.length > 1 ? "s" : ""}` : "Select machines to compare"}</h2>
+                <p><span className="trend-legend-dot" />Overlay numeric machine measurements in one graph.</p>
               </div>
               <div className="factory-trends-actions">
                 <select className="factory-area-inline-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Select area">
@@ -1763,39 +1894,56 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
                     <option key={machine.id} value={String(machine.id)}>{machine.machine_name}</option>
                   ))}
                 </select>
-                <button type="button" onClick={refreshAll} disabled={loading || !selectedMachineId}>{loading ? "Loading" : "Refresh"}</button>
+                <button className="secondary-button" type="button" onClick={addSelectedMachine} disabled={loading || !selectedMachineId}>Add</button>
+                <button type="button" onClick={refreshAll} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
               </div>
             </div>
-            <TrendOverviewChart trends={trends} thresholdMin={thresholdMin ?? stats.threshold_min} thresholdMax={thresholdMax ?? stats.threshold_max} />
+            <TrendMultiMachineChart seriesItems={seriesItems} />
           </div>
 
-          <aside className="factory-trends-stats-panel">
-            <span className="trend-side-label">Current {readingMeta.label}</span>
-            <div className="trend-current-reading">
-              <strong>{formatNumber(currentValue)}</strong>
-              <small>{readingMeta.unit || "value"}</small>
+          <aside className="factory-trends-stats-panel trends-compare-stats-panel">
+            <div className="trend-side-header-row">
+              <div>
+                <span className="trend-side-label">Selected machines</span>
+                <strong>{seriesItems.length}</strong>
+              </div>
+              <button className="ghost-button small" type="button" onClick={clearSelectedMachines} disabled={!seriesItems.length}>Clear</button>
             </div>
-            <div className="trend-side-stats">
-              <article><span>Average</span><strong>{formatNumber(stats.avg_reading)}</strong></article>
-              <article><span>Maximum</span><strong>{formatNumber(stats.max_reading)}</strong></article>
-              <article><span>Minimum</span><strong>{formatNumber(stats.min_reading)}</strong></article>
-              <article><span>Target</span><strong>{targetValue !== null && targetValue !== undefined ? formatNumber(targetValue) : "—"}</strong></article>
+
+            <div className="trend-compare-series-list">
+              {!seriesItems.length ? (
+                <p className="empty-state">Click machine cards below or use Add above.</p>
+              ) : seriesItems.map((item, index) => (
+                <article key={item.id} className="trend-compare-series-card">
+                  <div className="trend-compare-series-head">
+                    <span className={`trend-series-swatch series-${index % 8}`} />
+                    <div>
+                      <strong>{item.machine.machine_name}</strong>
+                      <small>{item.machine.site_name || "—"} • {item.meta.label || "Numeric"}</small>
+                    </div>
+                    <button className="ghost-button small" type="button" onClick={() => toggleMachine(item.id)}>×</button>
+                  </div>
+                  <div className="trend-compare-current-grid">
+                    <article><span>Current</span><strong>{formatNumber(item.currentValue)}</strong></article>
+                    <article><span>Average</span><strong>{formatNumber(item.stats.avg_reading)}</strong></article>
+                  </div>
+                </article>
+              ))}
             </div>
-            <TrendProgressRing percent={targetPercent} />
           </aside>
         </section>
 
         <section className="factory-trends-machine-grid" aria-label="Configured machines">
           {!visibleMachines.length ? (
-            <div className="empty-state">No machines configured for {selectedArea}.</div>
+            <div className="empty-state">No machines configured for {selectedArea || "All"}.</div>
           ) : (
             visibleMachines.map((machine) => (
               <TrendMachineTile
                 key={machine.id}
                 machine={machine}
                 miniData={machineTrendMap[String(machine.id)] || { trends: [], stats: null }}
-                isSelected={String(machine.id) === String(selectedMachineId)}
-                onSelect={() => setSelectedMachineId(String(machine.id))}
+                isSelected={selectedMachineIds.includes(String(machine.id))}
+                onSelect={() => toggleMachine(String(machine.id))}
               />
             ))
           )}
@@ -2506,15 +2654,16 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
   function previewCardMeta(callout) {
     const mappedField = form.fields.find((field) => String(field.id) === String(callout.valueKey));
     const title = mappedField ? visibleVariableName(mappedField, form.machine_name) : (callout.title || "Value");
-    const min = mappedField?.thresholdEnabled ? mappedField.threshold_min : "";
-    const max = mappedField?.thresholdEnabled ? mappedField.threshold_max : "";
-    const detail = min || max ? `Range: ${min || "—"} – ${max || "—"}` : "Range: — — —";
+    const isNumericField = mappedField?.type === "number";
+    const min = isNumericField && mappedField?.thresholdEnabled ? mappedField.threshold_min : "";
+    const max = isNumericField && mappedField?.thresholdEnabled ? mappedField.threshold_max : "";
+    const detail = isNumericField ? (min || max ? `Range: ${min || "—"} – ${max || "—"}` : "Range: — — —") : "";
     return {
       title,
       value: "—",
       unit: "",
       detail,
-      tone: mappedField?.thresholdEnabled ? "warning" : "success",
+      tone: isNumericField && mappedField?.thresholdEnabled ? "warning" : "success",
       icon: "",
     };
   }
@@ -2772,7 +2921,7 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
                       >
                         <div><span>{meta.title}</span>{meta.icon && <em>{meta.icon}</em>}</div>
                         <strong>{meta.value}<small>{meta.unit}</small></strong>
-                        <p>{meta.detail}</p>
+                        {meta.detail && <p>{meta.detail}</p>}
                       </button>
                     </div>
                   );
@@ -3115,12 +3264,20 @@ function App() {
     setPage("auth");
   }
 
+  function renderRecordPage() {
+    return <><TopBar user={user} page="record" setPage={setPage} onLogout={handleLogout} /><RecordInputPage user={user} /></>;
+  }
+
   if (page === "auth") {
-    return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(userRole(profile) === "admin" ? "machine" : "record"); }} onRegister={() => setPage("register")} onMachineView={() => setPage("machine")} onAdmin={handleAdminSkip} onDemoUser={handleDemoUser} />;
+    return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(isAdminUser(profile) ? "machine" : "record"); }} onRegister={() => setPage("register")} onMachineView={() => setPage("machine")} onAdmin={handleAdminSkip} onDemoUser={handleDemoUser} />;
   }
 
   if (page === "register") {
     return <OperatorRegisterPage onBack={() => setPage("auth")} onRegistered={(profile) => { setUser(profile); setPage("record"); }} />;
+  }
+
+  if (user && !canAccessPage(user, page)) {
+    return renderRecordPage();
   }
 
   if (page === "machine") {
@@ -3132,18 +3289,21 @@ function App() {
   }
 
   if (page === "logs") {
+    if (!isAdminUser(user)) return renderRecordPage();
     return <LogsPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
   }
 
   if (page === "adminRegister") {
+    if (!isAdminUser(user)) return renderRecordPage();
     return <RegisterAdminPage adminUser={user} user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
   }
 
   if (page === "system") {
+    if (!isAdminUser(user)) return renderRecordPage();
     return <SystemRegistrationPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
   }
 
-  return <><TopBar user={user} page={page} setPage={setPage} onLogout={handleLogout} /><RecordInputPage user={user} /></>;
+  return renderRecordPage();
 }
 
 export default App;
