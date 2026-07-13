@@ -495,45 +495,111 @@ function variableToneClass(label = "") {
   return "tone-default";
 }
 
-function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapture, autoCapture = false, autoCaptureDelayMs = 900 }) {
+async function setAutomaticCameraMode(stream) {
+  const track = stream?.getVideoTracks?.()[0];
+  if (!track?.getCapabilities || !track?.applyConstraints) return;
+
+  const capabilities = track.getCapabilities();
+  const automatic = {};
+
+  if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes("continuous")) {
+    automatic.exposureMode = "continuous";
+  }
+
+  if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
+    automatic.whiteBalanceMode = "continuous";
+  }
+
+  if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
+    automatic.focusMode = "continuous";
+  }
+
+  const exposureCompensation = capabilities.exposureCompensation;
+  if (
+    exposureCompensation &&
+    Number(exposureCompensation.min) <= 0 &&
+    Number(exposureCompensation.max) >= 0
+  ) {
+    automatic.exposureCompensation = 0;
+  }
+
+  if (!Object.keys(automatic).length) return;
+
+  try {
+    await track.applyConstraints({ advanced: [automatic] });
+  } catch {
+    return;
+  }
+}
+
+function FaceCaptureModal({
+  title = "Face Capture",
+  description,
+  onClose,
+  onCapture,
+  autoCapture = false,
+  autoCaptureDelayMs = 2200,
+}) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const timerRef = useRef(null);
-  const capturedRef = useRef(false);
+  const captureQueuedRef = useRef(false);
   const [status, setStatus] = useState("Starting camera...");
   const [busy, setBusy] = useState(false);
 
-  function stopCamera() {
+  function clearCaptureTimer() {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = null;
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
   }
 
-  function scheduleAutoCapture() {
-    if (!autoCapture || capturedRef.current) return;
-    capturedRef.current = true;
-    setStatus("Camera ready. Auto capturing...");
-    timerRef.current = setTimeout(() => handleCapture(), autoCaptureDelayMs);
+  function stopCamera() {
+    clearCaptureTimer();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }
+
+  function queueAutoCapture(delay = autoCaptureDelayMs) {
+    if (!autoCapture || captureQueuedRef.current || !streamRef.current) return;
+    captureQueuedRef.current = true;
+    clearCaptureTimer();
+    setStatus("Camera ready. Hold still...");
+    timerRef.current = setTimeout(handleCapture, delay);
   }
 
   async function startCamera() {
     const help = getCameraHelp();
-    if (help) return setStatus(help);
-    if (!navigator.mediaDevices?.getUserMedia) return setStatus("Camera is not available.");
+    if (help) {
+      setStatus(help);
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus("Camera is not available.");
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 720 } },
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30, max: 30 },
+        },
         audio: false,
       });
+
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = scheduleAutoCapture;
+      await setAutomaticCameraMode(stream);
+
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        await video.play().catch(() => undefined);
       }
-      setStatus(autoCapture ? "Camera ready. Auto capturing..." : "Camera ready.");
+
+      setStatus(autoCapture ? "Camera ready. Hold still..." : "Camera ready.");
+      queueAutoCapture();
     } catch (error) {
       setStatus(error.name === "NotAllowedError" ? "Camera permission was blocked." : error.message || "Could not start camera.");
     }
@@ -541,29 +607,38 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
 
   function captureImage() {
     const video = videoRef.current;
-    if (!video || !video.videoWidth || !video.videoHeight) throw new Error("Camera is not ready yet.");
-    const targetSize = 640;
-    const sourceSize = Math.min(video.videoWidth, video.videoHeight);
-    const sourceX = Math.floor((video.videoWidth - sourceSize) / 2);
-    const sourceY = Math.floor((video.videoHeight - sourceSize) / 2);
+    if (!video?.videoWidth || !video?.videoHeight) {
+      throw new Error("Camera is not ready yet.");
+    }
+
+    const maxWidth = 960;
+    const scale = Math.min(maxWidth / video.videoWidth, 1);
+    const width = Math.max(1, Math.round(video.videoWidth * scale));
+    const height = Math.max(1, Math.round(video.videoHeight * scale));
     const canvas = document.createElement("canvas");
-    canvas.width = targetSize;
-    canvas.height = targetSize;
+    canvas.width = width;
+    canvas.height = height;
+
     const context = canvas.getContext("2d");
-    context.drawImage(video, sourceX, sourceY, sourceSize, sourceSize, 0, 0, targetSize, targetSize);
-    return canvas.toDataURL("image/jpeg", 0.92);
+    if (!context) throw new Error("Camera capture is unavailable.");
+    context.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", 0.9);
   }
 
   async function handleCapture() {
+    if (busy || !streamRef.current) return;
+
     try {
       setBusy(true);
-      setStatus("Capturing image...");
-      const imageDataUrl = captureImage();
-      await onCapture(imageDataUrl);
+      setStatus("Checking face...");
+      await onCapture(captureImage());
       stopCamera();
     } catch (error) {
-      setStatus(error.message || "Capture failed.");
-      capturedRef.current = false;
+      const message = String(error?.message || "");
+      const noFace = /face could not be detected|no matching face|no face/i.test(message);
+      setStatus(noFace ? "No face detected. Face the camera and hold still." : "Face check failed. Retrying...");
+      captureQueuedRef.current = false;
+      if (autoCapture) queueAutoCapture(1800);
     } finally {
       setBusy(false);
     }
@@ -575,24 +650,27 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
   }, []);
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <section className="camera-modal glass-card">
-        <div className="modal-header">
+    <div className="modal-backdrop camera-backdrop" role="dialog" aria-modal="true" aria-label={title}>
+      <section className="camera-modal">
+        <header className="camera-modal-header">
           <div>
             <p className="eyebrow">AI Facial Recognition</p>
             <h2>{title}</h2>
             {description && <p>{description}</p>}
           </div>
-          <button className="icon-button" type="button" onClick={onClose} disabled={busy}>×</button>
-        </div>
+          <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label="Close camera">×</button>
+        </header>
+
         <div className="camera-frame">
-          <video ref={videoRef} autoPlay playsInline muted onCanPlay={scheduleAutoCapture} />
-          <div className="face-guide" />
+          <video ref={videoRef} autoPlay playsInline muted onLoadedData={() => queueAutoCapture()} />
+          <div className="face-guide" aria-hidden="true" />
         </div>
-        <p className="camera-status">{status}</p>
-        <div className="modal-actions">
+
+        <p className="camera-status" aria-live="polite">{status}</p>
+
+        <div className="camera-actions">
           <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
-          {!autoCapture && <button type="button" onClick={handleCapture} disabled={busy}>{busy ? "Processing..." : "Capture"}</button>}
+          {!autoCapture && <button type="button" onClick={handleCapture} disabled={busy}>{busy ? "Checking..." : "Capture"}</button>}
         </div>
       </section>
     </div>
@@ -602,145 +680,86 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
 function ImageScanModal({ field, machine, onClose, onScan }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const [status, setStatus] = useState("Starting camera...");
+  const scanTimerRef = useRef(null);
+  const scanningRef = useRef(false);
+  const readyRef = useRef(false);
+  const closedRef = useRef(false);
+  const [status, setStatus] = useState("Opening camera...");
   const [busy, setBusy] = useState(false);
-  const [brightnessBias, setBrightnessBias] = useState(-35);
-  const [autoEnhance, setAutoEnhance] = useState(true);
-  const [cropGuideOnly, setCropGuideOnly] = useState(true);
-  const [cameraControlStatus, setCameraControlStatus] = useState("");
+
+  function clearScanTimer() {
+    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+    scanTimerRef.current = null;
+  }
 
   function stopCamera() {
+    clearScanTimer();
+    readyRef.current = false;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
   }
 
-  function clampValue(value, min, max) {
-    return Math.max(min, Math.min(max, value));
+  function closeScanner() {
+    closedRef.current = true;
+    stopCamera();
+    onClose();
   }
 
-  function mapRange(value, inMin, inMax, outMin, outMax) {
-    if (inMax === inMin) return outMin;
-    const ratio = (value - inMin) / (inMax - inMin);
-    return outMin + ratio * (outMax - outMin);
-  }
-
-  async function applyCameraBrightness(stream, bias = brightnessBias) {
-    const track = stream?.getVideoTracks?.()[0];
-    if (!track?.getCapabilities || !track?.applyConstraints) {
-      setCameraControlStatus("Using software brightness correction.");
-      return;
-    }
-
-    try {
-      const capabilities = track.getCapabilities();
-      const advanced = {};
-
-      if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes("manual")) {
-        advanced.exposureMode = "manual";
-      }
-
-      if (capabilities.exposureCompensation) {
-        const min = Number(capabilities.exposureCompensation.min ?? -2);
-        const max = Number(capabilities.exposureCompensation.max ?? 2);
-        const mapped = mapRange(Number(bias), -80, 30, min, max);
-        advanced.exposureCompensation = clampValue(mapped, min, max);
-      }
-
-      if (capabilities.brightness) {
-        const min = Number(capabilities.brightness.min ?? 0);
-        const max = Number(capabilities.brightness.max ?? 100);
-        const mapped = mapRange(Number(bias), -80, 30, min, max);
-        advanced.brightness = clampValue(mapped, min, max);
-      }
-
-      if (!Object.keys(advanced).length) {
-        setCameraControlStatus("Using software brightness correction.");
-        return;
-      }
-
-      await track.applyConstraints({ advanced: [advanced] });
-      setCameraControlStatus("Camera exposure adjusted when supported.");
-    } catch {
-      setCameraControlStatus("Using software brightness correction.");
-    }
+  function scheduleScan(delay = 1000) {
+    clearScanTimer();
+    if (closedRef.current || !readyRef.current) return;
+    scanTimerRef.current = setTimeout(() => scanImage(), delay);
   }
 
   async function startCamera() {
     const help = getCameraHelp();
-    if (help) return setStatus(help);
-    if (!navigator.mediaDevices?.getUserMedia) return setStatus("Camera is not available.");
+    if (help) {
+      setStatus(help);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus("Camera is not available.");
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: "user",
+          facingMode: { ideal: "environment" },
           width: { ideal: 1920 },
           height: { ideal: 1080 },
-          exposureMode: { ideal: "manual" },
         },
         audio: false,
       });
+
+      if (closedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
       streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      await applyCameraBrightness(stream, brightnessBias);
-      setStatus("Front camera ready. Lower brightness if the target looks white.");
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => undefined);
+      }
     } catch (error) {
       setStatus(error.name === "NotAllowedError" ? "Camera permission was blocked." : error.message || "Could not start camera.");
     }
-  }
-
-  function autoEnhanceCanvas(context, width, height) {
-    const imageData = context.getImageData(0, 0, width, height);
-    const data = imageData.data;
-    let totalLuma = 0;
-    const pixelCount = Math.max(1, data.length / 4);
-
-    for (let index = 0; index < data.length; index += 4) {
-      totalLuma += 0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2];
-    }
-
-    const avgLuma = totalLuma / pixelCount;
-    let multiplier = 1;
-    let contrast = 1.12;
-
-    if (avgLuma > 225) {
-      multiplier = 0.42;
-      contrast = 1.42;
-    } else if (avgLuma > 205) {
-      multiplier = 0.55;
-      contrast = 1.36;
-    } else if (avgLuma > 180) {
-      multiplier = 0.72;
-      contrast = 1.25;
-    } else if (avgLuma < 70) {
-      multiplier = 1.22;
-      contrast = 1.08;
-    }
-
-    for (let index = 0; index < data.length; index += 4) {
-      data[index] = clampValue((data[index] * multiplier - 128) * contrast + 128, 0, 255);
-      data[index + 1] = clampValue((data[index + 1] * multiplier - 128) * contrast + 128, 0, 255);
-      data[index + 2] = clampValue((data[index + 2] * multiplier - 128) * contrast + 128, 0, 255);
-    }
-
-    context.putImageData(imageData, 0, 0);
-    return avgLuma;
   }
 
   function captureImage() {
     const video = videoRef.current;
     if (!video || !video.videoWidth || !video.videoHeight) throw new Error("Camera is not ready yet.");
 
-    const source = cropGuideOnly
-      ? {
-          x: Math.round(video.videoWidth * 0.12),
-          y: Math.round(video.videoHeight * 0.18),
-          width: Math.round(video.videoWidth * 0.76),
-          height: Math.round(video.videoHeight * 0.56),
-        }
-      : { x: 0, y: 0, width: video.videoWidth, height: video.videoHeight };
-
+    const source = {
+      x: Math.round(video.videoWidth * 0.12),
+      y: Math.round(video.videoHeight * 0.18),
+      width: Math.round(video.videoWidth * 0.76),
+      height: Math.round(video.videoHeight * 0.56),
+    };
     const maxWidth = 1280;
     const scale = Math.min(maxWidth / source.width, 1);
     const width = Math.max(1, Math.round(source.width * scale));
@@ -749,21 +768,20 @@ function ImageScanModal({ field, machine, onClose, onScan }) {
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
-    const brightnessFactor = clampValue(1 + Number(brightnessBias) / 100, 0.18, 1.35);
-    context.filter = `brightness(${brightnessFactor}) contrast(1.18) saturate(0.92)`;
     context.drawImage(video, source.x, source.y, source.width, source.height, 0, 0, width, height);
-    context.filter = "none";
-
-    if (autoEnhance) autoEnhanceCanvas(context, width, height);
     return canvas.toDataURL("image/jpeg", 0.92);
   }
 
-  async function handleScan() {
+  async function scanImage() {
+    if (closedRef.current || !readyRef.current || scanningRef.current) return;
+
+    scanningRef.current = true;
+    setBusy(true);
+    setStatus("Reading...");
+    let retryDelay = 1600;
+
     try {
-      setBusy(true);
-      setStatus("Capturing image with brightness correction...");
       const imageDataUrl = captureImage();
-      setStatus("Sending to AI workstation...");
       const data = await fetchJson("/api/ai/image-field", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -775,10 +793,14 @@ function ImageScanModal({ field, machine, onClose, onScan }) {
         }),
       });
       const extractedValue = data.value ?? data.weight ?? data.reading ?? "";
+
+      if (closedRef.current) return;
       if (extractedValue === "" || extractedValue === null || extractedValue === undefined) {
-        setStatus(`AI could not find a readable value for "${field?.aiTarget || field?.label || "target"}". Try darker brightness or move closer.`);
+        setStatus("Hold the reading inside the box");
         return;
       }
+
+      closedRef.current = true;
       onScan({
         value: String(extractedValue),
         imageDataUrl,
@@ -787,60 +809,48 @@ function ImageScanModal({ field, machine, onClose, onScan }) {
       stopCamera();
       onClose();
     } catch (error) {
-      setStatus(error.message || "AI scan failed.");
+      if (!closedRef.current) {
+        setStatus("Hold steady — trying again");
+        retryDelay = error?.name === "TypeError" ? 2600 : 1900;
+      }
     } finally {
-      setBusy(false);
+      scanningRef.current = false;
+      if (!closedRef.current) {
+        setBusy(false);
+        scheduleScan(retryDelay);
+      }
     }
+  }
+
+  function handleCameraReady() {
+    if (closedRef.current || readyRef.current) return;
+    readyRef.current = true;
+    setStatus("Auto detecting — hold steady");
+    scheduleScan(900);
   }
 
   useEffect(() => {
     startCamera();
-    return stopCamera;
+    return () => {
+      closedRef.current = true;
+      stopCamera();
+    };
   }, []);
 
-  useEffect(() => {
-    if (streamRef.current) applyCameraBrightness(streamRef.current, brightnessBias);
-  }, [brightnessBias]);
-
-  const videoBrightness = clampValue(1 + Number(brightnessBias) / 100, 0.18, 1.35);
-
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <section className="camera-modal image-scan-modal glass-card">
-        <div className="modal-header">
-          <div>
-            <p className="eyebrow">AI Image Scanner</p>
-            <h2>Scan {field?.label || "Image Field"}</h2>
-            <p>Target: <strong>{field?.aiTarget || field?.label || "target"}</strong>. The AI will extract the value beside it.</p>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} disabled={busy}>×</button>
+    <div className="modal-backdrop auto-scan-backdrop" role="dialog" aria-modal="true" aria-label={`Scan ${field?.label || "image"}`}>
+      <section className="auto-scan-modal">
+        <button className="auto-scan-close" type="button" onClick={closeScanner} aria-label="Close scanner">×</button>
+        <div className="auto-scan-title">
+          <span>Auto scan</span>
+          <strong>{field?.label || "Image field"}</strong>
         </div>
-        <div className="camera-frame scan-camera-frame">
-          <video ref={videoRef} autoPlay playsInline muted style={{ filter: `brightness(${videoBrightness}) contrast(1.18) saturate(0.92)` }} />
-          <div className="scan-guide-box"><span>{cropGuideOnly ? "Only this box will be scanned" : "Keep target + value here"}</span></div>
-        </div>
-        <div className="scan-controls">
-          <label className="scan-range-label">
-            <span className="label-text">Camera brightness</span>
-            <input className="scan-range" type="range" min="-80" max="30" step="5" value={brightnessBias} onChange={(event) => setBrightnessBias(Number(event.target.value))} disabled={busy} />
-            <strong>{brightnessBias}%</strong>
-          </label>
-          <div className="scan-control-row">
-            <button className="secondary-button small" type="button" onClick={() => setBrightnessBias(-65)} disabled={busy}>Darker</button>
-            <button className="secondary-button small" type="button" onClick={() => setBrightnessBias(-35)} disabled={busy}>Auto</button>
-            <button className="secondary-button small" type="button" onClick={() => setBrightnessBias(0)} disabled={busy}>Normal</button>
-          </div>
-          <div className="scan-toggle-row">
-            <label className="mini-check"><input type="checkbox" checked={autoEnhance} onChange={(event) => setAutoEnhance(event.target.checked)} disabled={busy} /> Auto enhance scan</label>
-            <label className="mini-check"><input type="checkbox" checked={cropGuideOnly} onChange={(event) => setCropGuideOnly(event.target.checked)} disabled={busy} /> Scan guide box only</label>
-          </div>
-          {cameraControlStatus && <p className="scan-preview-note">{cameraControlStatus}</p>}
-        </div>
-        <p className="camera-status">{status}</p>
-        <div className="modal-actions">
-          <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" onClick={handleScan} disabled={busy}>{busy ? "Scanning..." : "Scan Image"}</button>
-        </div>
+        <button className={`auto-scan-viewport ${busy ? "is-scanning" : ""}`} type="button" onClick={scanImage} aria-label="Tap to scan now">
+          <video ref={videoRef} autoPlay playsInline muted onCanPlay={handleCameraReady} />
+          <div className="scan-guide-box" aria-hidden="true" />
+          <div className="auto-scan-status"><i />{status}</div>
+          <div className="auto-scan-sweep" aria-hidden="true" />
+        </button>
       </section>
     </div>
   );
