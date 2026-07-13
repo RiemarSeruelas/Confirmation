@@ -4,26 +4,26 @@ import pg from "pg";
 dotenv.config();
 
 const { Pool } = pg;
+const ssl = String(process.env.PGSSL || "false").toLowerCase() === "true"
+  ? { rejectUnauthorized: false }
+  : false;
 
-const useSsl = String(process.env.PGSSL || "false").toLowerCase() === "true";
+const config = process.env.DATABASE_URL
+  ? { connectionString: process.env.DATABASE_URL, ssl }
+  : {
+      host: process.env.PGHOST || "localhost",
+      port: Number(process.env.PGPORT || 5432),
+      database: process.env.PGDATABASE || "confirmation_test_db",
+      user: process.env.PGUSER,
+      password: process.env.PGPASSWORD,
+      ssl,
+    };
 
-export const pool = new Pool(
-  process.env.DATABASE_URL
-    ? {
-        connectionString: process.env.DATABASE_URL,
-        ssl: useSsl ? { rejectUnauthorized: false } : false,
-      }
-    : {
-        host: process.env.PGHOST || "localhost",
-        port: Number(process.env.PGPORT || 5432),
-        database: process.env.PGDATABASE || "confirmation_test_db",
-        user: process.env.PGUSER,
-        password: process.env.PGPASSWORD,
-        ssl: useSsl ? { rejectUnauthorized: false } : false,
-      }
-);
+export const pool = new Pool(config);
 
 export async function testDbConnection() {
-  const result = await pool.query("SELECT current_database() AS current_database, NOW() AS server_time");
-  return result.rows[0];
+  const { rows } = await pool.query(
+    "SELECT current_database() AS current_database, NOW() AS server_time"
+  );
+  return rows[0];
 }

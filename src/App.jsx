@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-/* Shared helpers/components - kept in this file so all pages reuse one source. */
 const siteOptions = ["Savoury", "Dressings"];
 const roleOptions = ["operator", "admin"];
 const shiftOptions = [
@@ -8,7 +7,6 @@ const shiftOptions = [
   { value: "2nd Shift", label: "2nd Shift || 2:00 PM - 10:00 PM" },
   { value: "3rd Shift", label: "3rd Shift || 10:00 PM - 6:00 AM" },
 ];
-
 
 const emptyUserForm = {
   operatorName: "",
@@ -54,7 +52,6 @@ function imageFileToCompactDataUrl(file, maxWidth = 1000, maxHeight = 650, quali
     reader.readAsDataURL(file);
   });
 }
-
 
 function useFittedImageCanvas(imageDataUrl, padding = 12) {
   const stageRef = useRef(null);
@@ -272,7 +269,6 @@ function normalizeCallouts(callouts) {
       pointY: point.y,
       cardX: card.x,
       cardY: card.y,
-      // Backwards compatibility for older saved configs.
       x: point.x,
       y: point.y,
     };
@@ -404,11 +400,6 @@ function valueFromRecordField(record, field) {
   return responseFields[field.id];
 }
 
-function rawResponseValue(record, key) {
-  const responseFields = record?.response_fields && typeof record.response_fields === "object" ? record.response_fields : {};
-  return responseFields[key];
-}
-
 function numericValueFromField(record, field) {
   const value = valueFromRecordField(record, field);
   const numberValue = Number(value);
@@ -420,10 +411,31 @@ function numericTrendFieldsForMachine(machine, records = []) {
   return fields.filter((field) => records.some((record) => numericValueFromField(record, field) !== null));
 }
 
-function buildTrendDataFromRecords(machine, records = []) {
+function trendFieldKey(field, machineName = "") {
+  return slugText(visibleVariableName(field, machineName) || field?.label || field?.id || "");
+}
+
+function trendOptionsForMachines(machines = []) {
+  const options = new Map();
+
+  for (const machine of machines) {
+    for (const field of normalizeFields(machine?.fields).filter((item) => item.type === "number")) {
+      const value = trendFieldKey(field, machine?.machine_name);
+      const label = visibleVariableName(field, machine?.machine_name) || field.label || field.id;
+      if (value && !options.has(value)) options.set(value, { value, label });
+    }
+  }
+
+  return [...options.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function buildTrendDataFromRecords(machine, records = [], selectedDetail = "") {
   const sorted = [...records].sort((a, b) => new Date(a.record_timestamp).getTime() - new Date(b.record_timestamp).getTime() || Number(a.id || 0) - Number(b.id || 0));
+  const configuredFields = normalizeFields(machine?.fields).filter((item) => item.type === "number");
   const numericFields = numericTrendFieldsForMachine(machine, sorted);
-  const field = numericFields[0] || normalizeFields(machine?.fields).find((item) => item.type === "number") || null;
+  const field = selectedDetail
+    ? configuredFields.find((item) => trendFieldKey(item, machine?.machine_name) === selectedDetail || slugText(item.id) === selectedDetail) || null
+    : numericFields[0] || configuredFields[0] || null;
   if (!field) {
     return {
       field: null,
@@ -587,9 +599,7 @@ function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapt
   );
 }
 
-
-
-function ImageScanModal({ field, machine, onClose, onValue }) {
+function ImageScanModal({ field, machine, onClose, onScan }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const [status, setStatus] = useState("Starting camera...");
@@ -769,7 +779,11 @@ function ImageScanModal({ field, machine, onClose, onValue }) {
         setStatus(`AI could not find a readable value for "${field?.aiTarget || field?.label || "target"}". Try darker brightness or move closer.`);
         return;
       }
-      onValue(String(extractedValue));
+      onScan({
+        value: String(extractedValue),
+        imageDataUrl,
+        mimeType: "image/jpeg",
+      });
       stopCamera();
       onClose();
     } catch (error) {
@@ -832,205 +846,87 @@ function ImageScanModal({ field, machine, onClose, onValue }) {
   );
 }
 
-function RecordList({ records, compact = false, machines = [] }) {
-  if (!records?.length) return <p className="empty-state">No submissions yet.</p>;
+function proofForField(record, fieldId) {
+  const proofs = Array.isArray(record?.proofs) ? record.proofs : [];
+  return proofs.find((proof) => String(proof.field_id) === String(fieldId)) || null;
+}
 
-  function machineForRecord(record) {
-    const recordMachineId = record.machine_config_id === null || record.machine_config_id === undefined ? "" : String(record.machine_config_id);
-    const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
-    return machines.find((machine) => String(machine.id) === recordMachineId) || machines.find((machine) => String(machine.machine_name || "").trim().toLowerCase() === recordMachineName) || null;
-  }
+function ProofValue({ value, proof }) {
+  const displayValue = value === null || value === undefined || value === "" ? "—" : String(value);
 
-  const columns = [];
-  const seen = new Set();
-  for (const machine of machines) {
-    for (const field of normalizeFields(machine.fields)) {
-      const label = visibleVariableName(field, machine.machine_name);
-      const key = slugText(label);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      columns.push({ key, label, type: field.type });
-    }
-  }
-  if (!columns.length) {
-    for (const record of records) {
-      const responseFields = record.response_fields && typeof record.response_fields === "object" ? record.response_fields : {};
-      for (const keyName of Object.keys(responseFields)) {
-        const key = slugText(keyName);
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        columns.push({ key, label: keyName, type: "text" });
-      }
-    }
-  }
-
-  function valueForColumn(record, column) {
-    const machine = machineForRecord(record);
-    const field = normalizeFields(machine?.fields).find((item) => slugText(visibleVariableName(item, record.machine_name)) === column.key);
-    if (field) {
-      const value = valueFromRecordField(record, field);
-      if (field.type === "image") return value ? "Image" : "—";
-      return value === null || value === undefined || value === "" ? "—" : String(value);
-    }
-    const responseFields = record.response_fields && typeof record.response_fields === "object" ? record.response_fields : {};
-    const directKey = Object.keys(responseFields).find((keyName) => slugText(keyName) === column.key);
-    const value = directKey ? responseFields[directKey] : "";
-    return value === null || value === undefined || value === "" ? "—" : String(value);
-  }
+  if (!proof?.image_url) return displayValue;
 
   return (
-    <div className="table-wrap">
-      <table className={compact ? "compact-table" : ""}>
-        <thead>
-          <tr>
-            <th>Machine</th>
-            {columns.map((column) => <th key={column.key} className={`logs-variable-head ${variableToneClass(column.label)}`}>{column.label}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {records.map((record) => (
-            <tr key={record.id}>
-              <td data-label="Machine">{record.machine_name}</td>
-              {columns.map((column) => <td key={`${record.id}-${column.key}`} data-label={column.label}><span className={`logs-variable-value ${variableToneClass(column.label)}`}>{valueForColumn(record, column)}</span></td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="mobile-record-list">
-        {records.map((record) => (
-          <article className="mobile-log-card" key={`mobile-${record.id}`}>
-            <div className="mobile-log-top"><strong>{record.machine_name}</strong><span>{formatDateTime(record.record_timestamp)}</span></div>
-            <div className="mobile-log-grid">
-              {columns.map((column) => <span key={`${record.id}-mobile-${column.key}`}><b>{column.label}</b>{valueForColumn(record, column)}</span>)}
-            </div>
+    <span className="proof-value">
+      <span>{displayValue}</span>
+      <a href={proof.image_url} target="_blank" rel="noreferrer" title={`Open proof for ${proof.field_label || "image field"}`}>
+        <img src={proof.image_url} alt={`Proof for ${proof.field_label || "image field"}`} loading="lazy" />
+      </a>
+    </span>
+  );
+}
+
+function LatestMachineResponseList({ records = [], machines = [] }) {
+  function recordForMachine(machine) {
+    const machineId = String(machine.id);
+    const machineName = String(machine.machine_name || "").trim().toLowerCase();
+    return records.find((record) => String(record.machine_config_id) === machineId) || records.find((record) => String(record.machine_name || "").trim().toLowerCase() === machineName) || null;
+  }
+
+  if (!machines.length) return <p className="empty-state">No machines are configured for this area.</p>;
+
+  return (
+    <div className="latest-response-list">
+      {machines.map((machine) => {
+        const record = recordForMachine(machine);
+        const fields = normalizeFields(machine.fields);
+
+        return (
+          <article className={record ? "latest-response-card has-data" : "latest-response-card"} key={machine.id}>
+            <header className="latest-response-card-head">
+              <div>
+                <strong>{machine.machine_name}</strong>
+                <span>{record ? formatDateTime(record.record_timestamp) : "No submission yet"}</span>
+              </div>
+              <i className={record ? "has-response" : "no-response"}>{record ? "Saved" : "Empty"}</i>
+            </header>
+
+            {record ? (
+              <div className="latest-response-values">
+                {fields.map((field) => {
+                  const value = valueFromRecordField(record, field);
+                  const proof = field.type === "image" ? proofForField(record, field.id) : null;
+                  const displayValue = value === null || value === undefined || value === "" ? "—" : String(value);
+
+                  return (
+                    <div className={field.type === "image" ? "latest-response-field image-field" : "latest-response-field"} key={field.id}>
+                      <span>{visibleVariableName(field, machine.machine_name)}</span>
+                      <div>
+                        <strong>{displayValue}</strong>
+                        {proof?.image_url && (
+                          <a className="latest-proof-link" href={proof.image_url} target="_blank" rel="noreferrer" title={`Open proof for ${field.label}`}>
+                            <img src={proof.image_url} alt={`Proof for ${field.label}`} loading="lazy" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="latest-response-empty">The latest submitted values will appear here.</p>
+            )}
           </article>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
-}
-
-
-function SystemModalShell({ title, children, onClose }) {
-  return (
-    <div className="system-modal-backdrop" role="dialog" aria-modal="true">
-      <section className="system-modal glass-card">
-        <header className="system-modal-head">
-          <h2>{title}</h2>
-          <button className="ghost-button" type="button" onClick={onClose}>Close</button>
-        </header>
-        {children}
-      </section>
-    </div>
-  );
-}
-
-
-function trendStatusLabel(status) {
-  if (status === "below") return "Below";
-  if (status === "above") return "Above";
-  if (status === "normal") return "Normal";
-  return "No Data";
 }
 
 function trendStatusClass(status) {
   if (status === "below" || status === "above") return "warning";
   if (status === "normal") return "normal";
   return "empty";
-}
-
-function TrendMiniChart({ trends = [], thresholdMin, thresholdMax }) {
-  const points = trends
-    .map((item) => ({ ...item, reading: Number(item.reading_value) }))
-    .filter((item) => Number.isFinite(item.reading));
-
-  if (points.length < 2) {
-    return <div className="trend-empty">Need at least 2 readings to draw a trend.</div>;
-  }
-
-  const values = points.map((item) => item.reading);
-  const thresholds = [thresholdMin, thresholdMax].map(Number).filter(Number.isFinite);
-  const min = Math.min(...values, ...thresholds);
-  const max = Math.max(...values, ...thresholds);
-  const range = max === min ? 1 : max - min;
-  const width = 100;
-  const height = 52;
-
-  const coordinates = points.map((item, index) => {
-    const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
-    const y = height - ((item.reading - min) / range) * (height - 8) - 4;
-    return { x, y, item };
-  });
-
-  const path = coordinates.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
-  const yForThreshold = (value) => height - ((Number(value) - min) / range) * (height - 8) - 4;
-
-  return (
-    <div className="trend-chart-wrap">
-      <svg className="trend-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-label="Reading trend">
-        <defs>
-          <linearGradient id="trendFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="rgba(49, 132, 255, 0.28)" />
-            <stop offset="100%" stopColor="rgba(49, 132, 255, 0.02)" />
-          </linearGradient>
-        </defs>
-        {Number.isFinite(Number(thresholdMax)) && <line className="threshold-line high" x1="0" x2="100" y1={yForThreshold(thresholdMax)} y2={yForThreshold(thresholdMax)} />}
-        {Number.isFinite(Number(thresholdMin)) && <line className="threshold-line low" x1="0" x2="100" y1={yForThreshold(thresholdMin)} y2={yForThreshold(thresholdMin)} />}
-        <path className="trend-fill" d={`${path} L100,${height} L0,${height} Z`} />
-        <path className="trend-path" d={path} />
-        {coordinates.slice(-12).map((point) => <circle key={point.item.id} className={point.item.warning_status === "normal" ? "trend-dot" : "trend-dot warn"} cx={point.x} cy={point.y} r="1.7" />)}
-      </svg>
-      <div className="trend-axis-labels"><span>{formatNumber(min)}</span><span>{formatNumber(max)}</span></div>
-    </div>
-  );
-}
-
-function TrendWarningPanel({ trends = [], warnings = [], stats = {}, selectedMachine, latest }) {
-  const latestStatus = latest?.warning_status || stats?.latest_status || "no-data";
-  const latestReading = latest?.reading_value ?? stats?.avg_reading;
-  const machineThresholds = getMachineReadingThresholds(selectedMachine);
-  const thresholdMin = machineThresholds.thresholdMin ?? stats?.threshold_min;
-  const thresholdMax = machineThresholds.thresholdMax ?? stats?.threshold_max;
-  const recentWarnings = warnings.slice(0, 4);
-
-  return (
-    <aside className="trend-warning-panel">
-      <div className="trend-panel-head">
-        <div>
-          <p className="eyebrow">Trends</p>
-          <h2>Reading Trend</h2>
-        </div>
-        <span className={`trend-status-pill ${trendStatusClass(latestStatus)}`}>{trendStatusLabel(latestStatus)}</span>
-      </div>
-
-      <div className="trend-stat-grid">
-        <article><span>Latest</span><strong>{formatNumber(latestReading)}</strong></article>
-        <article><span>Min</span><strong>{thresholdMin === null || thresholdMin === undefined || thresholdMin === "" ? "—" : formatNumber(thresholdMin)}</strong></article>
-        <article><span>Max</span><strong>{thresholdMax === null || thresholdMax === undefined || thresholdMax === "" ? "—" : formatNumber(thresholdMax)}</strong></article>
-      </div>
-
-      <TrendMiniChart trends={trends} thresholdMin={thresholdMin} thresholdMax={thresholdMax} />
-
-      <div className="warning-system-card">
-        <div className="warning-system-title">
-          <span>Warning System</span>
-          <strong>{stats?.warning_count || 0}</strong>
-        </div>
-        {!recentWarnings.length ? (
-          <p className="warning-empty">No threshold warning for this machine.</p>
-        ) : (
-          <div className="warning-list">
-            {recentWarnings.map((warning) => (
-              <article key={warning.id} className="warning-item">
-                <div><strong>{warning.warning_status === "below" ? "Below limit" : "Above limit"}</strong><span>{formatDateTime(warning.record_timestamp)}</span></div>
-                <b>{formatNumber(warning.reading_value)}</b>
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
-    </aside>
-  );
 }
 
 function getRawValueFromRecord(record, key, summary) {
@@ -1112,8 +1008,6 @@ function rangeText(min, max, unit) {
 }
 
 function enhanceFactoryCallouts(configuredCallouts) {
-  // Frontend does not invent callouts anymore.
-  // What appears here is only what the admin saved in app.machine_configs.callouts.
   return normalizeCallouts(configuredCallouts).slice(0, 8);
 }
 
@@ -1139,7 +1033,7 @@ function summaryKeyForField(field) {
   return field.mapsTo && field.mapsTo !== "custom" ? field.mapsTo : field.id;
 }
 
-function buildFactorySummaryRows({ selectedMachine, latest, fields, summary, statusText, warningCount }) {
+function buildFactorySummaryRows({ latest, fields, summary, statusText, warningCount }) {
   const rows = [
     { type: "row", label: "Status", value: statusText, tone: warningCount ? "warn" : latest ? "ok" : "idle" },
     {
@@ -1162,71 +1056,6 @@ function buildFactorySummaryRows({ selectedMachine, latest, fields, summary, sta
   rows.push({ type: "divider", id: "input-divider" });
   return rows;
 }
-
-function seriesForMetric(records, key) {
-  const values = records
-    .slice()
-    .reverse()
-    .map((record) => Number(getRawValueFromRecord(record, key)))
-    .filter(Number.isFinite);
-  if (values.length >= 2) return values.slice(-24);
-  if (values.length === 1) return [values[0], values[0], values[0]];
-  return [0, 0, 0];
-}
-
-function FactorySparkline({ values = [], warning = false }) {
-  const points = values.map(Number).filter(Number.isFinite);
-  const safePoints = points.length ? points : [0, 0, 0];
-  const min = Math.min(...safePoints);
-  const max = Math.max(...safePoints);
-  const range = max === min ? 1 : max - min;
-  const width = 100;
-  const height = 28;
-  const path = safePoints.map((value, index) => {
-    const x = safePoints.length === 1 ? width / 2 : (index / (safePoints.length - 1)) * width;
-    const y = height - ((value - min) / range) * (height - 6) - 3;
-    return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-  }).join(" ");
-
-  return (
-    <svg className={warning ? "factory-sparkline warning" : "factory-sparkline"} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-      <path d={path} />
-    </svg>
-  );
-}
-
-function FactoryPumpFallback() {
-  return (
-    <div className="factory-pump-fallback" aria-hidden="true">
-      <div className="factory-base-plate" />
-      <div className="factory-motor-shell"><span /><span /><span /><span /><span /></div>
-      <div className="factory-motor-cap" />
-      <div className="factory-coupling" />
-      <div className="factory-shaft" />
-      <div className="factory-pump-body" />
-      <div className="factory-pump-flange left" />
-      <div className="factory-pump-flange right" />
-      <div className="factory-pipe-top" />
-      <div className="factory-pipe-nozzle" />
-      <div className="factory-foot left" />
-      <div className="factory-foot right" />
-    </div>
-  );
-}
-
-function FactoryMetricCard({ metric, records }) {
-  return (
-    <article className={metric.status === "warning" ? "factory-trend-card warning" : "factory-trend-card"}>
-      <div>
-        <span>{metric.title}</span>
-        {metric.status === "warning" && <b>⚠</b>}
-      </div>
-      <strong>{metric.value}<small>{metric.unit}</small></strong>
-      <FactorySparkline values={seriesForMetric(records, metric.valueKey)} warning={metric.status === "warning"} />
-    </article>
-  );
-}
-
 
 function getMachineReadingMeta(machine, fieldOverride = null) {
   const fields = normalizeFields(machine?.fields);
@@ -1265,53 +1094,6 @@ function formatRangeText(minimum, maximum) {
   if (!hasMin && !hasMax) return "— — —";
   return `${hasMin ? formatNumber(minimum) : "—"} – ${hasMax ? formatNumber(maximum) : "—"}`;
 }
-
-function TrendOverviewChart({ trends = [], thresholdMin, thresholdMax }) {
-  const points = trends
-    .map((item) => ({ ...item, reading: Number(item.reading_value) }))
-    .filter((item) => Number.isFinite(item.reading));
-
-  if (points.length < 2) {
-    return <div className="trend-overview-empty">Need at least 2 readings to draw a trend.</div>;
-  }
-
-  const values = points.map((item) => item.reading);
-  const thresholds = [thresholdMin, thresholdMax].map(Number).filter(Number.isFinite);
-  const min = Math.min(...values, ...(thresholds.length ? thresholds : values));
-  const max = Math.max(...values, ...(thresholds.length ? thresholds : values));
-  const range = max === min ? 1 : max - min;
-  const width = 100;
-  const height = 60;
-  const chartTop = 5;
-  const chartBottom = height - 6;
-
-  const coordinates = points.map((item, index) => {
-    const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
-    const y = chartBottom - ((item.reading - min) / range) * (chartBottom - chartTop);
-    return { x, y, item };
-  });
-
-  const path = coordinates.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
-  const yForThreshold = (value) => chartBottom - ((Number(value) - min) / range) * (chartBottom - chartTop);
-  const timeMarks = [points[0], points[Math.floor(points.length / 2)], points[points.length - 1]];
-
-  return (
-    <div className="trend-overview-chart-wrap">
-      <svg className="trend-overview-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-label="Machine trend overview chart">
-        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-          const y = chartTop + (chartBottom - chartTop) * ratio;
-          return <line key={ratio} className="trend-overview-gridline" x1="0" y1={y} x2="100" y2={y} />;
-        })}
-        {Number.isFinite(Number(thresholdMax)) && <line className="trend-overview-threshold high" x1="0" x2="100" y1={yForThreshold(thresholdMax)} y2={yForThreshold(thresholdMax)} />}
-        {Number.isFinite(Number(thresholdMin)) && <line className="trend-overview-threshold low" x1="0" x2="100" y1={yForThreshold(thresholdMin)} y2={yForThreshold(thresholdMin)} />}
-        <path className="trend-overview-line" d={path} />
-      </svg>
-      <div className="trend-overview-axis y"><span>{formatNumber(max)}</span><span>{formatNumber((max + min) / 2)}</span><span>{formatNumber(min)}</span></div>
-      <div className="trend-overview-axis x">{timeMarks.map((point, index) => <span key={`${point.id || index}-${index}`}>{formatTrendTime(point.record_timestamp)}</span>)}</div>
-    </div>
-  );
-}
-
 
 function TrendMultiMachineChart({ seriesItems = [] }) {
   const prepared = seriesItems.map((series, seriesIndex) => {
@@ -1405,33 +1187,14 @@ function TrendSparkline({ trends = [], status = "normal" }) {
   );
 }
 
-function TrendProgressRing({ percent = 0 }) {
-  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
-  const radius = 44;
-  const circumference = 2 * Math.PI * radius;
-  const dashOffset = circumference - (safePercent / 100) * circumference;
-
-  return (
-    <div className="trend-progress-ring" aria-label={`${Math.round(safePercent)} percent of target`}>
-      <svg viewBox="0 0 120 120">
-        <circle className="ring-track" cx="60" cy="60" r={radius} />
-        <circle className="ring-progress" cx="60" cy="60" r={radius} strokeDasharray={circumference} strokeDashoffset={dashOffset} />
-      </svg>
-      <div>
-        <strong>{Math.round(safePercent)}%</strong>
-        <span>of target</span>
-      </div>
-    </div>
-  );
-}
-
 function TrendMachineTile({ machine, miniData, isSelected, onSelect }) {
   const miniStats = miniData?.stats || {};
   const miniTrends = miniData?.trends || [];
   const latestPoint = miniTrends[miniTrends.length - 1] || null;
   const latestStatus = miniStats.latest_status || latestPoint?.warning_status || "no-data";
-  const readingMeta = getMachineReadingMeta(machine, miniData?.field);
-  const { thresholdMin, thresholdMax } = getMachineReadingThresholds(machine);
+  const readingMeta = miniData?.field ? getMachineReadingMeta(machine, miniData.field) : { label: "Detail unavailable", unit: "" };
+  const thresholdMin = miniStats.threshold_min ?? null;
+  const thresholdMax = miniStats.threshold_max ?? null;
   const latestReading = latestPoint?.reading_value ?? miniStats.avg_reading;
   const hasImage = Boolean(machine?.image_data_url);
 
@@ -1464,32 +1227,14 @@ function TrendMachineTile({ machine, miniData, isSelected, onSelect }) {
   );
 }
 
-
-
-/* Shared top navigation - every page uses this exact component. */
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function FactoryTopNav({
   activePage = "machine",
   user = null,
   setPage = null,
   onLogout = null,
   standalone = false,
-  selectedDate,
-  onDateChange,
   warningCount = 0,
 }) {
-  const [localDate, setLocalDate] = useState(todayKey());
-  const dateValue = selectedDate ?? localDate;
-
-  function setDate(value) {
-    if (onDateChange) onDateChange(value);
-    else setLocalDate(value);
-  }
-
-
   const isAdmin = isAdminUser(user);
 
   function go(target) {
@@ -1557,16 +1302,14 @@ function FactoryTopNav({
   );
 }
 
-
-/* MachinesPage.jsx */
 function MachinesPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
   const [summary, setSummary] = useState(null);
   const [records, setRecords] = useState([]);
   const [machines, setMachines] = useState([]);
   const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
-  const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
+  const selectedDate = recordDateKey(new Date());
   const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [message, setMessage] = useState("Loading machine feed...");
+  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function loadMachines(site = selectedArea) {
@@ -1586,6 +1329,8 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
       setRecords([]);
       setSummary(null);
       setMessage(`No machines configured for ${site}`);
+    } else {
+      setMessage("");
     }
 
     return machineList;
@@ -1602,7 +1347,7 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
       const recordList = data.records || [];
       setRecords(recordList);
       setSummary(summarizeRecords(recordList));
-      setMessage(recordList.length ? `Database feed for ${date || "all dates"}` : "No data for this machine/date yet");
+      setMessage("");
     } catch (error) {
       setMessage(error.message);
       setRecords([]);
@@ -1632,23 +1377,14 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
   const metrics = factoryCallouts.map((callout) => buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields));
   const warningCount = metrics.filter((metric) => metric.status === "warning").length;
   const statusText = !latest ? "No Data" : warningCount ? "Attention" : "Running";
-  const isAdmin = userRole(user) === "admin";
-  const latestRows = buildFactorySummaryRows({ selectedMachine, latest, fields, summary, statusText, warningCount });
+  const latestRows = buildFactorySummaryRows({ latest, fields, summary, statusText, warningCount });
   const hasMachineImage = Boolean(selectedMachine?.image_data_url);
   const machineImageMap = useFittedImageCanvas(selectedMachine?.image_data_url || "", 16);
   const visibleMetrics = hasMachineImage ? metrics : [];
 
-  function go(target) {
-    if (target === "overview") return;
-    if (!setPage) return;
-    if (target === "alarms" || target === "reports") return setPage("logs");
-    if (target === "maintenance") return setPage(isAdmin ? "system" : "record");
-    setPage(target);
-  }
-
   return (
     <main className="factory-os-page">
-      <FactoryTopNav activePage="machine" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={selectedDate} onDateChange={setSelectedDate} warningCount={warningCount} />
+      <FactoryTopNav activePage="machine" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} warningCount={warningCount} />
 
       <section className="factory-workspace">
         <div className="factory-toolbar-row factory-toolbar-compact">
@@ -1663,6 +1399,8 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
             <button className="factory-slim-refresh" type="button" onClick={() => loadDashboard(selectedMachineId, selectedDate)} disabled={loading || !selectedMachineId}>⟳ Refresh</button>
           </div>
         </div>
+
+        {message && <p className="message compact-message">{message}</p>}
 
         <section className="factory-main-card">
           <aside className="factory-summary-panel factory-summary-panel-compact">
@@ -1722,46 +1460,51 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
   );
 }
 
-
-/* TrendsPage.jsx */
 function TrendsPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
   const [machines, setMachines] = useState([]);
   const [selectedArea, setSelectedArea] = useState("");
-  const [selectedDate, setSelectedDate] = useState(() => recordDateKey(new Date()));
-  const [selectedMachineId, setSelectedMachineId] = useState("");
+  const [selectedDetail, setSelectedDetail] = useState("");
   const [selectedMachineIds, setSelectedMachineIds] = useState([]);
   const [seriesTrendMap, setSeriesTrendMap] = useState({});
   const [machineTrendMap, setMachineTrendMap] = useState({});
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("Select machines to draw trends.");
-  const [trendLimit, setTrendLimit] = useState("80");
+  const [message, setMessage] = useState("Choose a detail, then select machines below.");
+  const trendLimit = "80";
+
+  const detailOptions = useMemo(() => trendOptionsForMachines(machines), [machines]);
+  const selectedDetailLabel = detailOptions.find((option) => option.value === selectedDetail)?.label || "Numeric detail";
 
   async function loadMachines(site = selectedArea) {
     const query = site ? `?site=${encodeURIComponent(site)}` : "";
     const machineData = await fetchJson(`/api/machines${query}`);
     const machineList = machineData.machines || [];
-    setMachines(machineList);
-
     const validIds = new Set(machineList.map((machine) => String(machine.id)));
+    const options = trendOptionsForMachines(machineList);
+
+    setMachines(machineList);
     setSelectedMachineIds((current) => current.filter((id) => validIds.has(String(id))));
-    setSelectedMachineId((current) => validIds.has(String(current)) ? current : String(machineList[0]?.id || ""));
+    setSelectedDetail((current) => options.some((option) => option.value === current) ? current : options[0]?.value || "");
 
     if (!machineList.length) {
-      setMessage(site ? `No machines configured for ${site}` : "No machines configured yet.");
+      setMessage(site ? `No machines configured for ${site}.` : "No machines configured yet.");
       setSeriesTrendMap({});
+      setMachineTrendMap({});
+    } else if (!options.length) {
+      setMessage("These machines do not have numeric details configured yet.");
     }
 
     return machineList;
   }
 
-  async function loadTrendForMachine(machineId, limit = trendLimit, machineList = machines) {
+  async function loadTrendForMachine(machineId, limit = trendLimit, machineList = machines, detail = selectedDetail) {
     if (!machineId) return { field: null, trends: [], warnings: [], stats: null };
-    const machine = machineList.find((item) => String(item.id) === String(machineId)) || machines.find((item) => String(item.id) === String(machineId));
+    const machine = machineList.find((item) => String(item.id) === String(machineId));
+    if (!machine) return { field: null, trends: [], warnings: [], stats: null };
     const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machineId)}&limit=${encodeURIComponent(limit)}`);
-    return buildTrendDataFromRecords(machine, data.records || []);
+    return buildTrendDataFromRecords(machine, data.records || [], detail);
   }
 
-  async function loadSelectedSeries(machineIds = selectedMachineIds, machineList = machines) {
+  async function loadSelectedSeries(machineIds = selectedMachineIds, machineList = machines, detail = selectedDetail) {
     if (!machineIds.length) {
       setSeriesTrendMap({});
       return {};
@@ -1769,8 +1512,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
 
     const entries = await Promise.all(machineIds.map(async (machineId) => {
       try {
-        const data = await loadTrendForMachine(machineId, trendLimit, machineList);
-        return [String(machineId), data];
+        return [String(machineId), await loadTrendForMachine(machineId, trendLimit, machineList, detail)];
       } catch {
         return [String(machineId), { field: null, trends: [], warnings: [], stats: null }];
       }
@@ -1781,7 +1523,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     return nextMap;
   }
 
-  async function loadGridSummaries(machineList = machines) {
+  async function loadGridSummaries(machineList = machines, detail = selectedDetail) {
     if (!machineList.length) {
       setMachineTrendMap({});
       return;
@@ -1790,7 +1532,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     const entries = await Promise.all(machineList.map(async (machine) => {
       try {
         const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machine.id)}&limit=24`);
-        return [String(machine.id), buildTrendDataFromRecords(machine, data.records || [])];
+        return [String(machine.id), buildTrendDataFromRecords(machine, data.records || [], detail)];
       } catch {
         return [String(machine.id), { field: null, trends: [], warnings: [], stats: null }];
       }
@@ -1803,8 +1545,13 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     try {
       setLoading(true);
       const machineList = await loadMachines(selectedArea);
-      await Promise.all([loadGridSummaries(machineList), loadSelectedSeries(selectedMachineIds, machineList)]);
-      setMessage(selectedMachineIds.length ? "Live trend comparison from the database." : "Select machines to draw trends.");
+      const options = trendOptionsForMachines(machineList);
+      const detail = options.some((option) => option.value === selectedDetail) ? selectedDetail : options[0]?.value || "";
+      await Promise.all([
+        loadGridSummaries(machineList, detail),
+        loadSelectedSeries(selectedMachineIds, machineList, detail),
+      ]);
+      setMessage(selectedMachineIds.length ? `Showing ${options.find((option) => option.value === detail)?.label || "numeric detail"} across the selected machines.` : "Choose machines from the cards below.");
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -1814,31 +1561,34 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
 
   function toggleMachine(machineId) {
     const id = String(machineId);
-    setSelectedMachineId(id);
     setSelectedMachineIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
-  }
-
-  function addSelectedMachine() {
-    if (!selectedMachineId) return;
-    setSelectedMachineIds((current) => current.includes(String(selectedMachineId)) ? current : [...current, String(selectedMachineId)]);
   }
 
   function clearSelectedMachines() {
     setSelectedMachineIds([]);
     setSeriesTrendMap({});
-    setMessage("Selection cleared. Select machines to draw trends.");
+    setMessage("Selection cleared. Choose machines from the cards below.");
   }
 
   useEffect(() => {
-    loadMachines(selectedArea)
-      .then((machineList) => Promise.all([loadGridSummaries(machineList), loadSelectedSeries(selectedMachineIds, machineList)]))
-      .catch((error) => setMessage(error.message));
+    loadMachines(selectedArea).catch((error) => setMessage(error.message));
   }, [selectedArea]);
 
   useEffect(() => {
-    if (machines.length && selectedMachineIds.length) loadSelectedSeries(selectedMachineIds, machines).catch((error) => setMessage(error.message));
-    if (!selectedMachineIds.length) setSeriesTrendMap({});
-  }, [selectedMachineIds, trendLimit, machines.length]);
+    if (!machines.length || !selectedDetail) {
+      setMachineTrendMap({});
+      return;
+    }
+    loadGridSummaries(machines, selectedDetail).catch((error) => setMessage(error.message));
+  }, [machines, selectedDetail]);
+
+  useEffect(() => {
+    if (!selectedMachineIds.length || !selectedDetail) {
+      setSeriesTrendMap({});
+      return;
+    }
+    loadSelectedSeries(selectedMachineIds, machines, selectedDetail).catch((error) => setMessage(error.message));
+  }, [selectedMachineIds, selectedDetail, machines]);
 
   const seriesItems = selectedMachineIds.map((machineId) => {
     const machine = machines.find((item) => String(item.id) === String(machineId));
@@ -1846,7 +1596,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     const data = seriesTrendMap[String(machineId)] || { field: null, trends: [], warnings: [], stats: null };
     const latest = [...(data.trends || [])].reverse().find((item) => Number.isFinite(Number(item.reading_value))) || null;
     const stats = data.stats || {};
-    const meta = getMachineReadingMeta(machine, data.field);
+    const meta = data.field ? getMachineReadingMeta(machine, data.field) : { label: selectedDetailLabel, unit: "" };
     return {
       id: String(machineId),
       machine,
@@ -1859,20 +1609,10 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
   }).filter(Boolean);
 
   const totalWarnings = seriesItems.reduce((sum, item) => sum + Number(item.stats?.warning_count || 0), 0);
-  const isAdmin = userRole(user) === "admin";
-  const visibleMachines = machines;
-
-  function go(target) {
-    if (target === "overview") return;
-    if (!setPage) return;
-    if (target === "alarms" || target === "reports") return setPage("logs");
-    if (target === "maintenance") return setPage(isAdmin ? "system" : "record");
-    setPage(target);
-  }
 
   return (
     <main className="factory-os-page factory-trends-page">
-      <FactoryTopNav activePage="trends" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={selectedDate} onDateChange={setSelectedDate} warningCount={totalWarnings} />
+      <FactoryTopNav activePage="trends" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} warningCount={totalWarnings} />
 
       <section className="factory-trends-workspace">
         <section className="factory-trends-overview-card">
@@ -1880,21 +1620,24 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
             <div className="factory-trends-card-head">
               <div>
                 <p className="eyebrow">Trend Comparison</p>
-                <h2>{seriesItems.length ? `${seriesItems.length} selected machine${seriesItems.length > 1 ? "s" : ""}` : "Select machines to compare"}</h2>
-                <p><span className="trend-legend-dot" />Overlay numeric machine measurements in one graph.</p>
+                <h2>{seriesItems.length ? `${selectedDetailLabel} · ${seriesItems.length} selected machine${seriesItems.length > 1 ? "s" : ""}` : `Select machines for ${selectedDetailLabel}`}</h2>
+                <p><span className="trend-legend-dot" />Compare the same detail across multiple machines.</p>
               </div>
               <div className="factory-trends-actions">
-                <select className="factory-area-inline-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Select area">
-                  <option value="">All</option>
-                  {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
-                </select>
-                <select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={loading || !machines.length} aria-label="Select machine">
-                  {!machines.length && <option value="">No machines</option>}
-                  {machines.map((machine) => (
-                    <option key={machine.id} value={String(machine.id)}>{machine.machine_name}</option>
-                  ))}
-                </select>
-                <button className="secondary-button" type="button" onClick={addSelectedMachine} disabled={loading || !selectedMachineId}>Add</button>
+                <label className="trend-filter-control">
+                  <span>Area</span>
+                  <select className="factory-area-inline-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Select area">
+                    <option value="">All</option>
+                    {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+                  </select>
+                </label>
+                <label className="trend-filter-control detail-filter-control">
+                  <span>Detail</span>
+                  <select value={selectedDetail} onChange={(event) => setSelectedDetail(event.target.value)} disabled={loading || !detailOptions.length} aria-label="Select detail">
+                    {!detailOptions.length && <option value="">No numeric details</option>}
+                    {detailOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
                 <button type="button" onClick={refreshAll} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
               </div>
             </div>
@@ -1912,14 +1655,14 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
 
             <div className="trend-compare-series-list">
               {!seriesItems.length ? (
-                <p className="empty-state">Click machine cards below or use Add above.</p>
+                <p className="empty-state">Select machine cards below. The graph will use {selectedDetailLabel}.</p>
               ) : seriesItems.map((item, index) => (
                 <article key={item.id} className="trend-compare-series-card">
                   <div className="trend-compare-series-head">
                     <span className={`trend-series-swatch series-${index % 8}`} />
                     <div>
                       <strong>{item.machine.machine_name}</strong>
-                      <small>{item.machine.site_name || "—"} • {item.meta.label || "Numeric"}</small>
+                      <small>{item.machine.site_name || "—"} • {item.meta.label || selectedDetailLabel}</small>
                     </div>
                     <button className="ghost-button small" type="button" onClick={() => toggleMachine(item.id)}>×</button>
                   </div>
@@ -1934,10 +1677,10 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
         </section>
 
         <section className="factory-trends-machine-grid" aria-label="Configured machines">
-          {!visibleMachines.length ? (
+          {!machines.length ? (
             <div className="empty-state">No machines configured for {selectedArea || "All"}.</div>
           ) : (
-            visibleMachines.map((machine) => (
+            machines.map((machine) => (
               <TrendMachineTile
                 key={machine.id}
                 machine={machine}
@@ -1949,14 +1692,12 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
           )}
         </section>
 
-        <div className="factory-trends-footer">{message} {machines.length ? `• Showing ${visibleMachines.length} of ${machines.length} machines` : ""}</div>
+        <div className="factory-trends-footer">{message} {machines.length ? `• ${machines.length} machines • Detail: ${selectedDetailLabel}` : ""}</div>
       </section>
     </main>
   );
 }
 
-
-/* LogsPage.jsx */
 function LogsPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
   const [records, setRecords] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -1966,7 +1707,6 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
   const [filters, setFilters] = useState({ search: "", machine: "", site: "", date: "" });
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 8;
-  const isAdmin = userRole(user) === "admin";
 
   function updateFilter(field, value) {
     setFilters((current) => ({ ...current, [field]: value }));
@@ -2034,12 +1774,37 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
     return machine ? normalizeFields(machine.fields) : [];
   }
 
+  function logFieldInfo(record, column) {
+    const field = fieldsForRecord(record).find(
+      (item) => slugText(visibleVariableName(item, record.machine_name)) === column.key
+    );
+
+    if (field) {
+      return {
+        field,
+        value: valueFromRecordField(record, field),
+        proof: field.type === "image" ? proofForField(record, field.id) : null,
+      };
+    }
+
+    const responseFields = record.response_fields && typeof record.response_fields === "object" ? record.response_fields : {};
+    const directKey = Object.keys(responseFields).find((keyName) => slugText(keyName) === column.key);
+
+    return {
+      field: null,
+      value: directKey ? responseFields[directKey] : "",
+      proof: null,
+    };
+  }
+
   function valueForLogField(record, column) {
-    const fields = fieldsForRecord(record);
-    const field = fields.find((item) => slugText(visibleVariableName(item, record.machine_name)) === column.key);
-    const value = valueFromRecordField(record, field);
-    if (field?.type === "image") return value ? "Image" : "—";
+    const { value } = logFieldInfo(record, column);
     return value === null || value === undefined || value === "" ? "—" : String(value);
+  }
+
+  function renderLogField(record, column) {
+    const { value, proof } = logFieldInfo(record, column);
+    return <ProofValue value={value} proof={proof} />;
   }
 
   const logColumns = useMemo(() => {
@@ -2088,7 +1853,6 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
   const filteredSummary = useMemo(() => summarizeRecords(filteredRecords), [filteredRecords]);
   const hasFilters = Object.values(filters).some(Boolean);
   const activeSummary = hasFilters ? filteredSummary : summary;
-  const selectedArea = filters.site || siteOptions[0];
   const bellCount = 0;
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
@@ -2104,15 +1868,6 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
 
   function initials(name = "User") {
     return String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "U";
-  }
-
-  function go(target) {
-    if (target === "overview") return;
-    if (!setPage) return;
-    if (target === "alarms" || target === "reports") return setPage("logs");
-    if (target === "register") return setPage("adminRegister");
-    if (target === "logout") return onLogout?.();
-    setPage(target);
   }
 
   function statCards() {
@@ -2134,22 +1889,15 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
 
   function Icon({ name }) {
     if (name === "list") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h10M8 12h10M8 17h10M4 7h.01M4 12h.01M4 17h.01" /></svg>;
-    if (name === "user") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0" /></svg>;
     if (name === "bowl") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14a7 7 0 0 1-14 0Zm5-5c0 1 .5 1.5 1.5 2.5M14 6c0 1 .5 1.5 1.5 2.5" /></svg>;
     if (name === "bottle") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h4m-3 0v3l-3 4v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-7l-3-4V4" /></svg>;
     if (name === "clipboard") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l1 2h2v14H6V6h2l1-2Zm0 5h6M9 13h6M9 17h4" /></svg>;
-    if (name === "machine") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v8H4zM7 8V5h10v3M7 16v3M17 16v3" /></svg>;
-    if (name === "trend") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17V7m0 10h16M7 14l4-4 3 2 4-5" /></svg>;
-    if (name === "settings") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 0 0 12 8.5Zm8 3.5-.9-.3a7.9 7.9 0 0 0-.5-1.2l.5-.8-1.7-1.7-.8.5c-.4-.2-.8-.4-1.2-.5L15 5h-6l-.3.9c-.4.1-.8.3-1.2.5l-.8-.5-1.7 1.7.5.8c-.2.4-.4.8-.5 1.2L4 12l.9.3c.1.4.3.8.5 1.2l-.5.8 1.7 1.7.8-.5c.4.2.8.4 1.2.5L9 19h6l.3-.9c.4-.1.8-.3 1.2-.5l.8.5 1.7-1.7-.5-.8c.2-.4.4-.8.5-1.2L20 12Z" /></svg>;
-    if (name === "register") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 19a5 5 0 0 0-10 0m5-8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 8v-6m-3 3h6" /></svg>;
-    if (name === "logs") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12v14H6zM9 9h6M9 13h6M9 17h4" /></svg>;
-    if (name === "logout") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 17l5-5-5-5M20 12H9M12 19H5V5h7" /></svg>;
     return null;
   }
 
   return (
     <main className="factory-logs-page">
-      <FactoryTopNav activePage="logs" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} selectedDate={filters.date} onDateChange={(value) => updateFilter("date", value)} warningCount={bellCount} />
+      <FactoryTopNav activePage="logs" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} warningCount={bellCount} />
 
       <section className="logs-dashboard-shell compact-logs-layout">
         <section className="logs-main-panel">
@@ -2219,7 +1967,13 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
                       <td><div className="logs-operator-cell"><span className="logs-avatar">{initials(record.operator_name)}</span><span>{record.operator_name || "—"}</span></div></td>
                       <td>{record.site_name || "—"}</td>
                       <td>{record.machine_name || "—"}</td>
-                      {logColumns.map((column) => <td key={`${record.id}-${column.key}`}><span className={`logs-variable-value ${variableToneClass(column.label)}`}>{valueForLogField(record, column)}</span></td>)}
+                      {logColumns.map((column) => (
+                        <td key={`${record.id}-${column.key}`}>
+                          <span className={`logs-variable-value ${variableToneClass(column.label)}`}>
+                            {renderLogField(record, column)}
+                          </span>
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
@@ -2242,8 +1996,6 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
   );
 }
 
-
-/* RegisterPage.jsx */
 function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLogout = null, standalone = false }) {
   const [userForm, setUserForm] = useState({ ...emptyUserForm, roleName: "operator" });
   const [imageDataUrl, setImageDataUrl] = useState("");
@@ -2305,8 +2057,6 @@ function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLo
   );
 }
 
-
-/* SystemRegistrationPage.jsx */
 function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
   const [machines, setMachines] = useState([]);
   const [form, setForm] = useState(emptyMachineForm);
@@ -2410,13 +2160,6 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
       fields: current.fields.map((field, i) => (
         i === index ? { ...field, optionsText: value, options: splitFieldOptions(value) } : field
       )),
-    }));
-  }
-
-  function updateCallout(index, key, value) {
-    setForm((current) => ({
-      ...current,
-      callouts: current.callouts.map((callout, i) => (i === index ? { ...callout, [key]: value } : callout)),
     }));
   }
 
@@ -2643,14 +2386,6 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     setManageMode(null);
   }
 
-  function addField() {
-    addVariable();
-  }
-
-  function addCallout() {
-    addVariable();
-  }
-
   function previewCardMeta(callout) {
     const mappedField = form.fields.find((field) => String(field.id) === String(callout.valueKey));
     const title = mappedField ? visibleVariableName(mappedField, form.machine_name) : (callout.title || "Value");
@@ -2687,10 +2422,6 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     }
 
     const activeCallout = callout || makeCalloutForField(field, fieldIndex);
-
-    function handleVariableIdChange(value) {
-      updateField(fieldIndex, "id", value);
-    }
 
     function handlePlace(mode) {
       const nextCallout = ensureVariableCallout(field) || activeCallout;
@@ -2768,7 +2499,6 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     );
   }
 
-
   useEffect(() => {
     loadMachines(true).catch((error) => setMessage(error.message));
     return () => {
@@ -2798,7 +2528,6 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
   }, [form]);
-
 
   return (
     <>
@@ -2936,7 +2665,6 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
 }
 
 
-/* App shell/auth/register/record pages */
 function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser }) {
   const [faceOpen, setFaceOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -3053,7 +2781,7 @@ function TopBar({ user, page, setPage, onLogout }) {
           </>
         ) : (
           <>
-            <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Record Input</button>
+            <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Submit</button>
             <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
             <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
           </>
@@ -3067,38 +2795,97 @@ function TopBar({ user, page, setPage, onLogout }) {
 function RecordInputPage({ user }) {
   const [machines, setMachines] = useState([]);
   const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
-  const [selectedMachineId, setSelectedMachineId] = useState("");
-  const [values, setValues] = useState({});
+  const [valuesByMachine, setValuesByMachine] = useState({});
+  const [proofsByMachine, setProofsByMachine] = useState({});
   const [records, setRecords] = useState([]);
-  const [saving, setSaving] = useState(false);
+  const [savingAll, setSavingAll] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [scanField, setScanField] = useState(null);
+  const [machineMessages, setMachineMessages] = useState({});
+  const [scanTarget, setScanTarget] = useState(null);
+  const [mobileView, setMobileView] = useState("answer");
 
-  const selectedMachine = machines.find((machine) => String(machine.id) === String(selectedMachineId)) || machines[0];
-  const fields = normalizeFields(selectedMachine?.fields);
-
-  function updateValue(fieldId, value) {
-    setValues((current) => ({ ...current, [fieldId]: value }));
+  function updateValue(machineId, fieldId, value) {
+    setValuesByMachine((current) => ({
+      ...current,
+      [machineId]: {
+        ...(current[machineId] || {}),
+        [fieldId]: value,
+      },
+    }));
   }
 
-  async function loadMachines(site = selectedArea) {
-    const data = await fetchJson(`/api/machines?site=${encodeURIComponent(site)}`);
-    const machineList = data.machines || [];
-    setMachines(machineList);
-    const stillAvailable = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
-    if (stillAvailable) {
-      setSelectedMachineId(String(stillAvailable.id));
-    } else {
-      setSelectedMachineId(machineList[0] ? String(machineList[0].id) : "");
+  function updateProof(machineId, fieldId, proof) {
+    setProofsByMachine((current) => ({
+      ...current,
+      [machineId]: {
+        ...(current[machineId] || {}),
+        [fieldId]: proof,
+      },
+    }));
+  }
+
+  function getLatestRecord(machine, latestRecords) {
+    return latestRecords.find((record) => String(record.machine_config_id) === String(machine.id)) || latestRecords.find(
+      (record) => String(record.machine_name || "").trim().toLowerCase() === String(machine.machine_name || "").trim().toLowerCase()
+    ) || null;
+  }
+
+  function prefillMachineValues(machine, latestRecord) {
+    return Object.fromEntries(normalizeFields(machine.fields).map((field) => {
+      if (field.type === "image") return [field.id, ""];
+      const value = valueFromRecordField(latestRecord, field);
+      return [field.id, value === null || value === undefined ? "" : value];
+    }));
+  }
+
+  function latestQuery(site, operatorScoped = false) {
+    const params = new URLSearchParams({ site });
+    if (operatorScoped && user?.id) params.set("operator_id", String(user.id));
+    return params.toString();
+  }
+
+  async function loadArea(site = selectedArea) {
+    try {
+      setLoading(true);
+      setMessage("");
+      const [machineData, prefillData, latestData] = await Promise.all([
+        fetchJson(`/api/machines?site=${encodeURIComponent(site)}`),
+        fetchJson(`/api/records/latest-by-machine?${latestQuery(site)}`),
+        fetchJson(`/api/records/latest-by-machine?${latestQuery(site, true)}`),
+      ]);
+
+      const machineList = machineData.machines || [];
+      const prefillRecords = prefillData.records || [];
+      const nextValues = {};
+
+      for (const machine of machineList) {
+        nextValues[machine.id] = prefillMachineValues(machine, getLatestRecord(machine, prefillRecords));
+      }
+
+      setMachines(machineList);
+      setValuesByMachine(nextValues);
+      setProofsByMachine({});
+      setMachineMessages({});
+      setRecords(latestData.records || []);
+      setMobileView("answer");
+
+      if (!machineList.length) setMessage(`No machines are configured for ${site}.`);
+    } catch (error) {
+      setMachines([]);
+      setValuesByMachine({});
+      setProofsByMachine({});
+      setRecords([]);
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function loadMyRecords() {
+  async function refreshLatestResponses() {
     try {
       setLoading(true);
-      const query = user?.id ? `?operator_id=${user.id}&limit=50` : "?limit=50";
-      const data = await fetchJson(`/api/records${query}`);
+      const data = await fetchJson(`/api/records/latest-by-machine?${latestQuery(selectedArea, true)}`);
       setRecords(data.records || []);
     } catch (error) {
       setMessage(error.message);
@@ -3107,138 +2894,287 @@ function RecordInputPage({ user }) {
     }
   }
 
-  function extractStandardValues() {
+  function standardValues(machine, machineValues) {
     const output = { reading_value: "", product: "", batch_number: "", remarks: "" };
-    for (const field of fields) {
-      if (["reading_value", "product", "batch_number", "remarks"].includes(field.mapsTo)) output[field.mapsTo] = values[field.id] ?? "";
+    for (const field of normalizeFields(machine.fields)) {
+      if (["reading_value", "product", "batch_number", "remarks"].includes(field.mapsTo)) {
+        output[field.mapsTo] = machineValues[field.id] ?? "";
+      }
     }
     return output;
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
-    setMessage("");
-    if (!selectedMachine) return setMessage("No machine is configured yet. Ask admin to create one.");
-    for (const field of fields) {
-      if (field.required && !String(values[field.id] ?? "").trim()) return setMessage(`${field.label} is required.`);
+  function validateMachine(machine, machineValues, machineProofs) {
+    for (const field of normalizeFields(machine.fields)) {
+      const value = String(machineValues[field.id] ?? "").trim();
+      if (field.required && !value) return `${field.label} is required.`;
+      if (field.type === "image") {
+        const proof = machineProofs[field.id];
+        if (value && !proof?.imageDataUrl) return `Capture a new proof image for ${field.label}.`;
+        if (field.required && !proof?.imageDataUrl) return `${field.label} needs a new proof image.`;
+      }
     }
-    try {
-      setSaving(true);
-      const standard = extractStandardValues();
-      const data = await fetchJson("/api/records/upsert", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...standard,
-          response_fields: values,
-          machine_config_id: selectedMachine.id,
-          machine_name: selectedMachine.machine_name,
-          operator_id: user?.id || null,
-          operator_name: userDisplayName(user),
-          site_name: selectedArea,
-        }),
-      });
-      setMessage("Response submitted.");
-      await loadMyRecords();
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setSaving(false);
-    }
+    return "";
   }
 
-  useEffect(() => {
-    loadMachines(selectedArea).catch((error) => setMessage(error.message));
-  }, [selectedArea]);
+  function machineProgress(machine) {
+    const fields = normalizeFields(machine.fields);
+    const machineValues = valuesByMachine[machine.id] || {};
+    const machineProofs = proofsByMachine[machine.id] || {};
+    const completed = fields.filter((field) => {
+      if (field.type === "image") return Boolean(machineProofs[field.id]?.imageDataUrl);
+      return String(machineValues[field.id] ?? "").trim() !== "";
+    }).length;
 
-  useEffect(() => {
-    loadMyRecords();
-  }, [user?.id]);
+    return {
+      completed,
+      total: fields.length,
+      ready: !validateMachine(machine, machineValues, machineProofs),
+    };
+  }
 
-  async function loadLatestMachineValues(machine) {
-    if (!machine?.id) {
-      setValues({});
+  function buildPayload(machine) {
+    const machineValues = valuesByMachine[machine.id] || {};
+    const machineProofs = proofsByMachine[machine.id] || {};
+    const fields = normalizeFields(machine.fields);
+    const proofs = fields
+      .filter((field) => field.type === "image" && machineProofs[field.id]?.imageDataUrl)
+      .map((field) => ({
+        field_id: field.id,
+        field_label: field.label,
+        recognized_value: String(machineValues[field.id] ?? ""),
+        image_data_url: machineProofs[field.id].imageDataUrl,
+        mime_type: machineProofs[field.id].mimeType || "image/jpeg",
+      }));
+
+    return {
+      ...standardValues(machine, machineValues),
+      response_fields: machineValues,
+      proofs,
+      machine_config_id: machine.id,
+      machine_name: machine.machine_name,
+      operator_id: user?.id || null,
+      operator_name: userDisplayName(user),
+      site_name: selectedArea,
+    };
+  }
+
+  async function submitAllMachines() {
+    const errors = {};
+
+    for (const machine of machines) {
+      const error = validateMachine(machine, valuesByMachine[machine.id] || {}, proofsByMachine[machine.id] || {});
+      if (error) errors[machine.id] = error;
+    }
+
+    setMachineMessages(errors);
+
+    if (Object.keys(errors).length) {
+      const firstMachineId = Object.keys(errors)[0];
+      setMobileView("answer");
+      setMessage(`Review ${Object.keys(errors).length} machine${Object.keys(errors).length === 1 ? "" : "s"} before submitting.`);
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-machine-id="${firstMachineId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
       return;
     }
 
     try {
-      const data = await fetchJson(`/api/dashboard/summary?machine_config_id=${machine.id}`);
-      const latest = data.latest?.[0];
-      if (!latest) {
-        setValues({});
-        return;
-      }
+      setSavingAll(true);
+      setMessage("");
+      const data = await fetchJson("/api/records/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records: machines.map(buildPayload) }),
+      });
 
-      const latestFields = latest.response_fields && typeof latest.response_fields === "object" ? latest.response_fields : {};
-      const nextValues = { ...latestFields };
-      for (const field of normalizeFields(machine.fields)) {
-        if (nextValues[field.id] !== undefined && nextValues[field.id] !== null) continue;
-        if (field.mapsTo === "reading_value") nextValues[field.id] = latest.reading_value ?? "";
-        if (field.mapsTo === "product") nextValues[field.id] = latest.product ?? "";
-        if (field.mapsTo === "batch_number") nextValues[field.id] = latest.batch_number ?? "";
-        if (field.mapsTo === "remarks") nextValues[field.id] = latest.remarks ?? "";
-      }
-      setValues(nextValues);
+      setValuesByMachine((current) => Object.fromEntries(machines.map((machine) => [
+        machine.id,
+        Object.fromEntries(normalizeFields(machine.fields).map((field) => [
+          field.id,
+          field.type === "image" ? "" : current[machine.id]?.[field.id] ?? "",
+        ])),
+      ])));
+      setProofsByMachine({});
+      setMachineMessages({});
+
+      const latestData = await fetchJson(`/api/records/latest-by-machine?${latestQuery(selectedArea, true)}`);
+      setRecords(latestData.records || []);
+      setMessage(`Saved ${data.records?.length || machines.length} machine${machines.length === 1 ? "" : "s"}.`);
+      setMobileView("latest");
     } catch (error) {
-      setValues({});
       setMessage(error.message);
+    } finally {
+      setSavingAll(false);
     }
   }
 
   useEffect(() => {
-    loadLatestMachineValues(selectedMachine);
-  }, [selectedMachineId, selectedMachine?.id]);
+    loadArea(selectedArea);
+  }, [selectedArea, user?.id]);
+
+  const readyCount = machines.filter((machine) => machineProgress(machine).ready).length;
 
   return (
     <main className="form-page app-gradient page-pad record-page-mobile">
-      <section className="form-layout">
-        <form className="input-form glass-card" onSubmit={handleSubmit}>
-          <div className="form-title-row">
-            <div><p className="eyebrow">Record Input</p><h1>Confirmation Response</h1></div>
+      <section className="record-workspace">
+        <header className="record-command-bar glass-card">
+          <div className="record-command-copy">
+            <p className="eyebrow">Area Confirmation</p>
+            <h1>{selectedArea} Checks</h1>
+            <p>Complete every machine below. Previous answers are prefilled; proof photos always start empty.</p>
           </div>
-          <div className="record-machine-pickers">
-            <label>{requiredLabel("Area")}<select value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
-            <label>{requiredLabel("Machine")}<select value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} required>{!machines.length && <option value="">No machines configured</option>}{machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}</select></label>
+
+          <div className="record-command-actions">
+            <label className="record-area-control">
+              <span>Area</span>
+              <select value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} disabled={savingAll}>
+                {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+              </select>
+            </label>
+            <div className="record-ready-summary" aria-label={`${readyCount} of ${machines.length} machines ready`}>
+              <strong>{readyCount}/{machines.length}</strong>
+              <span>Ready</span>
+            </div>
+            <button className="record-submit-all-button" type="button" onClick={submitAllMachines} disabled={savingAll || loading || !machines.length}>
+              {savingAll ? "Saving..." : "Submit All"}
+            </button>
           </div>
-          {selectedMachine?.details && <div className="machine-details-note">{selectedMachine.details}</div>}
-          <div className="field-grid two dynamic-field-grid">
-            {fields.map((field) => (
-              <label key={field.id} className={field.type === "textarea" || field.type === "image" ? "wide-field" : ""}>
-                {field.required ? requiredLabel(field.label) : field.label}
-                {field.type === "textarea" ? (
-                  <textarea rows="3" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={field.label} required={field.required} />
-                ) : field.type === "image" ? (
-                  <div className="image-answer-row">
-                    <input type="text" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={`AI value for ${field.aiTarget || field.label || "target"}`} required={field.required} />
-                    <button className="secondary-button image-scan-button" type="button" onClick={() => setScanField(field)}>Image</button>
-                  </div>
-                ) : field.type === "option" ? (
-                  <select className="option-answer-select" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} required={field.required}>
-                    <option value="">Select {field.label}</option>
-                    {splitFieldOptions(field.options ?? field.optionsText).map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input type={field.type === "number" ? "number" : "text"} step="any" value={values[field.id] || ""} onChange={(event) => updateValue(field.id, event.target.value)} placeholder={field.label} required={field.required} />
-                )}
-              </label>
-            ))}
-          </div>
-          <button type="submit" disabled={saving || !selectedMachine}>{saving ? "Saving..." : "Submit Response"}</button>
-          {message && <p className="message">{message}</p>}
-        </form>
-        <section className="side-card glass-card">
-          <div className="records-header compact"><div><p className="eyebrow">My Logs</p><h2>Recent Responses</h2></div><button className="secondary-button" type="button" onClick={loadMyRecords} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button></div>
-          <RecordList records={records} compact machines={machines} />
-        </section>
+        </header>
+
+        {message && <p className="message record-global-message">{message}</p>}
+
+        <div className="record-mobile-view-switch" role="tablist" aria-label="Record view">
+          <button type="button" className={mobileView === "answer" ? "active" : ""} onClick={() => setMobileView("answer")}>Answer</button>
+          <button type="button" className={mobileView === "latest" ? "active" : ""} onClick={() => setMobileView("latest")}>Latest</button>
+        </div>
+
+        <div className={`record-main-layout mobile-view-${mobileView}`}>
+          <section className="record-machines-panel glass-card">
+            <div className="record-section-heading record-machines-heading">
+              <div>
+                <span>Machine Checks</span>
+                <strong>{machines.length} machines in {selectedArea}</strong>
+              </div>
+              <small>One submission saves everything</small>
+            </div>
+
+            <div className="record-machine-grid">
+              {loading && !machines.length ? (
+                <p className="empty-state">Loading machines...</p>
+              ) : !machines.length ? (
+                <p className="empty-state">No machine is available for this area.</p>
+              ) : machines.map((machine, index) => {
+                const fields = normalizeFields(machine.fields);
+                const machineValues = valuesByMachine[machine.id] || {};
+                const machineProofs = proofsByMachine[machine.id] || {};
+                const progress = machineProgress(machine);
+
+                return (
+                  <article
+                    className={`record-machine-card tone-${index % 4} ${progress.ready ? "ready" : "needs-input"} ${machineMessages[machine.id] ? "has-error" : ""}`}
+                    data-machine-id={machine.id}
+                    key={machine.id}
+                  >
+                    <header className="record-machine-card-head">
+                      <div className="record-machine-title-row">
+                        <span className="record-machine-number">{index + 1}</span>
+                        <div>
+                          <small>{selectedArea}</small>
+                          <h2>{machine.machine_name}</h2>
+                          {machine.details && <p>{machine.details}</p>}
+                        </div>
+                      </div>
+                      <div className={progress.ready ? "record-machine-state ready" : "record-machine-state"}>
+                        {progress.ready ? "Ready" : `${progress.completed}/${progress.total}`}
+                      </div>
+                    </header>
+
+                    <div className="record-machine-fields field-grid two dynamic-field-grid">
+                      {fields.map((field) => {
+                        const value = machineValues[field.id] ?? "";
+                        const proof = machineProofs[field.id];
+
+                        return (
+                          <label key={field.id} className={field.type === "textarea" || field.type === "image" ? "wide-field" : ""}>
+                            {field.required ? requiredLabel(field.label) : field.label}
+
+                            {field.type === "textarea" ? (
+                              <textarea rows="3" value={value} onChange={(event) => updateValue(machine.id, field.id, event.target.value)} placeholder={field.label} required={field.required} disabled={savingAll} />
+                            ) : field.type === "image" ? (
+                              <div className="image-answer-block">
+                                <div className="image-answer-row">
+                                  <input
+                                    type="text"
+                                    value={value}
+                                    onChange={(event) => updateValue(machine.id, field.id, event.target.value)}
+                                    placeholder={`Recognized ${field.aiTarget || field.label || "value"}`}
+                                    required={field.required}
+                                    disabled={savingAll}
+                                  />
+                                  <button className="secondary-button image-scan-button" type="button" onClick={() => setScanTarget({ machine, field })} disabled={savingAll}>
+                                    {proof ? "Retake" : "Capture"}
+                                  </button>
+                                </div>
+                                {proof?.imageDataUrl && (
+                                  <div className="new-proof-preview">
+                                    <img src={proof.imageDataUrl} alt={`New proof for ${field.label}`} />
+                                    <span>Proof ready</span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : field.type === "option" ? (
+                              <select className="option-answer-select" value={value} onChange={(event) => updateValue(machine.id, field.id, event.target.value)} required={field.required} disabled={savingAll}>
+                                <option value="">Select {field.label}</option>
+                                {splitFieldOptions(field.options ?? field.optionsText).map((option) => <option key={option} value={option}>{option}</option>)}
+                              </select>
+                            ) : (
+                              <input
+                                type={field.type === "number" ? "number" : "text"}
+                                step="any"
+                                value={value}
+                                onChange={(event) => updateValue(machine.id, field.id, event.target.value)}
+                                placeholder={field.label}
+                                required={field.required}
+                                disabled={savingAll}
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    {machineMessages[machine.id] && <p className="message machine-error-message">{machineMessages[machine.id]}</p>}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <aside className="record-recent-panel glass-card">
+            <div className="record-section-heading latest-heading">
+              <div>
+                <span>Latest Answers</span>
+                <strong>Your newest value per machine</strong>
+              </div>
+              <button className="secondary-button small" type="button" onClick={refreshLatestResponses} disabled={loading || savingAll}>
+                {loading ? "Loading" : "Refresh"}
+              </button>
+            </div>
+            <LatestMachineResponseList records={records} machines={machines} />
+          </aside>
+        </div>
       </section>
-      {scanField && (
+
+      {scanTarget && (
         <ImageScanModal
-          field={scanField}
-          machine={selectedMachine}
-          onClose={() => setScanField(null)}
-          onValue={(value) => updateValue(scanField.id, value)}
+          field={scanTarget.field}
+          machine={scanTarget.machine}
+          onClose={() => setScanTarget(null)}
+          onScan={(scan) => {
+            updateValue(scanTarget.machine.id, scanTarget.field.id, scan.value);
+            updateProof(scanTarget.machine.id, scanTarget.field.id, scan);
+          }}
         />
       )}
     </main>

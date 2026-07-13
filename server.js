@@ -16,7 +16,10 @@ const app = express();
 const PORT = Number(process.env.PORT || 5178);
 const isProduction = process.env.NODE_ENV === "production";
 
-const AI_FACE_BASE_URL = process.env.AI_FACE_BASE_URL || "http://10.156.119.146:5005";
+const AI_FACE_BASE_URLS = getServiceBaseUrls(
+  process.env.AI_FACE_BASE_URL || "http://10.156.119.146:5005",
+  process.env.AI_FACE_FALLBACK_URL
+);
 const AI_FACE_REGISTER_PATH = process.env.AI_FACE_REGISTER_PATH || "/register";
 const AI_FACE_SEARCH_PATH = process.env.AI_FACE_SEARCH_PATH || "/search";
 const AI_FACE_TIMEOUT_MS = Number(process.env.AI_FACE_TIMEOUT_MS || 30000);
@@ -26,11 +29,41 @@ const AI_FACE_ALIGN = process.env.AI_FACE_ALIGN !== "false";
 const AI_FACE_L2_NORMALIZE = process.env.AI_FACE_L2_NORMALIZE !== "false";
 const AI_FACE_DISTANCE_METRIC = process.env.AI_FACE_DISTANCE_METRIC || "cosine";
 const AI_FACE_SEARCH_METHOD = process.env.AI_FACE_SEARCH_METHOD || "exact";
+const AI_IMAGE_BASE_URLS = getServiceBaseUrls(
+  process.env.AI_IMAGE_BASE_URL || process.env.AI_WORKSTATION_URL || "http://10.156.119.146:11434",
+  process.env.AI_IMAGE_FALLBACK_URL || process.env.AI_WORKSTATION_FALLBACK_URL
+);
+const AI_IMAGE_PATH = process.env.AI_IMAGE_PATH || "/api/generate";
+const AI_IMAGE_MODEL = process.env.AI_IMAGE_MODEL || process.env.AI_WORKSTATION_MODEL || "qwen3-vl:8b";
+const AI_IMAGE_TIMEOUT_MS = Number(process.env.AI_IMAGE_TIMEOUT_MS || process.env.AI_WORKSTATION_TIMEOUT_MS || 180000);
+const MAX_PROOF_IMAGE_BYTES = Number(process.env.MAX_PROOF_IMAGE_BYTES || 6 * 1024 * 1024);
 
 let schemaReadyPromise = null;
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+
+function cleanEnv(value) {
+  return String(value || "").trim();
+}
+
+function alternateNetworkUrl(value) {
+  try {
+    const url = new URL(cleanEnv(value));
+    if (url.hostname === "10.156.119.146") url.hostname = "172.27.1.92";
+    else if (url.hostname === "172.27.1.92") url.hostname = "10.156.119.146";
+    else return "";
+    return url.origin;
+  } catch {
+    return "";
+  }
+}
+
+function getServiceBaseUrls(primaryValue, fallbackValue = "") {
+  const primary = cleanEnv(primaryValue);
+  const fallback = cleanEnv(fallbackValue) || alternateNetworkUrl(primary);
+  return uniqueValues([primary, fallback]);
+}
 
 function cleanText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
@@ -84,31 +117,39 @@ function getFriendlyDbError(error) {
 async function ensureSchemaReady() {
   if (!schemaReadyPromise) {
     schemaReadyPromise = (async () => {
-      const schemaPath = path.join(__dirname, "schema.sql");
-      const schemaSql = await fs.readFile(schemaPath, "utf8");
-      await pool.query(schemaSql);
+      for (const filename of ["schema.sql", "confirmationproof.sql"]) {
+        const sql = await fs.readFile(path.join(__dirname, filename), "utf8");
+        await pool.query(sql);
+      }
     })();
   }
 
   return schemaReadyPromise;
 }
 
-function buildAiUrl(endpointPath) {
-  const base = AI_FACE_BASE_URL.endsWith("/") ? AI_FACE_BASE_URL : `${AI_FACE_BASE_URL}/`;
+function buildServiceUrl(baseUrl, endpointPath) {
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   const cleanPath = endpointPath.startsWith("/") ? endpointPath.slice(1) : endpointPath;
   return new URL(cleanPath, base).toString();
 }
 
 function parseImageDataUrl(imageDataUrl) {
   const input = cleanText(imageDataUrl);
-  if (!input) throw new Error("No face image was received.");
+  if (!input) throw new Error("No image was received.");
+
   const match = input.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
   const mimeType = match?.[1] || "image/jpeg";
   const base64Data = match?.[2] || input;
   const buffer = Buffer.from(base64Data, "base64");
-  if (!buffer.length) throw new Error("Face image conversion failed.");
+
+  if (!buffer.length) throw new Error("Image conversion failed.");
+
   return {
     dataUrl: input.startsWith("data:") ? input : `data:${mimeType};base64,${base64Data}`,
+    mimeType,
+    buffer,
+    sizeBytes: buffer.length,
+    sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
   };
 }
 
@@ -139,32 +180,80 @@ async function readAiPayload(response) {
   return response.text();
 }
 
+async function postJsonWithFallback({ baseUrls, endpointPath, body, timeoutMs, serviceName }) {
+  const attempts = [];
+
+  for (const baseUrl of baseUrls) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(buildServiceUrl(baseUrl, endpointPath), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const payload = await readAiPayload(response);
+
+      if (response.ok) return { payload, baseUrl };
+
+      const detail = typeof payload === "string" ? payload : JSON.stringify(compactJsonValue(payload, 1500));
+      const error = new Error(`${serviceName} returned HTTP ${response.status}. ${detail}`);
+      const retryable = response.status === 404 || response.status === 408 || response.status === 429 || response.status >= 500;
+      if (!retryable) throw Object.assign(error, { stopFallback: true });
+      attempts.push(`${baseUrl}: HTTP ${response.status}`);
+    } catch (error) {
+      if (error.stopFallback) throw error;
+      const reason = error.name === "AbortError" ? "timed out" : error.message || "connection failed";
+      attempts.push(`${baseUrl}: ${reason}`);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new Error(`${serviceName} is unavailable on both networks. ${attempts.join(" | ")}`);
+}
+
+function generatedTextFromPayload(payload) {
+  if (typeof payload === "string") return payload;
+  return cleanText(
+    payload?.response ??
+      payload?.message?.content ??
+      payload?.content ??
+      payload?.text ??
+      payload?.value
+  );
+}
+
+function generatedValueFromText(text) {
+  const source = cleanText(text);
+  if (!source) return "";
+
+  const jsonCandidate = source.match(/\{[\s\S]*\}/)?.[0];
+  if (jsonCandidate) {
+    try {
+      const parsed = JSON.parse(jsonCandidate);
+      return cleanText(parsed.value ?? parsed.reading ?? parsed.weight ?? parsed.result);
+    } catch {
+      return source;
+    }
+  }
+
+  return source.replace(/^```(?:json)?|```$/g, "").trim();
+}
+
 async function postFaceJson({ endpointType, imageDataUrl, operatorName = "" }) {
   const isRegister = endpointType === "register";
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), AI_FACE_TIMEOUT_MS);
+  const { payload } = await postJsonWithFallback({
+    baseUrls: AI_FACE_BASE_URLS,
+    endpointPath: isRegister ? AI_FACE_REGISTER_PATH : AI_FACE_SEARCH_PATH,
+    body: deepFaceBody({ imageDataUrl, operatorName, isRegister }),
+    timeoutMs: AI_FACE_TIMEOUT_MS,
+    serviceName: "Face AI",
+  });
 
-  try {
-    const response = await fetch(buildAiUrl(isRegister ? AI_FACE_REGISTER_PATH : AI_FACE_SEARCH_PATH), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(deepFaceBody({ imageDataUrl, operatorName, isRegister })),
-      signal: controller.signal,
-    });
-    const payload = await readAiPayload(response);
-
-    if (!response.ok) {
-      const message = typeof payload === "string" ? payload : JSON.stringify(payload);
-      throw new Error(`Face AI returned HTTP ${response.status}. ${message || "Check the Face AI endpoint."}`);
-    }
-
-    return normalizeFaceResult(payload);
-  } catch (error) {
-    if (error.name === "AbortError") throw new Error("Face AI request timed out.");
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
+  return normalizeFaceResult(payload);
 }
 
 function walkObjects(value, output = [], depth = 0) {
@@ -493,7 +582,6 @@ function normalizeMachineCallouts(callouts) {
       cardY,
       pointX,
       pointY,
-      // Keep x/y for older frontend data, but do not use them as the card position.
       x: pointX,
       y: pointY,
     };
@@ -543,15 +631,109 @@ function toJsonObject(value) {
   return value;
 }
 
-async function getMachineConfigById(id) {
+async function getMachineConfigById(id, queryable = pool) {
   if (!id) return null;
-  const result = await pool.query(
+  const result = await queryable.query(
     `SELECT * FROM app.machine_configs WHERE id = $1 AND active = TRUE LIMIT 1`,
     [id]
   );
   return result.rows[0] || null;
 }
 
+
+
+function proofRowToApi(row) {
+  return {
+    id: row.id,
+    record_id: row.record_id,
+    machine_config_id: row.machine_config_id,
+    field_id: row.field_id,
+    field_label: row.field_label,
+    recognized_value: row.recognized_value || "",
+    mime_type: row.mime_type,
+    image_size_bytes: row.image_size_bytes,
+    image_sha256: row.image_sha256,
+    image_url: `/api/confirmationproof/${row.id}/image`,
+    created_at: row.created_at,
+  };
+}
+
+async function attachProofs(records, queryable = pool) {
+  if (!records.length) return records;
+
+  const recordIds = records.map((record) => Number(record.id)).filter(Number.isInteger);
+  if (!recordIds.length) return records.map((record) => ({ ...record, proofs: [] }));
+
+  const proofResult = await queryable.query(
+    `
+      SELECT
+        id,
+        record_id,
+        machine_config_id,
+        field_id,
+        field_label,
+        recognized_value,
+        mime_type,
+        image_size_bytes,
+        image_sha256,
+        created_at
+      FROM app.confirmationproof
+      WHERE record_id = ANY($1::integer[])
+      ORDER BY record_id, id
+    `,
+    [recordIds]
+  );
+
+  const proofMap = new Map();
+  for (const row of proofResult.rows) {
+    const list = proofMap.get(row.record_id) || [];
+    list.push(proofRowToApi(row));
+    proofMap.set(row.record_id, list);
+  }
+
+  return records.map((record) => ({
+    ...record,
+    proofs: proofMap.get(record.id) || [],
+  }));
+}
+
+function normalizeProofPayloads(value, machineFields) {
+  const fieldMap = new Map(
+    normalizeMachineFields(machineFields)
+      .filter((field) => field.type === "image")
+      .map((field) => [String(field.id), field])
+  );
+
+  const source = Array.isArray(value) ? value : [];
+  const proofs = [];
+  const seen = new Set();
+
+  for (const item of source.slice(0, 30)) {
+    const fieldId = cleanText(item?.field_id);
+    if (!fieldId || seen.has(fieldId)) continue;
+
+    const field = fieldMap.get(fieldId);
+    if (!field) throw new Error(`Image field "${fieldId}" is not configured for this machine.`);
+
+    const image = parseImageDataUrl(item?.image_data_url);
+    if (image.sizeBytes > MAX_PROOF_IMAGE_BYTES) {
+      throw new Error(`${field.label} proof is too large. Maximum size is ${Math.round(MAX_PROOF_IMAGE_BYTES / 1024 / 1024)} MB.`);
+    }
+
+    proofs.push({
+      fieldId,
+      fieldLabel: field.label,
+      recognizedValue: cleanText(item?.recognized_value),
+      mimeType: image.mimeType,
+      imageData: image.buffer,
+      imageSizeBytes: image.sizeBytes,
+      imageSha256: image.sha256,
+    });
+    seen.add(fieldId);
+  }
+
+  return proofs;
+}
 
 function validateRecordBody(body) {
   if (!cleanText(body.operator_name)) return "Operator name is required.";
@@ -578,10 +760,60 @@ app.get("/api/shift-status", (_req, res) => {
   res.json({ ok: true, ...getCurrentShiftInfo() });
 });
 
+app.post("/api/ai/image-field", async (req, res) => {
+  if (!req.body?.imageDataUrl) {
+    return res.status(400).json({ ok: false, error: "Image is required." });
+  }
+
+  try {
+    const image = parseImageDataUrl(req.body.imageDataUrl);
+    if (image.sizeBytes > MAX_PROOF_IMAGE_BYTES) {
+      return res.status(413).json({
+        ok: false,
+        error: `Image is too large. Maximum size is ${Math.round(MAX_PROOF_IMAGE_BYTES / 1024 / 1024)} MB.`,
+      });
+    }
+
+    const target = cleanText(req.body?.target || req.body?.fieldLabel, "target value");
+    const machineName = cleanText(req.body?.machineName, "machine");
+    const prompt = [
+      `Inspect this ${machineName} confirmation image.`,
+      `Read only the value associated with "${target}".`,
+      "The value may be a number, status, word, or short phrase.",
+      'Return only strict JSON in this format: {"value":"recognized value"}.',
+      "Do not explain the result.",
+    ].join(" ");
+
+    const { payload, baseUrl } = await postJsonWithFallback({
+      baseUrls: AI_IMAGE_BASE_URLS,
+      endpointPath: AI_IMAGE_PATH,
+      body: {
+        model: AI_IMAGE_MODEL,
+        stream: false,
+        prompt,
+        images: [image.dataUrl.split(",").pop()],
+        format: "json",
+      },
+      timeoutMs: AI_IMAGE_TIMEOUT_MS,
+      serviceName: "Image AI",
+    });
+
+    const value = generatedValueFromText(generatedTextFromPayload(payload));
+    if (!value) {
+      return res.status(422).json({ ok: false, error: `No readable value was found for ${target}.` });
+    }
+
+    return res.json({ ok: true, value, service: baseUrl });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error.message || "Image scan failed." });
+  }
+});
+
 app.get("/api/face/config", (_req, res) => {
   res.json({
     ok: true,
-    baseUrl: AI_FACE_BASE_URL,
+    baseUrl: AI_FACE_BASE_URLS[0],
+    fallbackUrl: AI_FACE_BASE_URLS[1] || "",
     registerPath: AI_FACE_REGISTER_PATH,
     searchPath: AI_FACE_SEARCH_PATH,
     modelName: AI_FACE_MODEL_NAME,
@@ -872,6 +1104,85 @@ app.delete("/api/admin/machines/:id", async (req, res) => {
     res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
   }
 });
+
+app.get("/api/confirmationproof/:id/image", async (req, res) => {
+  try {
+    await ensureSchemaReady();
+    const id = Number(req.params.id || 0);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ ok: false, error: "Invalid proof image ID." });
+    }
+
+    const result = await pool.query(
+      `
+        SELECT mime_type, image_data, image_sha256
+        FROM app.confirmationproof
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [id]
+    );
+
+    const proof = result.rows[0];
+    if (!proof) return res.status(404).json({ ok: false, error: "Proof image was not found." });
+
+    res.set({
+      "Content-Type": proof.mime_type || "image/jpeg",
+      "Content-Length": proof.image_data.length,
+      "Cache-Control": "private, max-age=31536000, immutable",
+      ETag: `"${proof.image_sha256}"`,
+    });
+    return res.send(proof.image_data);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
+app.get("/api/records/latest-by-machine", async (req, res) => {
+  try {
+    await ensureSchemaReady();
+    const site = normalizeSite(req.query.site);
+    const operatorId = Number(req.query.operator_id || 0);
+    const params = [site];
+    let operatorFilter = "";
+
+    if (Number.isInteger(operatorId) && operatorId > 0) {
+      params.push(operatorId);
+      operatorFilter = `AND record.operator_id = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT latest.*
+        FROM app.machine_configs machine
+        JOIN LATERAL (
+          SELECT record.*
+          FROM app.confirmation_test_records record
+          WHERE (
+            record.machine_config_id = machine.id
+            OR (
+              record.machine_config_id IS NULL
+              AND lower(record.machine_name) = lower(machine.machine_name)
+            )
+          )
+          ${operatorFilter}
+          ORDER BY record.record_timestamp DESC, record.id DESC
+          LIMIT 1
+        ) latest ON TRUE
+        WHERE machine.active = TRUE
+          AND machine.site_name = $1
+        ORDER BY machine.machine_name
+      `,
+      params
+    );
+
+    const records = await attachProofs(result.rows);
+    res.json({ ok: true, records });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+  }
+});
+
 app.get("/api/records", async (req, res) => {
   try {
     await ensureSchemaReady();
@@ -957,57 +1268,206 @@ app.get("/api/records", async (req, res) => {
       params
     );
 
-    res.json({ ok: true, records: result.rows });
+    const records = await attachProofs(result.rows);
+    res.json({ ok: true, records });
   } catch (error) {
     schemaReadyPromise = null;
     res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
   }
 });
 
-app.post("/api/records/upsert", async (req, res) => {
+function requestError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+async function prepareRecordInput(body, queryable = pool) {
+  const validationError = validateRecordBody(body || {});
+  if (validationError) throw requestError(validationError);
+
+  const operatorId = Number(body.operator_id || 0) || null;
+  const operatorName = cleanText(body.operator_name);
+  const siteName = normalizeSite(body.site_name);
+  const requestedMachineConfigId = Number(body.machine_config_id || 0) || null;
+  const machineConfig = await getMachineConfigById(requestedMachineConfigId, queryable);
+  const machineConfigId = machineConfig?.id || requestedMachineConfigId;
+  const machineName = cleanText(machineConfig?.machine_name || body.machine_name);
+  const readingValue = toNullableNumber(body.reading_value);
+  const product = cleanText(body.product);
+  const batchNumber = cleanText(body.batch_number);
+  const remarks = cleanText(body.remarks);
+  const responseFields = toJsonObject(body.response_fields);
+  const machineFields = normalizeMachineFields(machineConfig?.fields);
+  let proofs;
+
   try {
-    await ensureSchemaReady();
+    proofs = normalizeProofPayloads(body.proofs, machineFields);
+  } catch (error) {
+    throw requestError(error.message);
+  }
 
-    const validationError = validateRecordBody(req.body || {});
-    if (validationError) return res.status(400).json({ ok: false, error: validationError });
+  const proofFieldIds = new Set(proofs.map((proof) => proof.fieldId));
 
-    const operatorId = Number(req.body.operator_id || 0) || null;
-    const operatorName = cleanText(req.body.operator_name);
-    const siteName = normalizeSite(req.body.site_name);
-    const requestedMachineConfigId = Number(req.body.machine_config_id || 0) || null;
-    const machineConfig = await getMachineConfigById(requestedMachineConfigId);
-    const machineConfigId = machineConfig?.id || requestedMachineConfigId;
-    const machineName = cleanText(machineConfig?.machine_name || req.body.machine_name);
-    const readingValue = toNullableNumber(req.body.reading_value);
-    const product = cleanText(req.body.product);
-    const batchNumber = cleanText(req.body.batch_number);
-    const remarks = cleanText(req.body.remarks);
-    const responseFields = toJsonObject(req.body.response_fields);
+  for (const field of machineFields) {
+    const value = cleanText(responseFields[field.id]);
 
-    if (machineConfig) {
-      for (const field of normalizeMachineFields(machineConfig.fields)) {
-        if (field.required && !cleanText(responseFields[field.id])) {
-          return res.status(400).json({ ok: false, error: `${field.label} is required.` });
-        }
+    if (field.required && !value) throw requestError(`${field.label} is required.`);
+
+    if (field.type === "image") {
+      if (value && !proofFieldIds.has(String(field.id))) {
+        throw requestError(`Capture a new proof image for ${field.label}.`);
+      }
+      if (field.required && !proofFieldIds.has(String(field.id))) {
+        throw requestError(`${field.label} needs a new proof image.`);
       }
     }
+  }
 
-    const result = await pool.query(
+  return {
+    operatorId,
+    operatorName,
+    siteName,
+    machineConfigId,
+    machineName,
+    readingValue,
+    product,
+    batchNumber,
+    remarks,
+    responseFields,
+    proofs,
+  };
+}
+
+async function insertRecordWithProofs(queryable, input) {
+  const recordResult = await queryable.query(
+    `
+      INSERT INTO app.confirmation_test_records (
+        operator_id,
+        operator_name,
+        site_name,
+        machine_config_id,
+        machine_name,
+        reading_value,
+        product,
+        batch_number,
+        shift_name,
+        shift_work_date,
+        remarks,
+        response_fields,
+        record_timestamp
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', NULL, $9, $10::jsonb, NOW())
+      RETURNING *
+    `,
+    [
+      input.operatorId,
+      input.operatorName,
+      input.siteName,
+      input.machineConfigId,
+      input.machineName,
+      input.readingValue,
+      input.product,
+      input.batchNumber,
+      input.remarks,
+      JSON.stringify(input.responseFields),
+    ]
+  );
+
+  const record = recordResult.rows[0];
+  const savedProofs = [];
+
+  for (const proof of input.proofs) {
+    const proofResult = await queryable.query(
       `
-        INSERT INTO app.confirmation_test_records (
-          operator_id, operator_name, site_name, machine_config_id, machine_name, reading_value,
-          product, batch_number, shift_name, shift_work_date, remarks, response_fields, record_timestamp
+        INSERT INTO app.confirmationproof (
+          record_id,
+          machine_config_id,
+          field_id,
+          field_label,
+          recognized_value,
+          mime_type,
+          image_data,
+          image_size_bytes,
+          image_sha256
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', NULL, $9, $10::jsonb, NOW())
-        RETURNING *
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING
+          id,
+          record_id,
+          machine_config_id,
+          field_id,
+          field_label,
+          recognized_value,
+          mime_type,
+          image_size_bytes,
+          image_sha256,
+          created_at
       `,
-      [operatorId, operatorName, siteName, machineConfigId, machineName, readingValue, product, batchNumber, remarks, JSON.stringify(responseFields)]
+      [
+        record.id,
+        input.machineConfigId,
+        proof.fieldId,
+        proof.fieldLabel,
+        proof.recognizedValue,
+        proof.mimeType,
+        proof.imageData,
+        proof.imageSizeBytes,
+        proof.imageSha256,
+      ]
     );
+    savedProofs.push(proofRowToApi(proofResult.rows[0]));
+  }
 
-    res.status(201).json({ ok: true, action: "created", record: result.rows[0] });
+  return { ...record, proofs: savedProofs };
+}
+
+app.post("/api/records/upsert", async (req, res) => {
+  let client;
+
+  try {
+    await ensureSchemaReady();
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const input = await prepareRecordInput(req.body || {}, client);
+    const record = await insertRecordWithProofs(client, input);
+    await client.query("COMMIT");
+    res.status(201).json({ ok: true, action: "created", record });
   } catch (error) {
-    schemaReadyPromise = null;
-    res.status(500).json({ ok: false, error: getFriendlyDbError(error) });
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    if (!error.statusCode) schemaReadyPromise = null;
+    res.status(error.statusCode || 500).json({ ok: false, error: error.statusCode ? error.message : getFriendlyDbError(error) });
+  } finally {
+    client?.release();
+  }
+});
+
+app.post("/api/records/bulk", async (req, res) => {
+  let client;
+
+  try {
+    await ensureSchemaReady();
+    const source = Array.isArray(req.body?.records) ? req.body.records : [];
+    if (!source.length) throw requestError("At least one machine response is required.");
+    if (source.length > 50) throw requestError("A maximum of 50 machine responses can be submitted at once.");
+
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const records = [];
+
+    for (const body of source) {
+      const input = await prepareRecordInput(body, client);
+      records.push(await insertRecordWithProofs(client, input));
+    }
+
+    await client.query("COMMIT");
+    res.status(201).json({ ok: true, action: "created", records });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    if (!error.statusCode) schemaReadyPromise = null;
+    res.status(error.statusCode || 500).json({ ok: false, error: error.statusCode ? error.message : getFriendlyDbError(error) });
+  } finally {
+    client?.release();
   }
 });
 
@@ -1065,10 +1525,12 @@ app.get("/api/dashboard/summary", async (req, res) => {
       params
     );
 
+    const latestRecords = await attachProofs(latest.rows);
+
     res.json({
       ok: true,
       stats: stats.rows[0],
-      latest: latest.rows,
+      latest: latestRecords,
       machine: machineRowToConfig(machineConfig),
       scoped: Boolean(machineConfigId || machineNameQuery),
     });
