@@ -313,12 +313,6 @@ export async function fetchJson(url, options = {}) {
   return data;
 }
 
-function getCameraHelp() {
-  const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-  if (window.isSecureContext || isLocalhost) return "";
-  return "Camera needs HTTPS or localhost.";
-}
-
 function userDisplayName(user) {
   return user?.operator_name || user?.name || "Operator";
 }
@@ -495,293 +489,116 @@ function variableToneClass(label = "") {
   return "tone-default";
 }
 
-async function setAutomaticCameraMode(stream) {
-  const track = stream?.getVideoTracks?.()[0];
-  if (!track?.getCapabilities || !track?.applyConstraints) return;
-
-  const capabilities = track.getCapabilities();
-  const automatic = {};
-
-  if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes("continuous")) {
-    automatic.exposureMode = "continuous";
-  }
-
-  if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
-    automatic.whiteBalanceMode = "continuous";
-  }
-
-  if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
-    automatic.focusMode = "continuous";
-  }
-
-  const exposureCompensation = capabilities.exposureCompensation;
-  if (
-    exposureCompensation &&
-    Number(exposureCompensation.min) <= 0 &&
-    Number(exposureCompensation.max) >= 0
-  ) {
-    automatic.exposureCompensation = 0;
-  }
-
-  if (!Object.keys(automatic).length) return;
-
-  try {
-    await track.applyConstraints({ advanced: [automatic] });
-  } catch {
-    return;
-  }
-}
-
-function FaceCaptureModal({
-  title = "Face Capture",
+function NativePhotoModal({
+  title = "Take Photo",
   description,
+  capture = "environment",
   onClose,
-  onCapture,
-  autoCapture = false,
-  autoCaptureDelayMs = 2200,
+  onPhoto,
 }) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const timerRef = useRef(null);
-  const captureQueuedRef = useRef(false);
-  const [status, setStatus] = useState("Starting camera...");
+  const inputRef = useRef(null);
+  const openedRef = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("Open the camera or choose an image.");
+  const [previewUrl, setPreviewUrl] = useState("");
 
-  function clearCaptureTimer() {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = null;
+  function openPicker() {
+    if (!busy) inputRef.current?.click();
   }
 
-  function stopCamera() {
-    clearCaptureTimer();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-  }
+  async function handleFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
 
-  function queueAutoCapture(delay = autoCaptureDelayMs) {
-    if (!autoCapture || captureQueuedRef.current || !streamRef.current) return;
-    captureQueuedRef.current = true;
-    clearCaptureTimer();
-    setStatus("Camera ready. Hold still...");
-    timerRef.current = setTimeout(handleCapture, delay);
-  }
-
-  async function startCamera() {
-    const help = getCameraHelp();
-    if (help) {
-      setStatus(help);
+    if (!file.type.startsWith("image/")) {
+      setStatus("Choose an image file.");
       return;
     }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setStatus("Camera is not available.");
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30, max: 30 },
-        },
-        audio: false,
-      });
-
-      streamRef.current = stream;
-      await setAutomaticCameraMode(stream);
-
-      const video = videoRef.current;
-      if (video) {
-        video.srcObject = stream;
-        await video.play().catch(() => undefined);
-      }
-
-      setStatus(autoCapture ? "Camera ready. Hold still..." : "Camera ready.");
-      queueAutoCapture();
-    } catch (error) {
-      setStatus(error.name === "NotAllowedError" ? "Camera permission was blocked." : error.message || "Could not start camera.");
-    }
-  }
-
-  function captureImage() {
-    const video = videoRef.current;
-    if (!video?.videoWidth || !video?.videoHeight) {
-      throw new Error("Camera is not ready yet.");
-    }
-
-    const maxWidth = 960;
-    const scale = Math.min(maxWidth / video.videoWidth, 1);
-    const width = Math.max(1, Math.round(video.videoWidth * scale));
-    const height = Math.max(1, Math.round(video.videoHeight * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Camera capture is unavailable.");
-    context.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, width, height);
-    return canvas.toDataURL("image/jpeg", 0.9);
-  }
-
-  async function handleCapture() {
-    if (busy || !streamRef.current) return;
 
     try {
       setBusy(true);
-      setStatus("Checking face...");
-      await onCapture(captureImage());
-      stopCamera();
+      setStatus("Preparing photo...");
+      const imageDataUrl = await imageFileToCompactDataUrl(file, 1280, 1280, 0.9);
+      setPreviewUrl(imageDataUrl);
+      await onPhoto(imageDataUrl, file);
     } catch (error) {
-      const message = String(error?.message || "");
-      const noFace = /face could not be detected|no matching face|no face/i.test(message);
-      setStatus(noFace ? "No face detected. Face the camera and hold still." : "Face check failed. Retrying...");
-      captureQueuedRef.current = false;
-      if (autoCapture) queueAutoCapture(1800);
+      setStatus(error.message || "Could not use this photo. Try again.");
     } finally {
       setBusy(false);
     }
   }
 
   useEffect(() => {
-    startCamera();
-    return stopCamera;
+    if (openedRef.current) return;
+    openedRef.current = true;
+    const timer = setTimeout(() => inputRef.current?.click(), 80);
+    return () => clearTimeout(timer);
   }, []);
 
   return (
-    <div className="modal-backdrop camera-backdrop" role="dialog" aria-modal="true" aria-label={title}>
-      <section className="camera-modal">
-        <header className="camera-modal-header">
+    <div className="modal-backdrop native-camera-backdrop" role="dialog" aria-modal="true" aria-label={title}>
+      <section className="native-camera-modal">
+        <header className="native-camera-header">
           <div>
-            <p className="eyebrow">AI Facial Recognition</p>
+            <p className="eyebrow">Photo Capture</p>
             <h2>{title}</h2>
             {description && <p>{description}</p>}
           </div>
-          <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label="Close camera">×</button>
+          <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label="Close">×</button>
         </header>
 
-        <div className="camera-frame">
-          <video ref={videoRef} autoPlay playsInline muted onLoadedData={() => queueAutoCapture()} />
-          <div className="face-guide" aria-hidden="true" />
-        </div>
+        <button className={previewUrl ? "native-camera-box has-preview" : "native-camera-box"} type="button" onClick={openPicker} disabled={busy}>
+          {previewUrl ? (
+            <img src={previewUrl} alt="Selected preview" />
+          ) : (
+            <span className="native-camera-placeholder">
+              <i aria-hidden="true">▣</i>
+              <strong>{capture === "user" ? "Open front camera" : "Open rear camera"}</strong>
+              <small>On a computer, this opens the image picker.</small>
+            </span>
+          )}
+        </button>
 
-        <p className="camera-status" aria-live="polite">{status}</p>
+        <input
+          ref={inputRef}
+          className="native-camera-input"
+          type="file"
+          accept="image/*"
+          capture={capture}
+          onChange={handleFile}
+        />
 
-        <div className="camera-actions">
+        <p className="native-camera-status" aria-live="polite">{busy ? "Processing..." : status}</p>
+
+        <div className="native-camera-actions">
           <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
-          {!autoCapture && <button type="button" onClick={handleCapture} disabled={busy}>{busy ? "Checking..." : "Capture"}</button>}
+          <button type="button" onClick={openPicker} disabled={busy}>{previewUrl ? "Retake" : "Open Camera"}</button>
         </div>
       </section>
     </div>
   );
 }
 
+function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapture }) {
+  return (
+    <NativePhotoModal
+      title={title}
+      description={description}
+      capture="user"
+      onClose={onClose}
+      onPhoto={async (imageDataUrl) => onCapture(imageDataUrl)}
+    />
+  );
+}
+
 function ImageScanModal({ field, machine, onClose, onScan }) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const scanTimerRef = useRef(null);
-  const scanningRef = useRef(false);
-  const readyRef = useRef(false);
-  const closedRef = useRef(false);
-  const [status, setStatus] = useState("Opening camera...");
-  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("Take a clear photo of the value.");
 
-  function clearScanTimer() {
-    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-    scanTimerRef.current = null;
-  }
-
-  function stopCamera() {
-    clearScanTimer();
-    readyRef.current = false;
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-  }
-
-  function closeScanner() {
-    closedRef.current = true;
-    stopCamera();
-    onClose();
-  }
-
-  function scheduleScan(delay = 1000) {
-    clearScanTimer();
-    if (closedRef.current || !readyRef.current) return;
-    scanTimerRef.current = setTimeout(() => scanImage(), delay);
-  }
-
-  async function startCamera() {
-    const help = getCameraHelp();
-    if (help) {
-      setStatus(help);
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setStatus("Camera is not available.");
-      return;
-    }
+  async function handlePhoto(imageDataUrl) {
+    setStatus("Reading the value...");
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      });
-
-      if (closedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => undefined);
-      }
-    } catch (error) {
-      setStatus(error.name === "NotAllowedError" ? "Camera permission was blocked." : error.message || "Could not start camera.");
-    }
-  }
-
-  function captureImage() {
-    const video = videoRef.current;
-    if (!video || !video.videoWidth || !video.videoHeight) throw new Error("Camera is not ready yet.");
-
-    const source = {
-      x: Math.round(video.videoWidth * 0.12),
-      y: Math.round(video.videoHeight * 0.18),
-      width: Math.round(video.videoWidth * 0.76),
-      height: Math.round(video.videoHeight * 0.56),
-    };
-    const maxWidth = 1280;
-    const scale = Math.min(maxWidth / source.width, 1);
-    const width = Math.max(1, Math.round(source.width * scale));
-    const height = Math.max(1, Math.round(source.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    context.drawImage(video, source.x, source.y, source.width, source.height, 0, 0, width, height);
-    return canvas.toDataURL("image/jpeg", 0.92);
-  }
-
-  async function scanImage() {
-    if (closedRef.current || !readyRef.current || scanningRef.current) return;
-
-    scanningRef.current = true;
-    setBusy(true);
-    setStatus("Reading...");
-    let retryDelay = 1600;
-
-    try {
-      const imageDataUrl = captureImage();
       const data = await fetchJson("/api/ai/image-field", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -792,67 +609,32 @@ function ImageScanModal({ field, machine, onClose, onScan }) {
           machineName: machine?.machine_name || "",
         }),
       });
-      const extractedValue = data.value ?? data.weight ?? data.reading ?? "";
 
-      if (closedRef.current) return;
+      const extractedValue = data.value ?? data.weight ?? data.reading ?? "";
       if (extractedValue === "" || extractedValue === null || extractedValue === undefined) {
-        setStatus("Hold the reading inside the box");
-        return;
+        throw new Error("No readable value was found. Take another photo closer to the reading.");
       }
 
-      closedRef.current = true;
       onScan({
         value: String(extractedValue),
         imageDataUrl,
         mimeType: "image/jpeg",
       });
-      stopCamera();
       onClose();
     } catch (error) {
-      if (!closedRef.current) {
-        setStatus("Hold steady — trying again");
-        retryDelay = error?.name === "TypeError" ? 2600 : 1900;
-      }
-    } finally {
-      scanningRef.current = false;
-      if (!closedRef.current) {
-        setBusy(false);
-        scheduleScan(retryDelay);
-      }
+      setStatus(error.message || "The value could not be recognized. Try another photo.");
+      throw error;
     }
   }
 
-  function handleCameraReady() {
-    if (closedRef.current || readyRef.current) return;
-    readyRef.current = true;
-    setStatus("Auto detecting — hold steady");
-    scheduleScan(900);
-  }
-
-  useEffect(() => {
-    startCamera();
-    return () => {
-      closedRef.current = true;
-      stopCamera();
-    };
-  }, []);
-
   return (
-    <div className="modal-backdrop auto-scan-backdrop" role="dialog" aria-modal="true" aria-label={`Scan ${field?.label || "image"}`}>
-      <section className="auto-scan-modal">
-        <button className="auto-scan-close" type="button" onClick={closeScanner} aria-label="Close scanner">×</button>
-        <div className="auto-scan-title">
-          <span>Auto scan</span>
-          <strong>{field?.label || "Image field"}</strong>
-        </div>
-        <button className={`auto-scan-viewport ${busy ? "is-scanning" : ""}`} type="button" onClick={scanImage} aria-label="Tap to scan now">
-          <video ref={videoRef} autoPlay playsInline muted onCanPlay={handleCameraReady} />
-          <div className="scan-guide-box" aria-hidden="true" />
-          <div className="auto-scan-status"><i />{status}</div>
-          <div className="auto-scan-sweep" aria-hidden="true" />
-        </button>
-      </section>
-    </div>
+    <NativePhotoModal
+      title={`Capture ${field?.label || "Image Field"}`}
+      description={status}
+      capture="environment"
+      onClose={onClose}
+      onPhoto={handlePhoto}
+    />
   );
 }
 
@@ -2061,7 +1843,7 @@ function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLo
           <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div className="registered-person-main"><strong>{user.operator_name}</strong><span>{user.site_name}</span>{deletingId === user.id && <small>Deleting...</small>}</div></article>)}</div>
         </section>
       </section>
-      {cameraOpen && <FaceCaptureModal title="Register Face" description="Capture this person's face for future login." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
+      {cameraOpen && <FaceCaptureModal title="Register Face" description="Use the front camera or choose a clear face photo for future login." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
       </main>
     </>
   );
@@ -2708,7 +2490,7 @@ function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser 
         </div>
         {message && <p className="message centered center-message">{message}</p>}
       </section>
-      {faceOpen && <FaceCaptureModal title="Face Login" description="Hold steady. The app will capture automatically." onClose={() => setFaceOpen(false)} onCapture={handleLoginCapture} autoCapture />}
+      {faceOpen && <FaceCaptureModal title="Face Login" description="Use the front camera or choose a clear face photo." onClose={() => setFaceOpen(false)} onCapture={handleLoginCapture} autoCapture />}
     </main>
   );
 }
@@ -2767,7 +2549,7 @@ function OperatorRegisterPage({ onBack, onRegistered }) {
           {message && <p className="message">{message}</p>}
         </form>
       </section>
-      {cameraOpen && <FaceCaptureModal title="Register Face" description="Capture a clear front-facing image." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
+      {cameraOpen && <FaceCaptureModal title="Register Face" description="Use the front camera or choose a clear front-facing image." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
     </main>
   );
 }

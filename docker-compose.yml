@@ -1,9 +1,26 @@
 services:
-  confirmation-test-app:
-    build: .
-    container_name: confirmation-test-app
+  confirmation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: confirmation-app:latest
+    container_name: confirmation-app
+    restart: unless-stopped
     env_file:
       - .env
+    environment:
+      NODE_ENV: production
+      PORT: 5178
+      TZ: Asia/Manila
     ports:
-      - "5055:5178"
-    restart: unless-stopped
+      - "5058:5178"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:5178/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s

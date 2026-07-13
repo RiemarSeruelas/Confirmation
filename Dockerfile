@@ -1,18 +1,24 @@
-FROM node:24-alpine
+FROM node:22.23.1-bookworm-slim
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
 
 WORKDIR /app
 
-COPY package*.json ./
+RUN corepack enable \
+    && corepack prepare pnpm@9.15.9 --activate
 
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json* ./
+
+RUN pnpm install --no-frozen-lockfile
 
 COPY . .
 
-RUN npm run build
+RUN pnpm run build
 
 ENV NODE_ENV=production
 ENV PORT=5178
 
 EXPOSE 5178
 
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "pnpm run setup-db && pnpm run start"]

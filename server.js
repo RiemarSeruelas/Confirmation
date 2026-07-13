@@ -216,31 +216,111 @@ async function postJsonWithFallback({ baseUrls, endpointPath, body, timeoutMs, s
 }
 
 function generatedTextFromPayload(payload) {
-  if (typeof payload === "string") return payload;
-  return cleanText(
-    payload?.response ??
-      payload?.message?.content ??
-      payload?.content ??
-      payload?.text ??
-      payload?.value
-  );
+  if (payload === null || payload === undefined) return "";
+  if (typeof payload === "string" || typeof payload === "number") return cleanText(payload);
+
+  const candidates = [
+    payload?.response,
+    payload?.thinking,
+    payload?.message?.content,
+    payload?.content,
+    payload?.text,
+    payload?.value,
+    payload?.result,
+    payload?.answer,
+    payload?.output,
+    payload?.data?.response,
+    payload?.data?.content,
+    payload?.data?.text,
+    payload?.data?.value,
+    payload?.choices?.[0]?.message?.content,
+    payload?.choices?.[0]?.text,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    if (typeof candidate === "string" || typeof candidate === "number") {
+      const text = cleanText(candidate);
+      if (text) return text;
+    }
+    if (Array.isArray(candidate)) {
+      const joined = candidate
+        .map((item) => {
+          if (typeof item === "string" || typeof item === "number") return cleanText(item);
+          return cleanText(item?.text ?? item?.content ?? item?.value);
+        })
+        .filter(Boolean)
+        .join(" ");
+      if (joined) return joined;
+    }
+  }
+
+  return "";
 }
 
-function generatedValueFromText(text) {
-  const source = cleanText(text);
+function scalarText(value) {
+  if (value === null || value === undefined) return "";
+  if (["string", "number", "boolean"].includes(typeof value)) return cleanText(value);
+  return "";
+}
+
+function valueFromParsedJson(parsed, target = "") {
+  for (const key of ["value", "reading", "weight", "result", "text", "answer", "output"]) {
+    const value = scalarText(parsed?.[key]);
+    if (value) return value;
+  }
+
+  const normalizedTarget = cleanText(target).toLowerCase();
+  if (normalizedTarget && parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const matchingKey = Object.keys(parsed).find(
+      (key) => cleanText(key).toLowerCase() === normalizedTarget
+    );
+    const targetValue = scalarText(matchingKey ? parsed[matchingKey] : "");
+    if (targetValue) return targetValue;
+  }
+
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const scalarValues = Object.values(parsed).map(scalarText).filter(Boolean);
+    if (scalarValues.length === 1) return scalarValues[0];
+  }
+
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      const value = scalarText(item) || valueFromParsedJson(item, target);
+      if (value) return value;
+    }
+  }
+
+  return scalarText(parsed);
+}
+
+function generatedValueFromText(text, target = "") {
+  const source = cleanText(text)
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
   if (!source) return "";
+
+  try {
+    const value = valueFromParsedJson(JSON.parse(source), target);
+    if (value) return value;
+  } catch {
+    // Try embedded JSON or plain text below.
+  }
 
   const jsonCandidate = source.match(/\{[\s\S]*\}/)?.[0];
   if (jsonCandidate) {
     try {
-      const parsed = JSON.parse(jsonCandidate);
-      return cleanText(parsed.value ?? parsed.reading ?? parsed.weight ?? parsed.result);
+      const value = valueFromParsedJson(JSON.parse(jsonCandidate), target);
+      if (value) return value;
     } catch {
-      return source;
+      // Fall through.
     }
   }
 
-  return source.replace(/^```(?:json)?|```$/g, "").trim();
+  const shortPlainText = source.replace(/^["']|["']$/g, "").trim();
+  return shortPlainText.length <= 160 ? shortPlainText : "";
 }
 
 async function postFaceJson({ endpointType, imageDataUrl, operatorName = "" }) {
@@ -798,9 +878,18 @@ app.post("/api/ai/image-field", async (req, res) => {
       serviceName: "Image AI",
     });
 
-    const value = generatedValueFromText(generatedTextFromPayload(payload));
+    const generatedText = generatedTextFromPayload(payload);
+    const value = generatedValueFromText(generatedText, target);
+
     if (!value) {
-      return res.status(422).json({ ok: false, error: `No readable value was found for ${target}.` });
+      console.warn(
+        "Image AI returned a successful response but no recognized value could be parsed:",
+        compactJsonValue(payload, 2500)
+      );
+      return res.status(422).json({
+        ok: false,
+        error: `Image AI responded, but no readable value could be parsed for ${target}.`,
+      });
     }
 
     return res.json({ ok: true, value, service: baseUrl });

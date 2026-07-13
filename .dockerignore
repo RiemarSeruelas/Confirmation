@@ -1,13 +1,10 @@
 node_modules
-npm-debug.log
-Dockerfile
-.dockerignore
+dist
 .git
 .gitignore
+npm-debug.log*
+*.zip
 .env
-.env.*
-dist
-coverage
 .vscode
 .idea
-*.zip
+certs
