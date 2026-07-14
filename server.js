@@ -37,6 +37,10 @@ const AI_IMAGE_PATH = process.env.AI_IMAGE_PATH || "/api/generate";
 const AI_IMAGE_MODEL = process.env.AI_IMAGE_MODEL || process.env.AI_WORKSTATION_MODEL || "qwen3-vl:8b";
 const AI_IMAGE_TIMEOUT_MS = Number(process.env.AI_IMAGE_TIMEOUT_MS || process.env.AI_WORKSTATION_TIMEOUT_MS || 180000);
 const MAX_PROOF_IMAGE_BYTES = Number(process.env.MAX_PROOF_IMAGE_BYTES || 6 * 1024 * 1024);
+const DOCLING_ENABLED = String(process.env.DOCLING_ENABLED || "true").toLowerCase() !== "false";
+const DOCLING_BASE_URL = cleanEnv(process.env.DOCLING_BASE_URL || "http://host.docker.internal:5006");
+const DOCLING_PATH = process.env.DOCLING_PATH || "/extract";
+const DOCLING_TIMEOUT_MS = Number(process.env.DOCLING_TIMEOUT_MS || 120000);
 
 let schemaReadyPromise = null;
 
@@ -213,6 +217,111 @@ async function postJsonWithFallback({ baseUrls, endpointPath, body, timeoutMs, s
   }
 
   throw new Error(`${serviceName} is unavailable on both networks. ${attempts.join(" | ")}`);
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeDoclingLines(value) {
+  return cleanText(value)
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+        .replace(/^\s{0,3}#{1,6}\s*/, "")
+        .replace(/[`*_>]+/g, " ")
+        .replace(/\|/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter(Boolean);
+}
+
+function cleanDoclingCandidate(value) {
+  const candidate = cleanText(value)
+    .replace(/^[\s:;=\-–—]+/, "")
+    .replace(/[\s|]+$/, "")
+    .trim();
+
+  if (!candidate) return "";
+
+  const numeric = candidate.match(/^[-+]?\d+(?:[.,]\d+)?/);
+  if (numeric) return numeric[0].replace(",", ".");
+
+  return candidate.length <= 120 ? candidate : candidate.slice(0, 120).trim();
+}
+
+function extractDoclingValue(markdown, target) {
+  const lines = normalizeDoclingLines(markdown);
+  const cleanedTarget = cleanText(target);
+  if (!lines.length) return "";
+
+  if (cleanedTarget) {
+    const targetPattern = escapeRegExp(cleanedTarget).replace(/\\\s+/g, "\\s+");
+    const sameLinePattern = new RegExp(`(?:^|\\b)${targetPattern}\\b\\s*[:=\\-–—]?\\s*(.+)$`, "i");
+    const targetOnlyPattern = new RegExp(`^${targetPattern}\\s*[:=\\-–—]?$`, "i");
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const sameLineMatch = line.match(sameLinePattern);
+      if (sameLineMatch?.[1]) {
+        const candidate = cleanDoclingCandidate(sameLineMatch[1]);
+        if (candidate && candidate.toLowerCase() !== cleanedTarget.toLowerCase()) return candidate;
+      }
+
+      if (targetOnlyPattern.test(line) && lines[index + 1]) {
+        const candidate = cleanDoclingCandidate(lines[index + 1]);
+        if (candidate) return candidate;
+      }
+    }
+  }
+
+  const joined = lines.join(" ");
+  const numbers = joined.match(/[-+]?\d+(?:[.,]\d+)?/g) || [];
+  if (numbers.length === 1) return numbers[0].replace(",", ".");
+
+  if (lines.length === 1) {
+    const words = lines[0].split(/\s+/);
+    if (words.length === 1) return cleanDoclingCandidate(words[0]);
+  }
+
+  return "";
+}
+
+async function postToDocling({ imageDataUrl, target, machineName }) {
+  if (!DOCLING_ENABLED || !DOCLING_BASE_URL) throw new Error("Docling is disabled.");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DOCLING_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(buildServiceUrl(DOCLING_BASE_URL, DOCLING_PATH), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageDataUrl, target, machineName }),
+      signal: controller.signal,
+    });
+    const payload = await readAiPayload(response);
+
+    if (!response.ok) {
+      const detail = typeof payload === "string" ? payload : JSON.stringify(compactJsonValue(payload, 1200));
+      throw new Error(`Docling returned HTTP ${response.status}. ${detail}`);
+    }
+
+    const markdown = cleanText(
+      payload?.markdown ?? payload?.text ?? payload?.document?.md_content ?? payload?.document?.text_content
+    );
+    const value = extractDoclingValue(markdown, target);
+
+    return { value, markdown, payload };
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Docling timed out.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function generatedTextFromPayload(payload) {
@@ -845,6 +954,8 @@ app.post("/api/ai/image-field", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Image is required." });
   }
 
+  let doclingIssue = "";
+
   try {
     const image = parseImageDataUrl(req.body.imageDataUrl);
     if (image.sizeBytes > MAX_PROOF_IMAGE_BYTES) {
@@ -856,6 +967,35 @@ app.post("/api/ai/image-field", async (req, res) => {
 
     const target = cleanText(req.body?.target || req.body?.fieldLabel, "target value");
     const machineName = cleanText(req.body?.machineName, "machine");
+
+    if (DOCLING_ENABLED && DOCLING_BASE_URL) {
+      try {
+        const doclingResult = await postToDocling({
+          imageDataUrl: image.dataUrl,
+          target,
+          machineName,
+        });
+
+        if (doclingResult.value) {
+          return res.json({
+            ok: true,
+            value: doclingResult.value,
+            source: "docling",
+            service: DOCLING_BASE_URL,
+          });
+        }
+
+        doclingIssue = `Docling read the image but could not find a value for ${target}.`;
+        console.warn("Docling OCR text did not contain a usable target value:", {
+          target,
+          markdown: doclingResult.markdown.slice(0, 1200),
+        });
+      } catch (error) {
+        doclingIssue = error.message || "Docling failed.";
+        console.warn(`Docling primary extraction failed: ${doclingIssue}`);
+      }
+    }
+
     const prompt = [
       `Inspect this ${machineName} confirmation image.`,
       `Read only the value associated with "${target}".`,
@@ -888,13 +1028,16 @@ app.post("/api/ai/image-field", async (req, res) => {
       );
       return res.status(422).json({
         ok: false,
-        error: `Image AI responded, but no readable value could be parsed for ${target}.`,
+        error: [doclingIssue, `Image AI responded, but no readable value could be parsed for ${target}.`]
+          .filter(Boolean)
+          .join(" "),
       });
     }
 
-    return res.json({ ok: true, value, service: baseUrl });
+    return res.json({ ok: true, value, source: "image-ai", service: baseUrl });
   } catch (error) {
-    return res.status(502).json({ ok: false, error: error.message || "Image scan failed." });
+    const message = [doclingIssue, error.message || "Image scan failed."].filter(Boolean).join(" ");
+    return res.status(502).json({ ok: false, error: message });
   }
 });
 

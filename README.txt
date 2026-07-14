@@ -1,53 +1,77 @@
-CONFIRMATION — HTTP + MOBILE NATIVE CAMERA
+CONFIRMATION — MOBILE FEED UI + AUTOMATIC DOCLING
 
-This version does not use HTTPS certificates or a reverse proxy.
+CHANGED FRONTEND FILES
+- frontend/App.jsx
+- frontend/styles.css
 
-WHAT IT DOES
-- Keeps the app on normal HTTP.
-- Removes navigator.mediaDevices/getUserMedia live-stream camera code.
-- Mobile uses the native camera through an image input with capture=user or capture=environment.
-- PC opens the normal image file picker instead of trying to open a webcam.
-- Face login/registration uses the front mobile camera.
-- Machine proof scanning uses the rear mobile camera.
-- The selected image is still sent to the existing AI endpoints and stored as proof.
-
-REPLACE
-- src/App.jsx with frontend/App.jsx
-- src/styles.css with frontend/styles.css
-- server.js with backend/server.js
+AUTOMATIC DOCLING FILES
+- server.js
+- docling_service.py
+- package.json
 - Dockerfile
+- Dockerfile.docling
 - docker-compose.yml
+- requirements-docling.txt
 - .dockerignore
 
-DELETE FROM THE PROJECT IF PRESENT
-- generate-certs.ps1
-- .env.https-additions
-- certs/ folder
-- Any HTTPS-only server.js copied from Confirmation_Direct_HTTPS
+LOCAL DEVELOPMENT
 
-REMOVE FROM .env IF PRESENT
-- HTTPS_ENABLED
-- HTTPS_KEY_PATH
-- HTTPS_CERT_PATH
+Docling must already be installed in your active Python environment:
 
-DO NOT DELETE
-- schema.sql
-- confirmationproof.sql
-- makeDb.js
-- db.js
-- PostgreSQL settings
+  python -m pip install docling
 
-REBUILD
+Then one command starts Docling, Express, and Vite:
 
-docker compose down
-docker rm -f confirmation-app
-docker compose --progress=plain build --no-cache
-docker compose up -d
-docker compose logs -f confirmation
+  npm.cmd run dev
 
-OPEN
+The three processes stop together when you press Ctrl+C.
 
-http://localhost:5058
-http://172.27.1.92:5058
+DOCKER
 
-On mobile, tap Login, Register Face, or Scan Image. The phone should open its native camera. On PC, the same controls open a file picker.
+Docker Compose now builds two containers:
+- confirmation-app
+- confirmation-docling
+
+Run:
+
+  docker compose down
+  docker compose --progress=plain build --no-cache
+  docker compose up -d
+  docker compose logs -f
+
+The first Docling Docker build is large and may take a while because Python OCR/model dependencies are installed. The model cache is retained in the docling-cache volume.
+
+Open:
+
+  http://localhost:5058
+  http://192.168.0.242:5058
+
+VERIFY
+
+  docker ps
+  docker exec confirmation-docling python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:5006/health').read().decode())"
+  docker exec confirmation-app node -e "fetch('http://docling:5006/health').then(async r=>console.log(r.status,await r.text())).catch(console.error)"
+
+MOBILE REDESIGN
+
+- Social-feed-inspired mobile header and navigation
+- Larger CT brand header
+- Icon navigation for Submit, Machines, Trends, and Logout
+- Redesigned Area Confirmation card
+- Mobile Answer/Latest segmented control
+- Feed-style latest machine cards
+- Field icons and cleaner rows for Status, Mode, Temperature, images, and other parameters
+- Desktop functionality remains intact
+
+COPYING
+
+Your actual project normally stores App.jsx and styles.css under src/. Copy:
+
+  frontend/App.jsx   -> src/App.jsx
+  frontend/styles.css -> src/styles.css
+
+Place every root file in the main project folder. Keep your existing .env, db.js, makeDb.js, schema.sql, confirmationproof.sql, index.html, vite.config.js, and src/main.jsx.
+
+DOCLING PORT NOTE
+
+The Docker Docling service is internal to the Compose network, so it does not take Windows port 5006. This prevents a conflict if you were previously testing docling_service.py locally.

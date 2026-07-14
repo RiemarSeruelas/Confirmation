@@ -1,4 +1,20 @@
 services:
+  docling:
+    build:
+      context: .
+      dockerfile: Dockerfile.docling
+    image: confirmation-docling:latest
+    container_name: confirmation-docling
+    restart: unless-stopped
+    environment:
+      DOCLING_HOST: 0.0.0.0
+      DOCLING_PORT: 5006
+      DOCLING_MAX_IMAGE_BYTES: 10485760
+    expose:
+      - "5006"
+    volumes:
+      - docling-cache:/root/.cache
+
   confirmation:
     build:
       context: .
@@ -6,12 +22,19 @@ services:
     image: confirmation-app:latest
     container_name: confirmation-app
     restart: unless-stopped
+    depends_on:
+      docling:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       NODE_ENV: production
       PORT: 5178
       TZ: Asia/Manila
+      DOCLING_ENABLED: "true"
+      DOCLING_BASE_URL: http://docling:5006
+      DOCLING_PATH: /extract
+      DOCLING_TIMEOUT_MS: 120000
     ports:
       - "5058:5178"
     extra_hosts:
@@ -19,8 +42,11 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - node -e "fetch('http://127.0.0.1:5178/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - wget -qO- http://127.0.0.1:5178/api/health >/dev/null || exit 1
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 40s
+
+volumes:
+  docling-cache:

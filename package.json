@@ -4,24 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "server": "node server.js",
-    "client": "vite --host 0.0.0.0 --port 5179",
-    "setup-db": "node makeDb.js",
+    "dev": "concurrently -k -n DOCLING,SERVER,CLIENT -c yellow,cyan,magenta \"python -u docling_service.py\" \"node --watch server.js\" \"vite\"",
+    "dev:docling": "python -u docling_service.py",
+    "dev:server": "node --watch server.js",
+    "dev:client": "vite",
     "build": "vite build",
-    "start": "node server.js",
-    "check-db": "node dbCheck.js"
+    "setup-db": "node makeDb.js",
+    "start": "node server.js"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "concurrently": "latest",
-    "cors": "latest",
-    "dotenv": "latest",
-    "express": "latest",
-    "pg": "latest",
-    "vite": "latest",
-    "react": "latest",
-    "react-dom": "latest"
-  },
-  "devDependencies": {}
+    "@vitejs/plugin-react": "^6.0.3",
+    "concurrently": "^10.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "pg": "^8.22.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "vite": "^8.1.4"
+  }
 }

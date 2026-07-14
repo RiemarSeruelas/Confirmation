@@ -669,42 +669,54 @@ function LatestMachineResponseList({ records = [], machines = [] }) {
 
   return (
     <div className="latest-response-list">
-      {machines.map((machine) => {
+      {machines.map((machine, machineIndex) => {
         const record = recordForMachine(machine);
         const fields = normalizeFields(machine.fields);
+        const proofCount = Array.isArray(record?.proofs) ? record.proofs.length : 0;
 
         return (
           <article className={record ? "latest-response-card has-data" : "latest-response-card"} key={machine.id}>
             <header className="latest-response-card-head">
-              <div>
-                <strong>{machine.machine_name}</strong>
-                <span>{record ? formatDateTime(record.record_timestamp) : "No submission yet"}</span>
+              <div className="latest-machine-identity">
+                <span className={`latest-machine-avatar tone-${machineIndex % 4}`}>{machineInitials(machine.machine_name)}</span>
+                <div>
+                  <strong>{machine.machine_name}</strong>
+                  <span>{record ? formatDateTime(record.record_timestamp) : "No submission yet"}</span>
+                </div>
               </div>
-              <i className={record ? "has-response" : "no-response"}>{record ? "Saved" : "Empty"}</i>
+              <i className={record ? "has-response" : "no-response"}>{record ? "✓ Saved" : "Empty"}</i>
             </header>
 
             {record ? (
-              <div className="latest-response-values">
-                {fields.map((field) => {
-                  const value = valueFromRecordField(record, field);
-                  const proof = field.type === "image" ? proofForField(record, field.id) : null;
-                  const displayValue = value === null || value === undefined || value === "" ? "—" : String(value);
+              <>
+                <div className="latest-response-values">
+                  {fields.map((field) => {
+                    const value = valueFromRecordField(record, field);
+                    const proof = field.type === "image" ? proofForField(record, field.id) : null;
+                    const displayValue = value === null || value === undefined || value === "" ? "—" : String(value);
+                    const tone = fieldVisualTone(field);
 
-                  return (
-                    <div className={field.type === "image" ? "latest-response-field image-field" : "latest-response-field"} key={field.id}>
-                      <span>{visibleVariableName(field, machine.machine_name)}</span>
-                      <div>
-                        <strong>{displayValue}</strong>
+                    return (
+                      <div className={`latest-response-field tone-${tone} ${field.type === "image" ? "image-field" : ""}`} key={field.id}>
+                        <span className="latest-field-icon"><InterfaceIcon name={tone} /></span>
+                        <div className="latest-field-copy">
+                          <span>{visibleVariableName(field, machine.machine_name)}</span>
+                          <strong>{displayValue}</strong>
+                        </div>
                         {proof?.image_url && (
                           <a className="latest-proof-link" href={proof.image_url} target="_blank" rel="noreferrer" title={`Open proof for ${field.label}`}>
                             <img src={proof.image_url} alt={`Proof for ${field.label}`} loading="lazy" />
                           </a>
                         )}
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+                <footer className="latest-response-card-footer">
+                  <span>Proof photos: {proofCount}</span>
+                  <span className="latest-card-arrow" aria-hidden="true">›</span>
+                </footer>
+              </>
             ) : (
               <p className="latest-response-empty">The latest submitted values will appear here.</p>
             )}
@@ -1019,6 +1031,81 @@ function TrendMachineTile({ machine, miniData, isSelected, onSelect }) {
   );
 }
 
+
+function InterfaceIcon({ name, className = "" }) {
+  const common = {
+    className,
+    viewBox: "0 0 24 24",
+    "aria-hidden": "true",
+  };
+
+  if (name === "submit") {
+    return <svg {...common}><path d="M8.5 3.5h7M9 2v3m6-3v3M6.5 4.5h11A1.5 1.5 0 0 1 19 6v14H5V6a1.5 1.5 0 0 1 1.5-1.5Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>;
+  }
+  if (name === "machine") {
+    return <svg {...common}><path d="M5 8h14v11H5zM7 5h10v3M8 12h3v3H8zm5 0h3v3h-3zM8 19v2m8-2v2"/></svg>;
+  }
+  if (name === "trends") {
+    return <svg {...common}><path d="M5 19V9m7 10V4m7 15v-7"/></svg>;
+  }
+  if (name === "logout") {
+    return <svg {...common}><path d="M10 5H5v14h5m4-3 4-4-4-4m4 4H9"/></svg>;
+  }
+  if (name === "system") {
+    return <svg {...common}><path d="M4 7h16M4 12h16M4 17h16M8 4v6m8-1v6m-5-1v6"/></svg>;
+  }
+  if (name === "register") {
+    return <svg {...common}><circle cx="9" cy="8" r="3"/><path d="M4 19c.7-3.3 2.4-5 5-5s4.3 1.7 5 5m4-7v6m-3-3h6"/></svg>;
+  }
+  if (name === "logs") {
+    return <svg {...common}><path d="M6 4h12v16H6zM9 8h6m-6 4h6m-6 4h4"/></svg>;
+  }
+  if (name === "send") {
+    return <svg {...common}><path d="m3 11 18-8-8 18-2-8-8-2Z"/><path d="m11 13 5-5"/></svg>;
+  }
+  if (name === "answer") {
+    return <svg {...common}><path d="M5 5h14v10H9l-4 4V5Z"/><path d="M8 9h8m-8 3h5"/></svg>;
+  }
+  if (name === "latest") {
+    return <svg {...common}><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>;
+  }
+  if (name === "refresh") {
+    return <svg {...common}><path d="M19 8a8 8 0 1 0 1 7m-1-7V3m0 5h-5"/></svg>;
+  }
+  if (name === "temperature") {
+    return <svg {...common}><path d="M10 5a2 2 0 0 1 4 0v8.2a4 4 0 1 1-4 0V5Z"/><path d="M12 8v7"/></svg>;
+  }
+  if (name === "status") {
+    return <svg {...common}><path d="M3 12h4l2-5 4 10 2-5h6"/></svg>;
+  }
+  if (name === "mode") {
+    return <svg {...common}><path d="M4 7h10m4 0h2M4 12h3m4 0h9M4 17h8m4 0h4"/><circle cx="16" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg>;
+  }
+  if (name === "image") {
+    return <svg {...common}><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m6 17 4-4 3 3 2-2 3 3"/></svg>;
+  }
+  return <svg {...common}><circle cx="12" cy="12" r="8"/><path d="M12 8v8m-4-4h8"/></svg>;
+}
+
+function fieldVisualTone(field) {
+  const text = `${field?.label || ""} ${field?.id || ""}`.toLowerCase();
+  if (field?.type === "image") return "image";
+  if (text.includes("temp")) return "temperature";
+  if (text.includes("status") || text.includes("state") || text.includes("running")) return "status";
+  if (text.includes("mode") || text.includes("auto") || text.includes("manual")) return "mode";
+  return "parameter";
+}
+
+function machineInitials(name) {
+  return String(name || "MC")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "MC";
+}
+
 function FactoryTopNav({
   activePage = "machine",
   user = null,
@@ -1030,6 +1117,10 @@ function FactoryTopNav({
   const isAdmin = isAdminUser(user);
 
   function go(target) {
+    if (target === "logout") {
+      onLogout?.();
+      return;
+    }
     if (!setPage) return;
     const resolved = target === "register" ? "adminRegister" : target;
     if (!isAdmin && ["adminRegister", "system", "logs"].includes(resolved)) {
@@ -1041,16 +1132,17 @@ function FactoryTopNav({
 
   const navItems = isAdmin
     ? [
-      { id: "machine", label: "Machines" },
-      { id: "trends", label: "Trends" },
-      { id: "system", label: "System" },
-      { id: "register", label: "Register" },
-      { id: "logs", label: "Logs" },
+      { id: "machine", label: "Machines", icon: "machine" },
+      { id: "trends", label: "Trends", icon: "trends" },
+      { id: "system", label: "System", icon: "system" },
+      { id: "register", label: "Register", icon: "register" },
+      { id: "logs", label: "Logs", icon: "logs" },
     ]
     : [
-      { id: "record", label: "Submit" },
-      { id: "machine", label: "Machines" },
-      { id: "trends", label: "Trends" },
+      { id: "record", label: "Submit", icon: "submit" },
+      { id: "machine", label: "Machines", icon: "machine" },
+      { id: "trends", label: "Trends", icon: "trends" },
+      { id: "logout", label: "Logout", icon: "logout" },
     ];
 
   const initials = userDisplayName(user)
@@ -1062,15 +1154,19 @@ function FactoryTopNav({
 
   return (
     <header className="factory-topbar shared-factory-topbar">
-      <button className="factory-brand confirmation-brand" type="button" onClick={() => standalone ? setPage?.("auth") : go("machine")}>
-        <span className="confirmation-mark">✓</span>
-        <strong>Confirmation</strong>
+      <button className="factory-brand confirmation-brand" type="button" onClick={() => standalone ? setPage?.("auth") : go(isAdmin ? "machine" : "record")}>
+        <span className="confirmation-mark">CT</span>
+        <span className="confirmation-brand-copy">
+          <strong>Confirmation Test</strong>
+          <small><i /> System online</small>
+        </span>
       </button>
 
       <nav className="factory-nav-tabs" aria-label="Main navigation">
         {navItems.map((item) => (
           <button key={item.id} className={activePage === item.id ? "active" : ""} type="button" onClick={() => go(item.id)}>
-            {item.label}
+            <span className="factory-nav-icon"><InterfaceIcon name={item.icon} /></span>
+            <span>{item.label}</span>
           </button>
         ))}
       </nav>
@@ -1087,7 +1183,7 @@ function FactoryTopNav({
         {standalone ? (
           <button className="factory-user-chip" type="button" onClick={() => setPage?.("auth")}>Back</button>
         ) : (
-          <button className="factory-user-chip" type="button" onClick={onLogout}>{initials}</button>
+          <button className="factory-user-chip" type="button" onClick={onLogout} aria-label={`Logout ${userDisplayName(user)}`}>{initials}</button>
         )}
       </div>
     </header>
@@ -2817,6 +2913,15 @@ function RecordInputPage({ user }) {
             <p>Complete every machine below. Previous answers are prefilled; proof photos always start empty.</p>
           </div>
 
+          <div className="record-command-visual" aria-hidden="true">
+            <span className="record-visual-sheet">
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className="record-visual-shield">✓</span>
+          </div>
+
           <div className="record-command-actions">
             <label className="record-area-control">
               <span>Area</span>
@@ -2829,7 +2934,8 @@ function RecordInputPage({ user }) {
               <span>Ready</span>
             </div>
             <button className="record-submit-all-button" type="button" onClick={submitAllMachines} disabled={savingAll || loading || !machines.length}>
-              {savingAll ? "Saving..." : "Submit All"}
+              <InterfaceIcon name="send" />
+              <span>{savingAll ? "Saving..." : "Submit All"}</span>
             </button>
           </div>
         </header>
@@ -2837,8 +2943,8 @@ function RecordInputPage({ user }) {
         {message && <p className="message record-global-message">{message}</p>}
 
         <div className="record-mobile-view-switch" role="tablist" aria-label="Record view">
-          <button type="button" className={mobileView === "answer" ? "active" : ""} onClick={() => setMobileView("answer")}>Answer</button>
-          <button type="button" className={mobileView === "latest" ? "active" : ""} onClick={() => setMobileView("latest")}>Latest</button>
+          <button type="button" className={mobileView === "answer" ? "active" : ""} onClick={() => setMobileView("answer")}><InterfaceIcon name="answer" /><span>Answer</span></button>
+          <button type="button" className={mobileView === "latest" ? "active" : ""} onClick={() => setMobileView("latest")}><InterfaceIcon name="latest" /><span>Latest</span></button>
         </div>
 
         <div className={`record-main-layout mobile-view-${mobileView}`}>
@@ -2945,12 +3051,16 @@ function RecordInputPage({ user }) {
 
           <aside className="record-recent-panel glass-card">
             <div className="record-section-heading latest-heading">
-              <div>
-                <span>Latest Answers</span>
-                <strong>Your newest value per machine</strong>
+              <div className="latest-heading-copy">
+                <span className="latest-heading-icon"><InterfaceIcon name="latest" /></span>
+                <div>
+                  <span>Latest Answers</span>
+                  <strong>Your newest value per machine</strong>
+                </div>
               </div>
-              <button className="secondary-button small" type="button" onClick={refreshLatestResponses} disabled={loading || savingAll}>
-                {loading ? "Loading" : "Refresh"}
+              <button className="secondary-button small latest-refresh-button" type="button" onClick={refreshLatestResponses} disabled={loading || savingAll}>
+                <InterfaceIcon name="refresh" />
+                <span>{loading ? "Loading" : "Refresh"}</span>
               </button>
             </div>
             <LatestMachineResponseList records={records} machines={machines} />

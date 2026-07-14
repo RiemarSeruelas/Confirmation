@@ -9,11 +9,9 @@ RUN corepack enable \
     && corepack prepare pnpm@9.15.9 --activate
 
 COPY package.json package-lock.json* ./
-
 RUN pnpm install --no-frozen-lockfile
 
 COPY . .
-
 RUN pnpm run build
 
 ENV NODE_ENV=production
