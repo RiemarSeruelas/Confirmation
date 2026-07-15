@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import "./styles.css";
+import "./mobile.css";
 
 const siteOptions = ["Savoury", "Dressings"];
 const roleOptions = ["operator", "admin"];
@@ -66,18 +68,29 @@ function useFittedImageCanvas(imageDataUrl, padding = 12) {
   useEffect(() => {
     if (!imageDataUrl || !naturalSize || !stageRef.current) return undefined;
 
+    let frameId = 0;
+
     function fitImageToStage() {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
       const stage = stageRef.current;
       if (!stage) return;
 
       const rect = stage.getBoundingClientRect();
-      const availableWidth = Math.max(1, rect.width - padding);
-      const availableHeight = Math.max(1, rect.height - padding);
+      const stageStyle = window.getComputedStyle(stage);
+      const horizontalPadding = Number.parseFloat(stageStyle.paddingLeft || "0") + Number.parseFloat(stageStyle.paddingRight || "0");
+      const verticalPadding = Number.parseFloat(stageStyle.paddingTop || "0") + Number.parseFloat(stageStyle.paddingBottom || "0");
+      const availableWidth = Math.max(1, rect.width - horizontalPadding - padding);
+      const availableHeight = Math.max(1, rect.height - verticalPadding - padding);
       const scale = Math.min(availableWidth / naturalSize.width, availableHeight / naturalSize.height);
+      const nextWidth = Math.max(1, Math.round(naturalSize.width * scale));
+      const nextHeight = Math.max(1, Math.round(naturalSize.height * scale));
 
-      setCanvasSize({
-        width: Math.max(1, Math.floor(naturalSize.width * scale)),
-        height: Math.max(1, Math.floor(naturalSize.height * scale)),
+      setCanvasSize((current) => (
+        current.width === nextWidth && current.height === nextHeight
+          ? current
+          : { width: nextWidth, height: nextHeight }
+      ));
       });
     }
 
@@ -85,10 +98,13 @@ function useFittedImageCanvas(imageDataUrl, padding = 12) {
     const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fitImageToStage) : null;
     if (resizeObserver) resizeObserver.observe(stageRef.current);
     window.addEventListener("resize", fitImageToStage);
+    window.visualViewport?.addEventListener("resize", fitImageToStage);
 
     return () => {
+      window.cancelAnimationFrame(frameId);
       if (resizeObserver) resizeObserver.disconnect();
       window.removeEventListener("resize", fitImageToStage);
+      window.visualViewport?.removeEventListener("resize", fitImageToStage);
     };
   }, [imageDataUrl, naturalSize, padding]);
 
@@ -100,7 +116,11 @@ function useFittedImageCanvas(imageDataUrl, padding = 12) {
   }
 
   const canvasStyle = imageDataUrl && canvasSize.width && canvasSize.height
-    ? { width: `${canvasSize.width}px`, height: `${canvasSize.height}px` }
+    ? {
+      width: `${canvasSize.width}px`,
+      height: `${canvasSize.height}px`,
+      aspectRatio: naturalSize ? `${naturalSize.width} / ${naturalSize.height}` : undefined,
+    }
     : undefined;
 
   return { stageRef, canvasStyle, handleImageLoad };
@@ -669,54 +689,42 @@ function LatestMachineResponseList({ records = [], machines = [] }) {
 
   return (
     <div className="latest-response-list">
-      {machines.map((machine, machineIndex) => {
+      {machines.map((machine) => {
         const record = recordForMachine(machine);
         const fields = normalizeFields(machine.fields);
-        const proofCount = Array.isArray(record?.proofs) ? record.proofs.length : 0;
 
         return (
           <article className={record ? "latest-response-card has-data" : "latest-response-card"} key={machine.id}>
             <header className="latest-response-card-head">
-              <div className="latest-machine-identity">
-                <span className={`latest-machine-avatar tone-${machineIndex % 4}`}>{machineInitials(machine.machine_name)}</span>
-                <div>
-                  <strong>{machine.machine_name}</strong>
-                  <span>{record ? formatDateTime(record.record_timestamp) : "No submission yet"}</span>
-                </div>
+              <div>
+                <strong>{machine.machine_name}</strong>
+                <span>{record ? formatDateTime(record.record_timestamp) : "No submission yet"}</span>
               </div>
-              <i className={record ? "has-response" : "no-response"}>{record ? "✓ Saved" : "Empty"}</i>
+              <i className={record ? "has-response" : "no-response"}>{record ? "Saved" : "Empty"}</i>
             </header>
 
             {record ? (
-              <>
-                <div className="latest-response-values">
-                  {fields.map((field) => {
-                    const value = valueFromRecordField(record, field);
-                    const proof = field.type === "image" ? proofForField(record, field.id) : null;
-                    const displayValue = value === null || value === undefined || value === "" ? "—" : String(value);
-                    const tone = fieldVisualTone(field);
+              <div className="latest-response-values">
+                {fields.map((field) => {
+                  const value = valueFromRecordField(record, field);
+                  const proof = field.type === "image" ? proofForField(record, field.id) : null;
+                  const displayValue = value === null || value === undefined || value === "" ? "—" : String(value);
 
-                    return (
-                      <div className={`latest-response-field tone-${tone} ${field.type === "image" ? "image-field" : ""}`} key={field.id}>
-                        <span className="latest-field-icon"><InterfaceIcon name={tone} /></span>
-                        <div className="latest-field-copy">
-                          <span>{visibleVariableName(field, machine.machine_name)}</span>
-                          <strong>{displayValue}</strong>
-                        </div>
+                  return (
+                    <div className={field.type === "image" ? "latest-response-field image-field" : "latest-response-field"} key={field.id}>
+                      <span>{visibleVariableName(field, machine.machine_name)}</span>
+                      <div>
+                        <strong>{displayValue}</strong>
                         {proof?.image_url && (
                           <a className="latest-proof-link" href={proof.image_url} target="_blank" rel="noreferrer" title={`Open proof for ${field.label}`}>
                             <img src={proof.image_url} alt={`Proof for ${field.label}`} loading="lazy" />
                           </a>
                         )}
                       </div>
-                    );
-                  })}
-                </div>
-                <footer className="latest-response-card-footer">
-                  <span>Proof photos: {proofCount}</span>
-                  <span className="latest-card-arrow" aria-hidden="true">›</span>
-                </footer>
-              </>
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
               <p className="latest-response-empty">The latest submitted values will appear here.</p>
             )}
@@ -837,9 +845,8 @@ function summaryKeyForField(field) {
   return field.mapsTo && field.mapsTo !== "custom" ? field.mapsTo : field.id;
 }
 
-function buildFactorySummaryRows({ latest, fields, summary, statusText, warningCount }) {
+function buildFactorySummaryRows({ latest, fields, summary }) {
   const rows = [
-    { type: "row", label: "Status", value: statusText, tone: warningCount ? "warn" : latest ? "ok" : "idle" },
     {
       type: "row",
       label: "Latest Record:",
@@ -914,7 +921,7 @@ function TrendMultiMachineChart({ seriesItems = [] }) {
 
   const allPoints = prepared.flatMap((series) => series.points);
   if (allPoints.length < 2 || !prepared.some((series) => series.points.length >= 2)) {
-    return <div className="trend-overview-empty">Select machines with at least 2 numeric readings to draw the trend.</div>;
+    return <div className="trend-overview-empty">Choose 2 machines.</div>;
   }
 
   const values = allPoints.map((point) => point.reading);
@@ -1031,81 +1038,6 @@ function TrendMachineTile({ machine, miniData, isSelected, onSelect }) {
   );
 }
 
-
-function InterfaceIcon({ name, className = "" }) {
-  const common = {
-    className,
-    viewBox: "0 0 24 24",
-    "aria-hidden": "true",
-  };
-
-  if (name === "submit") {
-    return <svg {...common}><path d="M8.5 3.5h7M9 2v3m6-3v3M6.5 4.5h11A1.5 1.5 0 0 1 19 6v14H5V6a1.5 1.5 0 0 1 1.5-1.5Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>;
-  }
-  if (name === "machine") {
-    return <svg {...common}><path d="M5 8h14v11H5zM7 5h10v3M8 12h3v3H8zm5 0h3v3h-3zM8 19v2m8-2v2"/></svg>;
-  }
-  if (name === "trends") {
-    return <svg {...common}><path d="M5 19V9m7 10V4m7 15v-7"/></svg>;
-  }
-  if (name === "logout") {
-    return <svg {...common}><path d="M10 5H5v14h5m4-3 4-4-4-4m4 4H9"/></svg>;
-  }
-  if (name === "system") {
-    return <svg {...common}><path d="M4 7h16M4 12h16M4 17h16M8 4v6m8-1v6m-5-1v6"/></svg>;
-  }
-  if (name === "register") {
-    return <svg {...common}><circle cx="9" cy="8" r="3"/><path d="M4 19c.7-3.3 2.4-5 5-5s4.3 1.7 5 5m4-7v6m-3-3h6"/></svg>;
-  }
-  if (name === "logs") {
-    return <svg {...common}><path d="M6 4h12v16H6zM9 8h6m-6 4h6m-6 4h4"/></svg>;
-  }
-  if (name === "send") {
-    return <svg {...common}><path d="m3 11 18-8-8 18-2-8-8-2Z"/><path d="m11 13 5-5"/></svg>;
-  }
-  if (name === "answer") {
-    return <svg {...common}><path d="M5 5h14v10H9l-4 4V5Z"/><path d="M8 9h8m-8 3h5"/></svg>;
-  }
-  if (name === "latest") {
-    return <svg {...common}><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>;
-  }
-  if (name === "refresh") {
-    return <svg {...common}><path d="M19 8a8 8 0 1 0 1 7m-1-7V3m0 5h-5"/></svg>;
-  }
-  if (name === "temperature") {
-    return <svg {...common}><path d="M10 5a2 2 0 0 1 4 0v8.2a4 4 0 1 1-4 0V5Z"/><path d="M12 8v7"/></svg>;
-  }
-  if (name === "status") {
-    return <svg {...common}><path d="M3 12h4l2-5 4 10 2-5h6"/></svg>;
-  }
-  if (name === "mode") {
-    return <svg {...common}><path d="M4 7h10m4 0h2M4 12h3m4 0h9M4 17h8m4 0h4"/><circle cx="16" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="14" cy="17" r="2"/></svg>;
-  }
-  if (name === "image") {
-    return <svg {...common}><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m6 17 4-4 3 3 2-2 3 3"/></svg>;
-  }
-  return <svg {...common}><circle cx="12" cy="12" r="8"/><path d="M12 8v8m-4-4h8"/></svg>;
-}
-
-function fieldVisualTone(field) {
-  const text = `${field?.label || ""} ${field?.id || ""}`.toLowerCase();
-  if (field?.type === "image") return "image";
-  if (text.includes("temp")) return "temperature";
-  if (text.includes("status") || text.includes("state") || text.includes("running")) return "status";
-  if (text.includes("mode") || text.includes("auto") || text.includes("manual")) return "mode";
-  return "parameter";
-}
-
-function machineInitials(name) {
-  return String(name || "MC")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase() || "MC";
-}
-
 function FactoryTopNav({
   activePage = "machine",
   user = null,
@@ -1117,10 +1049,6 @@ function FactoryTopNav({
   const isAdmin = isAdminUser(user);
 
   function go(target) {
-    if (target === "logout") {
-      onLogout?.();
-      return;
-    }
     if (!setPage) return;
     const resolved = target === "register" ? "adminRegister" : target;
     if (!isAdmin && ["adminRegister", "system", "logs"].includes(resolved)) {
@@ -1132,17 +1060,16 @@ function FactoryTopNav({
 
   const navItems = isAdmin
     ? [
-      { id: "machine", label: "Machines", icon: "machine" },
-      { id: "trends", label: "Trends", icon: "trends" },
-      { id: "system", label: "System", icon: "system" },
-      { id: "register", label: "Register", icon: "register" },
-      { id: "logs", label: "Logs", icon: "logs" },
+      { id: "machine", label: "Machines" },
+      { id: "trends", label: "Trends" },
+      { id: "system", label: "System" },
+      { id: "register", label: "Register" },
+      { id: "logs", label: "Logs" },
     ]
     : [
-      { id: "record", label: "Submit", icon: "submit" },
-      { id: "machine", label: "Machines", icon: "machine" },
-      { id: "trends", label: "Trends", icon: "trends" },
-      { id: "logout", label: "Logout", icon: "logout" },
+      { id: "record", label: "Submit" },
+      { id: "machine", label: "Machines" },
+      { id: "trends", label: "Trends" },
     ];
 
   const initials = userDisplayName(user)
@@ -1154,21 +1081,32 @@ function FactoryTopNav({
 
   return (
     <header className="factory-topbar shared-factory-topbar">
-      <button className="factory-brand confirmation-brand" type="button" onClick={() => standalone ? setPage?.("auth") : go(isAdmin ? "machine" : "record")}>
+      <div className="factory-brand confirmation-brand" aria-label="Confirmation Test">
         <span className="confirmation-mark">CT</span>
         <span className="confirmation-brand-copy">
           <strong>Confirmation Test</strong>
-          <small><i /> System online</small>
+          <small>{userDisplayName(user)} • {userSite(user)}</small>
         </span>
-      </button>
+      </div>
 
       <nav className="factory-nav-tabs" aria-label="Main navigation">
         {navItems.map((item) => (
-          <button key={item.id} className={activePage === item.id ? "active" : ""} type="button" onClick={() => go(item.id)}>
-            <span className="factory-nav-icon"><InterfaceIcon name={item.icon} /></span>
-            <span>{item.label}</span>
+          <button
+            key={item.id}
+            className={activePage === item.id ? "active" : ""}
+            type="button"
+            data-nav-id={item.id}
+            onClick={() => go(item.id)}
+          >
+            {item.label}
           </button>
         ))}
+
+        {standalone ? (
+          <button type="button" data-nav-id="logout" onClick={() => setPage?.("auth")}>Back</button>
+        ) : (
+          <button className="factory-logout-tab" type="button" data-nav-id="logout" onClick={() => onLogout?.()}>Logout</button>
+        )}
       </nav>
 
       <div className="factory-top-actions factory-top-actions-no-calendar">
@@ -1180,11 +1118,9 @@ function FactoryTopNav({
             </svg>
           </button>
         )}
-        {standalone ? (
-          <button className="factory-user-chip" type="button" onClick={() => setPage?.("auth")}>Back</button>
-        ) : (
-          <button className="factory-user-chip" type="button" onClick={onLogout} aria-label={`Logout ${userDisplayName(user)}`}>{initials}</button>
-        )}
+        <span className="factory-user-chip factory-user-chip-static" aria-label={`${userDisplayName(user)} profile`} title={`${userDisplayName(user)} • ${userSite(user)}`}>
+          {initials}
+        </span>
       </div>
     </header>
   );
@@ -1262,32 +1198,29 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
   };
   const fields = normalizeFields(selectedMachine?.fields);
   const factoryCallouts = enhanceFactoryCallouts(selectedMachine?.callouts);
-  const metrics = factoryCallouts.map((callout) => buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields));
+  const metrics = factoryCallouts.map((callout) => {
+    const metric = buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields);
+    const { card } = calloutLine(metric);
+    return {
+      ...metric,
+      cardX: clampPercent(card.x, 50, 14, 86),
+      cardY: clampPercent(card.y, 50, 14, 86),
+    };
+  });
   const warningCount = metrics.filter((metric) => metric.status === "warning").length;
-  const statusText = !latest ? "No Data" : warningCount ? "Attention" : "Running";
-  const latestRows = buildFactorySummaryRows({ latest, fields, summary, statusText, warningCount });
+  const latestRows = buildFactorySummaryRows({ latest, fields, summary });
+  const overviewLabels = new Set(["Latest Record:", "Operator:"]);
+  const overviewRows = latestRows.filter((row) => row.type === "row" && overviewLabels.has(row.label));
+  const parameterRows = latestRows.filter((row) => row.type === "row" && !overviewLabels.has(row.label));
   const hasMachineImage = Boolean(selectedMachine?.image_data_url);
   const machineImageMap = useFittedImageCanvas(selectedMachine?.image_data_url || "", 16);
   const visibleMetrics = hasMachineImage ? metrics : [];
 
   return (
-    <main className="factory-os-page">
+    <main className="factory-os-page factory-machine-page">
       <FactoryTopNav activePage="machine" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} warningCount={warningCount} />
 
       <section className="factory-workspace">
-        <div className="factory-toolbar-row factory-toolbar-compact">
-          <div className="factory-machine-select-group factory-machine-control-compact factory-area-machine-group">
-            <select className="factory-area-inline-select" value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} aria-label="Select area">
-              {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
-            </select>
-            <select className="factory-machine-picker" value={selectedMachineId} onChange={(event) => setSelectedMachineId(event.target.value)} disabled={!machines.length} aria-label="Select machine">
-              {!machines.length && <option value="">No machines</option>}
-              {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
-            </select>
-            <button className="factory-slim-refresh" type="button" onClick={() => loadDashboard(selectedMachineId, selectedDate)} disabled={loading || !selectedMachineId}>⟳ Refresh</button>
-          </div>
-        </div>
-
         {message && <p className="message compact-message">{message}</p>}
 
         <section className="factory-main-card">
@@ -1295,18 +1228,28 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
             <div className="factory-panel-head">
               <h2>Machine Summary</h2>
             </div>
-            <div className="factory-summary-list factory-summary-list-soft">
-              {latestRows.map((row) => (
-                row.type === "divider" ? (
-                  <div key={row.id} className="factory-summary-divider" aria-hidden="true" />
-                ) : (
-                  <div key={row.label} className={row.tone ? `tone-${row.tone}` : ""}>
-                    <span>{row.label}</span>
-                    {row.label === "Status" ? <strong className="factory-status-badge">{row.value}<i /></strong> : <strong>{row.value}</strong>}
-                  </div>
-                )
+            <div className="factory-summary-list factory-summary-list-soft factory-summary-overview-list">
+              {overviewRows.map((row) => (
+                <div key={row.label} className={row.tone ? `tone-${row.tone}` : ""}>
+                  <span>{row.label}</span>
+                  <strong>{row.value}</strong>
+                </div>
               ))}
             </div>
+
+            {!!parameterRows.length && (
+              <section className="factory-summary-parameter-section">
+                <span className="factory-summary-section-label">Parameters</span>
+                <div className="factory-summary-list factory-summary-list-soft factory-summary-parameter-list">
+                  {parameterRows.map((row) => (
+                    <div key={row.label} className={row.tone ? `tone-${row.tone}` : ""}>
+                      <span>{row.label}</span>
+                      <strong>{row.value}</strong>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
             <div className="factory-alarm-box factory-alarm-box-compact">
               <span>△</span>
               <div><strong>Active Alarms</strong><small>Unacknowledged</small></div>
@@ -1315,23 +1258,93 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
 
           </aside>
 
-          <section className="factory-machine-stage-card">
-            <div ref={machineImageMap.stageRef} className="factory-machine-stage">
-              <div className={hasMachineImage ? "factory-machine-art" : "factory-machine-art factory-machine-art-empty"}>
-                {hasMachineImage && <img src={selectedMachine.image_data_url} alt={selectedMachine.machine_name} onLoad={machineImageMap.handleImageLoad} />}
-                <svg className="factory-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <section className="system-point-map-card">
+            <div className="system-point-map-head system-point-map-head-controls-only">
+              <div className="system-point-map-tools">
+                <select
+                  className="system-map-select system-site-map-select"
+                  value={selectedArea}
+                  onChange={(event) => setSelectedArea(event.target.value)}
+                  aria-label="Select site"
+                >
+                  {siteOptions.map((site) => (
+                    <option key={site} value={site}>{site}</option>
+                  ))}
+                </select>
+
+                <select
+                  className="system-map-select"
+                  value={selectedMachineId}
+                  onChange={(event) => setSelectedMachineId(event.target.value)}
+                  disabled={!machines.length}
+                  aria-label="Select machine"
+                >
+                  {!machines.length && <option value="">No machines</option>}
+                  {machines.map((machine) => (
+                    <option key={machine.id} value={machine.id}>{machine.machine_name}</option>
+                  ))}
+                </select>
+
+                <button
+                  className="system-map-action-button"
+                  type="button"
+                  onClick={() => loadDashboard(selectedMachineId, selectedDate)}
+                  disabled={loading || !selectedMachineId}
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            <div
+              ref={machineImageMap.stageRef}
+              className={hasMachineImage ? "system-map-stage" : "system-map-stage system-map-stage-empty"}
+            >
+              <div
+                className={hasMachineImage ? "system-map-canvas" : "system-map-canvas system-map-canvas-empty"}
+                style={machineImageMap.canvasStyle}
+              >
+                {hasMachineImage && (
+                  <img
+                    src={selectedMachine.image_data_url}
+                    alt={selectedMachine.machine_name}
+                    draggable="false"
+                    onLoad={machineImageMap.handleImageLoad}
+                  />
+                )}
+
+                <svg className="factory-line-layer system-connector-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                   {visibleMetrics.map((metric) => {
                     const { point, card } = calloutLine(metric);
                     return <line key={`factory-line-${metric.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
                   })}
                 </svg>
+
                 {visibleMetrics.map((metric) => {
                   const { point, card } = calloutLine(metric);
                   return (
                     <div key={metric.id}>
-                      <span className={metric.status === "warning" ? "factory-target-dot warning" : "factory-target-dot"} style={{ left: `${point.x}%`, top: `${point.y}%` }} />
-                      <article className={metric.status === "warning" ? "factory-callout-card warning" : "factory-callout-card"} style={{ left: `${card.x}%`, top: `${card.y}%` }}>
-                        <div><span>{metric.title}</span><em>{metric.status === "warning" ? "♧" : "✓"}</em></div>
+                      <span
+                        className={
+                          metric.status === "warning"
+                            ? "factory-target-dot warning system-clickable-dot"
+                            : "factory-target-dot system-clickable-dot"
+                        }
+                        style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                      />
+
+                      <article
+                        className={
+                          metric.status === "warning"
+                            ? "factory-callout-card warning system-builder-callout-button"
+                            : "factory-callout-card system-builder-callout-button"
+                        }
+                        style={{ left: `${card.x}%`, top: `${card.y}%` }}
+                      >
+                        <div>
+                          <span>{metric.title}</span>
+                          <em>{metric.status === "warning" ? "♧" : "✓"}</em>
+                        </div>
                         <strong>{metric.value}<small>{metric.unit}</small></strong>
                         {metric.range && <p>{metric.range}</p>}
                       </article>
@@ -1340,7 +1353,6 @@ function MachinesPage({ user = null, setPage = null, onLogout = null, standalone
                 })}
               </div>
             </div>
-
           </section>
         </section>
       </section>
@@ -1506,10 +1518,8 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
         <section className="factory-trends-overview-card">
           <div className="factory-trends-chart-panel">
             <div className="factory-trends-card-head">
-              <div>
+              <div className="factory-trends-title">
                 <p className="eyebrow">Trend Comparison</p>
-                <h2>{seriesItems.length ? `${selectedDetailLabel} · ${seriesItems.length} selected machine${seriesItems.length > 1 ? "s" : ""}` : `Select machines for ${selectedDetailLabel}`}</h2>
-                <p><span className="trend-legend-dot" />Compare the same detail across multiple machines.</p>
               </div>
               <div className="factory-trends-actions">
                 <label className="trend-filter-control">
@@ -1814,6 +1824,13 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
                 <span>⌕</span>
               </label>
               <label>
+                <span>Site</span>
+                <select value={filters.site} onChange={(event) => updateFilter("site", event.target.value)}>
+                  <option value="">All Sites</option>
+                  {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+                </select>
+              </label>
+              <label>
                 <span>Machine</span>
                 <select value={filters.machine} onChange={(event) => updateFilter("machine", event.target.value)}>
                   <option value="">All Machines</option>
@@ -1829,6 +1846,7 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
             <div className="logs-active-filters-row">
               <div className="logs-filter-chips">
                 {filters.date && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("date", "")}>Date: {filters.date}<i>×</i></button>}
+                {filters.site && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("site", "")}>Site: {filters.site}<i>×</i></button>}
                 {filters.machine && selectedMachineOption && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("machine", "")}>Machine: {selectedMachineOption.label}<i>×</i></button>}
                 {filters.search && <button type="button" className="logs-filter-chip" onClick={() => updateFilter("search", "")}>Search: {filters.search}<i>×</i></button>}
                 {!hasFilters && <span className="logs-filter-hint">No active filters</span>}
@@ -1947,6 +1965,9 @@ function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLo
 
 function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
   const [machines, setMachines] = useState([]);
+  const [selectedSite, setSelectedSite] = useState(
+    siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury"
+  );
   const [form, setForm] = useState(emptyMachineForm);
   const [selectedCalloutId, setSelectedCalloutId] = useState("");
   const [markMode, setMarkMode] = useState(null);
@@ -1985,8 +2006,13 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     setForm(next);
   }
 
-  function resetForm() {
-    applyFormWithoutAutosave({ ...emptyMachineForm, fields: [], callouts: [] });
+  function resetForm(siteName = selectedSite) {
+    applyFormWithoutAutosave({
+      ...emptyMachineForm,
+      site_name: siteName,
+      fields: [],
+      callouts: [],
+    });
     setSelectedCalloutId("");
     setMarkMode(null);
     setManageMode(null);
@@ -2055,13 +2081,22 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     const data = await fetchJson("/api/admin/machines");
     const machineList = data.machines || [];
     setMachines(machineList);
-    if (selectFirst && machineList[0]) editMachine(machineList[0]);
-    if (selectFirst && !machineList.length) resetForm();
+
+    if (selectFirst) {
+      const firstMachine =
+        machineList.find((machine) => machine.site_name === selectedSite) ||
+        machineList[0];
+
+      if (firstMachine) editMachine(firstMachine);
+      else resetForm(selectedSite);
+    }
+
     return machineList;
   }
 
   function editMachine(machine) {
     const next = normalizeMachineForm(machine);
+    setSelectedSite(next.site_name || "Savoury");
     applyFormWithoutAutosave(next);
     setSelectedCalloutId(next.callouts[0]?.id || "");
     setMarkMode(null);
@@ -2091,6 +2126,7 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
 
       if (data.machine) {
         const next = normalizeMachineForm(data.machine);
+        setSelectedSite(next.site_name || selectedSite);
         applyFormWithoutAutosave(next);
         setSelectedCalloutId((current) => next.callouts.find((item) => item.id === current)?.id || next.callouts[0]?.id || "");
         setMachines((current) => {
@@ -2166,15 +2202,30 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     try {
       await fetchJson(`/api/admin/machines/${machine.id}`, { method: "DELETE" });
       const machineList = await loadMachines();
-      if (machineList[0]) editMachine(machineList[0]);
-      else resetForm();
+      const nextMachine =
+        machineList.find((item) => item.site_name === selectedSite) ||
+        machineList[0];
+
+      if (nextMachine) editMachine(nextMachine);
+      else resetForm(selectedSite);
     } catch (error) {
       setMessage(error.message);
     }
   }
 
+  function handleSiteSelect(siteName) {
+    setSelectedSite(siteName);
+
+    const firstMachine = machines.find(
+      (machine) => machine.site_name === siteName
+    );
+
+    if (firstMachine) editMachine(firstMachine);
+    else resetForm(siteName);
+  }
+
   function handleMachineSelect(value) {
-    if (!value) return resetForm();
+    if (!value) return resetForm(selectedSite);
     const machine = machines.find((item) => String(item.id) === String(value));
     if (machine) editMachine(machine);
   }
@@ -2417,6 +2468,15 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
     };
   }, [form]);
 
+  const siteMachines = machines.filter(
+    (machine) => machine.site_name === selectedSite
+  );
+  const selectedMachineValue = siteMachines.some(
+    (machine) => String(machine.id) === String(form.id)
+  )
+    ? form.id || ""
+    : "";
+
   return (
     <>
       <FactoryTopNav activePage="system" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} />
@@ -2433,7 +2493,7 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
                 <div className="system-builder-fields">
                   <label>{requiredLabel("Machine Name")}<input value={form.machine_name} onChange={(event) => updateForm("machine_name", event.target.value)} placeholder="SELO-3 Pouch Packer" required /></label>
                   <div className="system-site-upload-row">
-                    <label className="system-site-compact">{requiredLabel("Site")}<select value={form.site_name} onChange={(event) => updateForm("site_name", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
+                    <label className="system-site-compact">{requiredLabel("Site")}<select value={form.site_name} onChange={(event) => { const siteName = event.target.value; updateForm("site_name", siteName); setSelectedSite(siteName); }} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
                     <label className="system-upload-tile compact-upload-tile">
                       <input type="file" accept="image/*" onChange={handleImageUpload} />
                       <span className="system-upload-icon">⇧</span>
@@ -2483,14 +2543,37 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
           </section>
 
           <section className="system-point-map-card">
-            <div className="system-point-map-head">
-              <h2>Point Map</h2>
+            <div className="system-point-map-head system-point-map-head-controls-only">
               <div className="system-point-map-tools">
                 {markMode && <div className="system-mark-pill">{markMode === "card" ? "Place card" : "Mark point"}</div>}
-                <select className="system-map-select" value={form.id || ""} onChange={(event) => handleMachineSelect(event.target.value)} aria-label="Select saved machine">
-                  <option value="" disabled>{machines.length ? "Saved machines" : "No machines"}</option>
-                  {machines.map((machine) => <option key={machine.id} value={machine.id}>{machine.machine_name}</option>)}
+
+                <select
+                  className="system-map-select system-site-map-select"
+                  value={selectedSite}
+                  onChange={(event) => handleSiteSelect(event.target.value)}
+                  aria-label="Select site"
+                >
+                  {siteOptions.map((site) => (
+                    <option key={site} value={site}>{site}</option>
+                  ))}
                 </select>
+
+                <select
+                  className="system-map-select"
+                  value={selectedMachineValue}
+                  onChange={(event) => handleMachineSelect(event.target.value)}
+                  aria-label="Select saved machine"
+                >
+                  <option value="" disabled>
+                    {siteMachines.length
+                      ? `Machines in ${selectedSite}`
+                      : `No machines in ${selectedSite}`}
+                  </option>
+                  {siteMachines.map((machine) => (
+                    <option key={machine.id} value={machine.id}>{machine.machine_name}</option>
+                  ))}
+                </select>
+
                 <button className="system-delete-button" type="button" disabled={!form.id} onClick={() => handleDelete(form)}>Delete</button>
               </div>
             </div>
@@ -2498,6 +2581,7 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
             <div ref={systemImageMap.stageRef} className={`${markMode ? "system-map-stage locating" : "system-map-stage"}${form.image_data_url ? "" : " system-map-stage-empty"}`}>
               <div
                 className={form.image_data_url ? "system-map-canvas" : "system-map-canvas system-map-canvas-empty"}
+                style={systemImageMap.canvasStyle}
                 onClick={handlePreviewClick}
               >
                 {form.image_data_url && (
@@ -2650,37 +2734,7 @@ function OperatorRegisterPage({ onBack, onRegistered }) {
   );
 }
 
-function TopBar({ user, page, setPage, onLogout }) {
-  const isAdmin = userRole(user) === "admin";
-  return (
-    <header className="topbar">
-      <div className="topbar-brand">
-        <div className="mini-logo">CT</div>
-        <div><strong>Confirmation Test</strong><span>{userDisplayName(user)} • {userSite(user)} • {userRole(user)}</span></div>
-      </div>
-      <nav>
-        {isAdmin ? (
-          <>
-            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
-            <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
-            <button className={page === "system" ? "active" : ""} type="button" onClick={() => setPage("system")}>System</button>
-            <button className={page === "adminRegister" ? "active" : ""} type="button" onClick={() => setPage("adminRegister")}>Register</button>
-            <button className={page === "logs" ? "active" : ""} type="button" onClick={() => setPage("logs")}>Logs</button>
-          </>
-        ) : (
-          <>
-            <button className={page === "record" ? "active" : ""} type="button" onClick={() => setPage("record")}>Submit</button>
-            <button className={page === "machine" ? "active" : ""} type="button" onClick={() => setPage("machine")}>Machines</button>
-            <button className={page === "trends" ? "active" : ""} type="button" onClick={() => setPage("trends")}>Trends</button>
-          </>
-        )}
-        <button type="button" onClick={onLogout}>Logout</button>
-      </nav>
-    </header>
-  );
-}
-
-function RecordInputPage({ user }) {
+function RecordInputPage({ user, setPage, onLogout }) {
   const [machines, setMachines] = useState([]);
   const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
   const [valuesByMachine, setValuesByMachine] = useState({});
@@ -2905,21 +2959,14 @@ function RecordInputPage({ user }) {
 
   return (
     <main className="form-page app-gradient page-pad record-page-mobile">
+      <FactoryTopNav activePage="record" user={user} setPage={setPage} onLogout={onLogout} />
+
       <section className="record-workspace">
         <header className="record-command-bar glass-card">
           <div className="record-command-copy">
             <p className="eyebrow">Area Confirmation</p>
             <h1>{selectedArea} Checks</h1>
             <p>Complete every machine below. Previous answers are prefilled; proof photos always start empty.</p>
-          </div>
-
-          <div className="record-command-visual" aria-hidden="true">
-            <span className="record-visual-sheet">
-              <i />
-              <i />
-              <i />
-            </span>
-            <span className="record-visual-shield">✓</span>
           </div>
 
           <div className="record-command-actions">
@@ -2934,8 +2981,7 @@ function RecordInputPage({ user }) {
               <span>Ready</span>
             </div>
             <button className="record-submit-all-button" type="button" onClick={submitAllMachines} disabled={savingAll || loading || !machines.length}>
-              <InterfaceIcon name="send" />
-              <span>{savingAll ? "Saving..." : "Submit All"}</span>
+              {savingAll ? "Saving..." : "Submit All"}
             </button>
           </div>
         </header>
@@ -2943,8 +2989,8 @@ function RecordInputPage({ user }) {
         {message && <p className="message record-global-message">{message}</p>}
 
         <div className="record-mobile-view-switch" role="tablist" aria-label="Record view">
-          <button type="button" className={mobileView === "answer" ? "active" : ""} onClick={() => setMobileView("answer")}><InterfaceIcon name="answer" /><span>Answer</span></button>
-          <button type="button" className={mobileView === "latest" ? "active" : ""} onClick={() => setMobileView("latest")}><InterfaceIcon name="latest" /><span>Latest</span></button>
+          <button type="button" className={mobileView === "answer" ? "active" : ""} onClick={() => setMobileView("answer")}>Answer</button>
+          <button type="button" className={mobileView === "latest" ? "active" : ""} onClick={() => setMobileView("latest")}>Latest</button>
         </div>
 
         <div className={`record-main-layout mobile-view-${mobileView}`}>
@@ -2992,9 +3038,17 @@ function RecordInputPage({ user }) {
                       {fields.map((field) => {
                         const value = machineValues[field.id] ?? "";
                         const proof = machineProofs[field.id];
+                        const optionValues = field.type === "option"
+                          ? splitFieldOptions(field.options ?? field.optionsText)
+                          : [];
+                        const isBinaryOption = optionValues.length === 2;
+                        const fieldClassName = [
+                          field.type === "textarea" || field.type === "image" ? "wide-field" : "",
+                          isBinaryOption ? "binary-option-field" : "",
+                        ].filter(Boolean).join(" ");
 
                         return (
-                          <label key={field.id} className={field.type === "textarea" || field.type === "image" ? "wide-field" : ""}>
+                          <label key={field.id} className={fieldClassName}>
                             {field.required ? requiredLabel(field.label) : field.label}
 
                             {field.type === "textarea" ? (
@@ -3022,10 +3076,27 @@ function RecordInputPage({ user }) {
                                 )}
                               </div>
                             ) : field.type === "option" ? (
-                              <select className="option-answer-select" value={value} onChange={(event) => updateValue(machine.id, field.id, event.target.value)} required={field.required} disabled={savingAll}>
-                                <option value="">Select {field.label}</option>
-                                {splitFieldOptions(field.options ?? field.optionsText).map((option) => <option key={option} value={option}>{option}</option>)}
-                              </select>
+                              isBinaryOption ? (
+                                <div className="binary-option-control" role="group" aria-label={field.label}>
+                                  {optionValues.map((option) => (
+                                    <button
+                                      key={option}
+                                      type="button"
+                                      className={`binary-option-button ${value === option ? "active" : ""}`}
+                                      aria-pressed={value === option}
+                                      onClick={() => updateValue(machine.id, field.id, option)}
+                                      disabled={savingAll}
+                                    >
+                                      {option}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <select className="option-answer-select" value={value} onChange={(event) => updateValue(machine.id, field.id, event.target.value)} required={field.required} disabled={savingAll}>
+                                  <option value="">Select {field.label}</option>
+                                  {optionValues.map((option) => <option key={option} value={option}>{option}</option>)}
+                                </select>
+                              )
                             ) : (
                               <input
                                 type={field.type === "number" ? "number" : "text"}
@@ -3051,16 +3122,12 @@ function RecordInputPage({ user }) {
 
           <aside className="record-recent-panel glass-card">
             <div className="record-section-heading latest-heading">
-              <div className="latest-heading-copy">
-                <span className="latest-heading-icon"><InterfaceIcon name="latest" /></span>
-                <div>
-                  <span>Latest Answers</span>
-                  <strong>Your newest value per machine</strong>
-                </div>
+              <div>
+                <span>Latest Answers</span>
+                <strong>Your newest value per machine</strong>
               </div>
-              <button className="secondary-button small latest-refresh-button" type="button" onClick={refreshLatestResponses} disabled={loading || savingAll}>
-                <InterfaceIcon name="refresh" />
-                <span>{loading ? "Loading" : "Refresh"}</span>
+              <button className="secondary-button small" type="button" onClick={refreshLatestResponses} disabled={loading || savingAll}>
+                {loading ? "Loading" : "Refresh"}
               </button>
             </div>
             <LatestMachineResponseList records={records} machines={machines} />
@@ -3103,7 +3170,7 @@ function App() {
   }
 
   function renderRecordPage() {
-    return <><TopBar user={user} page="record" setPage={setPage} onLogout={handleLogout} /><RecordInputPage user={user} /></>;
+    return <RecordInputPage user={user} setPage={setPage} onLogout={handleLogout} />;
   }
 
   if (page === "auth") {
