@@ -15,6 +15,7 @@ server/data/db.json
 server/data/db.*.json
 server/data/*.backup.json
 server/data/*.tmp
+server/data/.db.*.tmp
 
 # Uploaded/generated files
 uploads/
