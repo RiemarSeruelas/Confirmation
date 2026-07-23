@@ -1,0 +1,15 @@
+services:
+  power-tool:
+    build: .
+    container_name: power-tool-system
+    restart: unless-stopped
+    ports:
+      - "5057:5057"
+    environment:
+      PORT: 5057
+      QR_PAYLOAD_MODE: url
+    volumes:
+      - power_tool_data:/app/server/data
+
+volumes:
+  power_tool_data:
