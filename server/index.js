@@ -206,24 +206,41 @@ function logUsageByIp(usage) {
   }
 }
 
-function publicReviewerAccount(account) {
+function publicStaffAccount(account) {
   return {
     id: account.id,
     username: account.username,
     displayName: account.displayName || account.username,
-    role: "reviewer",
+    role: normalizeText(account.role).toLowerCase(),
     active: account.active !== false,
     createdAt: account.createdAt || ""
   };
 }
 
-function isAdminActor(db, username) {
+function isAdminActor(db, username, password) {
   const finalUsername = normalizeText(username).toLowerCase();
-  return (db.staffAccounts || []).some((account) =>
-    normalizeText(account.username).toLowerCase() === finalUsername
-    && normalizeText(account.role).toLowerCase() === "admin"
-    && account.active !== false
+  const account = (db.staffAccounts || []).find((entry) =>
+    normalizeText(entry.username).toLowerCase() === finalUsername
+    && normalizeText(entry.role).toLowerCase() === "admin"
+    && entry.active !== false
   );
+  if (!account) return false;
+  if (password === undefined) return true;
+  return normalizeText(account.password) === normalizeText(password);
+}
+
+function publicReviewerAccount(account) {
+  return {
+    ...publicStaffAccount(account),
+    role: "reviewer"
+  };
+}
+
+function sortStaffAccounts(accounts) {
+  return [...accounts].sort((a, b) => {
+    if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
+    return a.username.localeCompare(b.username);
+  });
 }
 
 function ensureRequestWorkflow(request) {
@@ -443,6 +460,17 @@ app.post("/api/auth/login", async (req, res) => {
   });
 });
 
+app.get("/api/staff/accounts", async (req, res) => {
+  const db = await readDb();
+  if (!isAdminActor(db, req.query.adminUsername)) {
+    return res.status(403).json({ error: "Admin access is required." });
+  }
+  const accounts = (db.staffAccounts || [])
+    .filter((account) => ["admin", "reviewer"].includes(normalizeText(account.role).toLowerCase()))
+    .map(publicStaffAccount);
+  res.json(sortStaffAccounts(accounts));
+});
+
 app.get("/api/staff/reviewers", async (req, res) => {
   const db = await readDb();
   if (!isAdminActor(db, req.query.adminUsername)) {
@@ -457,13 +485,12 @@ app.get("/api/staff/reviewers", async (req, res) => {
 
 app.post("/api/staff/reviewers", async (req, res) => {
   const db = await readDb();
-  if (!isAdminActor(db, req.body?.adminUsername)) {
-    return res.status(403).json({ error: "Admin access is required." });
+  if (req.body?.adminPassword === undefined || !isAdminActor(db, req.body?.adminUsername, req.body?.adminPassword)) {
+    return res.status(403).json({ error: "The Admin password is incorrect." });
   }
 
   const username = normalizeText(req.body?.username).toLowerCase();
   const password = normalizeText(req.body?.password);
-  const displayName = normalizeText(req.body?.displayName) || username;
   if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
     return res.status(400).json({ error: "Reviewer username must be 3–40 characters using letters, numbers, dots, dashes, or underscores." });
   }
@@ -479,7 +506,7 @@ app.post("/api/staff/reviewers", async (req, res) => {
     username,
     password,
     role: "reviewer",
-    displayName,
+    displayName: username,
     active: true,
     createdAt: nowIso()
   };
@@ -490,8 +517,8 @@ app.post("/api/staff/reviewers", async (req, res) => {
 
 app.delete("/api/staff/reviewers/:id", async (req, res) => {
   const db = await readDb();
-  if (!isAdminActor(db, req.body?.adminUsername)) {
-    return res.status(403).json({ error: "Admin access is required." });
+  if (req.body?.adminPassword === undefined || !isAdminActor(db, req.body?.adminUsername, req.body?.adminPassword)) {
+    return res.status(403).json({ error: "The Admin password is incorrect." });
   }
   const index = (db.staffAccounts || []).findIndex((account) =>
     account.id === req.params.id && normalizeText(account.role).toLowerCase() === "reviewer"

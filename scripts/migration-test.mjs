@@ -38,9 +38,9 @@ await fs.writeFile(path.join(dataDir, "db.json"), JSON.stringify(oldDb, null, 2)
 const { readDb, writeDb } = await import("../server/dataStore.js");
 const migrated = await readDb();
 
-assert.equal(migrated.meta.version, 9);
+assert.equal(migrated.meta.version, 10);
 assert.equal(migrated.staffAccounts.find((account) => account.role === "admin").username, "admin");
-assert.equal(migrated.staffAccounts.find((account) => account.role === "admin").password, "1234");
+assert.equal(migrated.staffAccounts.find((account) => account.role === "admin").password, "engineering2026");
 assert.equal(migrated.staffAccounts.find((account) => account.role === "reviewer").username, "reviewer");
 assert.equal(migrated.staffAccounts.find((account) => account.role === "reviewer").password, "1234");
 assert.equal(Object.prototype.hasOwnProperty.call(migrated, "adminAccount"), false);
@@ -85,16 +85,16 @@ versionEight.staffAccounts.push({
 });
 await fs.writeFile(path.join(dataDir, "db.json"), JSON.stringify(versionEight, null, 2));
 const upgradedVersionEight = await readDb();
-assert.equal(upgradedVersionEight.meta.version, 9);
+assert.equal(upgradedVersionEight.meta.version, 10);
 assert.equal(upgradedVersionEight.categories[0].detailFields.at(-1).label, "My saved detail");
 assert.equal(upgradedVersionEight.categories[0].reviewQuestions.at(-1).label, "My saved review question");
-assert.equal(upgradedVersionEight.staffAccounts.find((account) => account.role === "admin").password, "9876");
+assert.equal(upgradedVersionEight.staffAccounts.find((account) => account.role === "admin").password, "engineering2026");
 assert.equal(upgradedVersionEight.staffAccounts.filter((account) => account.role === "reviewer").length, 2);
-assert.equal(upgradedVersionEight.staffAccounts.find((account) => account.username === "reviewer.two").displayName, "Second Reviewer");
+assert.equal(upgradedVersionEight.staffAccounts.find((account) => account.username === "reviewer.two").displayName, "reviewer.two");
 
 upgradedVersionEight.staffAccounts.find((account) => account.role === "admin").password = "2468";
 await writeDb(upgradedVersionEight);
 const manuallyEdited = await readDb();
 assert.equal(manuallyEdited.staffAccounts.find((account) => account.role === "admin").password, "2468");
 
-console.log("Migration test passed: v9 preserves Builder content, records, multiple Reviewer accounts, renewal history, legacy images, and later JSON password changes.");
+console.log("Migration test passed: v10 preserves Builder content, records, multiple Reviewer accounts, renewal history, legacy images, and applies the protected Admin credentials.");

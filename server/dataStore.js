@@ -8,7 +8,7 @@ const DATA_DIR = String(process.env.POWER_TOOL_DATA_DIR || "").trim()
   ? path.resolve(process.env.POWER_TOOL_DATA_DIR)
   : path.join(__dirname, "data");
 const DB_PATH = path.join(DATA_DIR, "db.json");
-const CURRENT_DB_VERSION = 9;
+const CURRENT_DB_VERSION = 10;
 let ensurePromise;
 let writeQueue = Promise.resolve();
 let tempFileCounter = 0;
@@ -59,8 +59,8 @@ const starterDb = {
   categories: powerToolCategories(),
   legacyCategories: [],
   staffAccounts: [
-    { id: "reviewer", username: "reviewer", password: "1234", role: "reviewer", displayName: "Reviewer", createdAt: nowIso() },
-    { id: "admin", username: "admin", password: "1234", role: "admin", displayName: "Administrator", createdAt: nowIso() }
+    { id: "reviewer", username: "reviewer", password: "1234", role: "reviewer", displayName: "reviewer", createdAt: nowIso() },
+    { id: "admin", username: "admin", password: "engineering2026", role: "admin", displayName: "admin", createdAt: nowIso() }
   ],
   requests: [],
   items: [],
@@ -224,7 +224,17 @@ function normalizedStaffAccounts(db, sourceVersion) {
     active: account?.active !== false
   });
 
-  const admin = normalizeAccount(previousAdmin, fallbackAdmin);
+  const normalizedAdmin = normalizeAccount(previousAdmin, fallbackAdmin);
+  const admin = sourceVersion < 10
+    ? {
+        ...normalizedAdmin,
+        id: "admin",
+        username: "admin",
+        password: "engineering2026",
+        displayName: "admin",
+        active: true
+      }
+    : normalizedAdmin;
   const reviewerSources = currentAccounts.filter((account) =>
     String(account?.role || "").trim().toLowerCase() === "reviewer"
   );
@@ -234,6 +244,9 @@ function normalizedStaffAccounts(db, sourceVersion) {
   const usedUsernames = new Set([admin.username.toLowerCase()]);
   const reviewers = reviewerSources
     .map((account, index) => normalizeAccount(account, fallbackReviewer, index))
+    .map((account) => sourceVersion < 10
+      ? { ...account, displayName: account.username }
+      : account)
     .filter((account) => {
       const username = account.username.toLowerCase();
       if (!username || usedUsernames.has(username)) return false;

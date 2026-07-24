@@ -48,7 +48,7 @@ async function request(path, options = {}) {
 export const api = {
   health: () => request("/health"),
   login: (payload) => request("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
-  reviewerAccounts: (adminUsername) => request(`/staff/reviewers?adminUsername=${encodeURIComponent(adminUsername)}`),
+  staffAccounts: (adminUsername) => request(`/staff/accounts?adminUsername=${encodeURIComponent(adminUsername)}`),
   createReviewerAccount: (payload) => request("/staff/reviewers", { method: "POST", body: JSON.stringify(payload) }),
   deleteReviewerAccount: (id, payload) => request(`/staff/reviewers/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify(payload) }),
   categories: () => request("/categories"),

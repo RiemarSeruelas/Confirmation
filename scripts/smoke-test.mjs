@@ -32,36 +32,47 @@ assert.deepEqual(portable.detailFields, []);
 
 const reviewerLogin = await request("/auth/login", {
   method: "POST",
-  body: JSON.stringify({ username: "reviewer", password: "1234", role: "reviewer" })
+  body: JSON.stringify({ username: "reviewer", password: "1234" })
 });
 assert.equal(reviewerLogin.response.status, 200);
 assert.equal(reviewerLogin.body.role, "reviewer");
 
 const adminLogin = await request("/auth/login", {
   method: "POST",
-  body: JSON.stringify({ username: "admin", password: "1234", role: "admin" })
+  body: JSON.stringify({ username: "admin", password: "engineering2026" })
 });
 assert.equal(adminLogin.response.status, 200);
 assert.equal(adminLogin.body.role, "admin");
 
-const reviewerAccounts = await request("/staff/reviewers?adminUsername=admin");
-assert.equal(reviewerAccounts.response.status, 200);
-assert.equal(reviewerAccounts.body.length, 1);
+const staffAccounts = await request("/staff/accounts?adminUsername=admin");
+assert.equal(staffAccounts.response.status, 200);
+assert.deepEqual(staffAccounts.body.map((account) => account.role), ["admin", "reviewer"]);
+assert.equal(staffAccounts.body[0].username, "admin");
+const rejectedAccountCreation = await request("/staff/reviewers", {
+  method: "POST",
+  body: JSON.stringify({
+    adminUsername: "admin",
+    adminPassword: "wrong-password",
+    username: "blocked.reviewer",
+    password: "5678"
+  })
+});
+assert.equal(rejectedAccountCreation.response.status, 403);
 const addedReviewer = await request("/staff/reviewers", {
   method: "POST",
   body: JSON.stringify({
     adminUsername: "admin",
-    displayName: "Second Reviewer",
+    adminPassword: "engineering2026",
     username: "reviewer.two",
     password: "5678"
   })
 });
 assert.equal(addedReviewer.response.status, 201);
-assert.equal(addedReviewer.body.displayName, "Second Reviewer");
+assert.equal(addedReviewer.body.displayName, "reviewer.two");
 assert.equal(Object.prototype.hasOwnProperty.call(addedReviewer.body, "password"), false);
 const secondReviewerLogin = await request("/auth/login", {
   method: "POST",
-  body: JSON.stringify({ username: "reviewer.two", password: "5678", role: "reviewer" })
+  body: JSON.stringify({ username: "reviewer.two", password: "5678" })
 });
 assert.equal(secondReviewerLogin.response.status, 200);
 
@@ -235,8 +246,8 @@ assert.equal(removedUsagePage.response.status, 404);
 
 const removedReviewer = await request(`/staff/reviewers/${addedReviewer.body.id}`, {
   method: "DELETE",
-  body: JSON.stringify({ adminUsername: "admin" })
+  body: JSON.stringify({ adminUsername: "admin", adminPassword: "engineering2026" })
 });
 assert.equal(removedReviewer.response.status, 200);
 
-console.log("Smoke test passed: multiple Reviewer accounts, neutral review data, approval attribution, expired renewal, full-page records, QR records, archive/restore, search, and per-IP console usage.");
+console.log("Smoke test passed: shared Reviewer/Admin login, protected account changes, neutral review data, approval attribution, expired renewal, full-page records, QR records, archive/restore, search, and per-IP console usage.");

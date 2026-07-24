@@ -14,8 +14,8 @@ import {
   GripVertical,
   Images,
   KeyRound,
-  LayoutDashboard,
   ListChecks,
+  LogOut,
   Moon,
   PackageCheck,
   Plus,
@@ -34,6 +34,7 @@ import { api } from "./api.js";
 
 const STAFF_SESSION_KEY = "power-tool-staff-session";
 const VISIT_SESSION_KEY = "power-tool-visit-session";
+const DEVELOPER_CREDIT = "Made by Riemar R. Seruelas Jr - Data Digital Intern";
 const QUESTION_TYPES = [
   { value: "text", label: "Short answer" },
   { value: "textarea", label: "Paragraph" },
@@ -47,6 +48,8 @@ const QUESTION_TYPES = [
 ];
 const OPTION_QUESTION_TYPES = new Set(["radio", "checkboxes", "select"]);
 const SITE_OPTIONS = ["Savoury", "Engineering", "Dressings"];
+
+console.info(`%c${DEVELOPER_CREDIT}`, "color:#0f62fe;font-weight:800;");
 
 function canStaffActOnRequest(session, request) {
   return ["reviewer", "admin"].includes(session?.role) && request.status === "pending";
@@ -1050,7 +1053,7 @@ function ScanPage({ onOpenItem, onBack }) {
     event.preventDefault();
     const value = lookupText.trim();
     const normalized = value.toUpperCase();
-    if (!value) return setError("Enter a QR ID, scanned URL, or Reference ID first.");
+    if (!value) return setError("Enter a QR ID or Reference ID first.");
 
     setError("");
     setReferenceResult(null);
@@ -1156,8 +1159,8 @@ function ScanPage({ onOpenItem, onBack }) {
 
         <form onSubmit={manualSubmit} className="followup-check">
           <label>
-            QR ID / scanned URL / Reference ID
-            <input value={lookupText} onChange={(event) => setLookupText(event.target.value)} placeholder="QR-XXXXXXXX, tool URL, or REF-XXXXXXXX" />
+            QR ID / Reference ID
+            <input value={lookupText} onChange={(event) => setLookupText(event.target.value)} placeholder="QR-XXXXXXXX or REF-XXXXXXXX" />
           </label>
           <button className="secondary-btn" disabled={busy}>{busy ? "Checking" : "Check"}</button>
         </form>
@@ -1602,9 +1605,8 @@ function RequestDetails({ requestId, onBack, onApproved, staffSession, reload })
   );
 }
 
-function StaffLogin({ role, onLogin }) {
-  const roleLabel = role === "admin" ? "Admin" : "Reviewer";
-  const [form, setForm] = useState({ username: role, password: "" });
+function StaffLogin({ onLogin }) {
+  const [form, setForm] = useState({ username: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -1613,8 +1615,7 @@ function StaffLogin({ role, onLogin }) {
     setBusy(true);
     setError("");
     try {
-      const session = await api.login({ ...form, role });
-      localStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(session));
+      const session = await api.login(form);
       onLogin(session);
     } catch (loginError) {
       setError(loginError.message || "Login failed.");
@@ -1624,12 +1625,12 @@ function StaffLogin({ role, onLogin }) {
   }
 
   return (
-    <main className="single-page tight-page">
-      <section className="panel login-panel">
+    <main className="single-page staff-login-page">
+      <section className="panel login-panel staff-login-panel">
         <div className="panel-heading compact-heading">
           <div>
-            <p className="eyebrow">{roleLabel}</p>
-            <h2>{roleLabel} account required</h2>
+            <p className="eyebrow">Secure access</p>
+            <h2>Reviewer account</h2>
           </div>
           <KeyRound size={24} />
         </div>
@@ -1637,19 +1638,14 @@ function StaffLogin({ role, onLogin }) {
         <form onSubmit={submit} className="stack-form">
           <label>
             Username
-            <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} autoComplete="username" />
+            <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} placeholder="Enter username" autoComplete="username" autoFocus />
           </label>
           <label>
             Password
-            <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="Enter password" autoComplete="current-password" autoFocus />
+            <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="Enter password" autoComplete="current-password" />
           </label>
-          <button className="primary-btn" disabled={busy}>{busy ? "Checking..." : `Enter ${roleLabel}`}</button>
+          <button className="primary-btn" disabled={busy}>{busy ? "Checking..." : "Sign in"}</button>
         </form>
-        <p className="muted small-text login-help">
-          {role === "admin"
-            ? "Initial Admin account: admin / 1234."
-            : "Use a Reviewer account created by Admin. Initial account: reviewer / 1234."}
-        </p>
       </section>
     </main>
   );
@@ -1657,15 +1653,27 @@ function StaffLogin({ role, onLogin }) {
 
 function ReviewerAccounts({ adminSession }) {
   const [accounts, setAccounts] = useState([]);
-  const [form, setForm] = useState({ displayName: "", username: "", password: "" });
+  const [form, setForm] = useState({ username: "", password: "" });
+  const [pendingCreation, setPendingCreation] = useState(false);
+  const [createPassword, setCreatePassword] = useState("");
+  const [pendingRemoval, setPendingRemoval] = useState(null);
+  const [removePassword, setRemovePassword] = useState("");
+  const [dialogError, setDialogError] = useState("");
   const [message, setMessage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
+  function sortAccounts(nextAccounts) {
+    return [...nextAccounts].sort((a, b) => {
+      if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
+      return a.username.localeCompare(b.username);
+    });
+  }
+
   async function loadAccounts() {
     setLoading(true);
     try {
-      setAccounts(await api.reviewerAccounts(adminSession.username));
+      setAccounts(await api.staffAccounts(adminSession.username));
     } catch (loadError) {
       setMessage({ type: "error", text: loadError.message });
     } finally {
@@ -1678,94 +1686,185 @@ function ReviewerAccounts({ adminSession }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminSession.username]);
 
+  function requestCreateConfirmation(event) {
+    event.preventDefault();
+    setCreatePassword("");
+    setDialogError("");
+    setMessage(null);
+    setPendingCreation(true);
+  }
+
   async function createAccount(event) {
     event.preventDefault();
     setBusy(true);
-    setMessage(null);
+    setDialogError("");
     try {
       const account = await api.createReviewerAccount({
         ...form,
-        adminUsername: adminSession.username
+        adminUsername: adminSession.username,
+        adminPassword: createPassword
       });
-      setAccounts((current) => [...current, account].sort((a, b) => a.displayName.localeCompare(b.displayName)));
-      setForm({ displayName: "", username: "", password: "" });
-      setMessage({ type: "success", text: `${account.displayName} can now sign in as a Reviewer.` });
+      setAccounts((current) => sortAccounts([...current, account]));
+      setForm({ username: "", password: "" });
+      setCreatePassword("");
+      setPendingCreation(false);
+      setMessage({ type: "success", text: `${account.username} can now sign in as a Reviewer.` });
     } catch (createError) {
-      setMessage({ type: "error", text: createError.message });
+      setDialogError(createError.message);
     } finally {
       setBusy(false);
     }
   }
 
-  async function removeAccount(account) {
-    if (!window.confirm(`Remove the Reviewer account for ${account.displayName}? Existing approval records will keep the reviewer's name.`)) return;
+  async function removeAccount(event) {
+    event.preventDefault();
+    if (!pendingRemoval) return;
     setBusy(true);
-    setMessage(null);
+    setDialogError("");
     try {
-      await api.deleteReviewerAccount(account.id, { adminUsername: adminSession.username });
-      setAccounts((current) => current.filter((entry) => entry.id !== account.id));
-      setMessage({ type: "success", text: `${account.displayName}'s sign-in account was removed.` });
+      await api.deleteReviewerAccount(pendingRemoval.id, {
+        adminUsername: adminSession.username,
+        adminPassword: removePassword
+      });
+      setAccounts((current) => current.filter((entry) => entry.id !== pendingRemoval.id));
+      setMessage({ type: "success", text: `${pendingRemoval.username}'s sign-in account was removed.` });
+      setPendingRemoval(null);
+      setRemovePassword("");
     } catch (removeError) {
-      setMessage({ type: "error", text: removeError.message });
+      setDialogError(removeError.message);
     } finally {
       setBusy(false);
     }
   }
+
+  const reviewerCount = accounts.filter((account) => account.role === "reviewer").length;
 
   return (
     <section className="admin-section accounts-admin">
       <div className="section-head accounts-heading">
         <div>
           <p className="eyebrow">Admin only</p>
-          <h2>Reviewer accounts</h2>
+          <h2>Accounts</h2>
         </div>
-        <span className="quick-count"><strong>{accounts.length}</strong><small>reviewers</small></span>
+        <span className="quick-count"><strong>{accounts.length}</strong><small>accounts</small></span>
       </div>
       {message && <div className={cx("notice", message.type)}>{message.text}</div>}
 
       <div className="accounts-layout">
-        <form className="reviewer-account-form" onSubmit={createAccount}>
+        <form className="reviewer-account-form" onSubmit={requestCreateConfirmation}>
           <div className="account-form-title">
-            <UserPlus size={20} />
+            <span className="account-title-icon"><UserPlus size={20} /></span>
             <div>
+              <p className="eyebrow">New access</p>
               <h3>Add Reviewer</h3>
-              <p>Create another account that can inspect, approve, reject, renew, and archive records.</p>
             </div>
           </div>
-          <label>
-            Display name
-            <input value={form.displayName} onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))} placeholder="Example: Juan Dela Cruz" required />
-          </label>
-          <label>
-            Username
-            <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} placeholder="Reviewer username" required />
-          </label>
-          <label>
-            Temporary password
-            <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="At least 4 characters" required />
-          </label>
-          <button className="primary-btn" disabled={busy}>{busy ? "Saving..." : "Add Reviewer account"}</button>
+          <div className="account-fields">
+            <label>
+              Username
+              <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} placeholder="Reviewer username" autoComplete="off" required />
+            </label>
+            <label>
+              Password
+              <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="At least 4 characters" autoComplete="new-password" required />
+            </label>
+          </div>
+          <button className="primary-btn account-submit" disabled={busy}><UserPlus size={15} /> Add Reviewer account</button>
         </form>
 
         <div className="reviewer-account-list">
-          {loading ? (
-            <EmptyState icon={RefreshCw} title="Loading accounts..." message="Reading Reviewer accounts from the JSON database." />
-          ) : accounts.length === 0 ? (
-            <EmptyState icon={UserCircle} title="No Reviewer accounts" message="Add the first Reviewer account." />
-          ) : accounts.map((account) => (
-            <div className="reviewer-account-row" key={account.id}>
-              <span className="reviewer-avatar">{(account.displayName || account.username).slice(0, 1).toUpperCase()}</span>
+          <div className="account-list-title">
+            <div>
+              <span className="account-title-icon"><ShieldCheck size={18} /></span>
               <div>
-                <strong>{account.displayName}</strong>
-                <span>@{account.username} • Added {formatDate(account.createdAt)}</span>
+                <p className="eyebrow">Access control</p>
+                <h3>Authorized accounts</h3>
               </div>
-              <button type="button" className="danger-btn tiny subtle" onClick={() => removeAccount(account)} disabled={busy || accounts.length <= 1}>
-                <Trash2 size={14} /> Remove
-              </button>
+            </div>
+            {!loading && <span>{reviewerCount} {reviewerCount === 1 ? "Reviewer" : "Reviewers"}</span>}
+          </div>
+          {loading ? (
+            <EmptyState icon={RefreshCw} title="Loading accounts..." message="Reading saved accounts." />
+          ) : accounts.length === 0 ? (
+            <EmptyState icon={UserCircle} title="No accounts" message="No accounts are available." />
+          ) : accounts.map((account) => (
+            <div className={cx("reviewer-account-row", account.role === "admin" && "protected-account")} key={account.id}>
+              <span className="reviewer-avatar">{account.username.slice(0, 1).toUpperCase()}</span>
+              <div>
+                <strong>{account.username}</strong>
+                <span>{account.role === "admin" ? "Admin • Protected account" : `Reviewer • Added ${formatDate(account.createdAt)}`}</span>
+              </div>
+              {account.role === "admin" ? (
+                <span className="protected-badge"><ShieldCheck size={13} /> Cannot remove</span>
+              ) : (
+                <button type="button" className="danger-btn tiny subtle" onClick={() => {
+                  setPendingRemoval(account);
+                  setRemovePassword("");
+                  setDialogError("");
+                  setMessage(null);
+                }} disabled={busy || reviewerCount <= 1}>
+                  <Trash2 size={14} /> Remove
+                </button>
+              )}
             </div>
           ))}
         </div>
       </div>
+
+      {pendingCreation && (
+        <div className="security-dialog-backdrop">
+          <form className="security-dialog" onSubmit={createAccount} role="dialog" aria-modal="true" aria-labelledby="create-account-title">
+            <div className="account-form-title">
+              <span className="account-title-icon secure"><KeyRound size={19} /></span>
+              <div>
+                <p className="eyebrow">Security check</p>
+                <h3 id="create-account-title">Confirm new Reviewer</h3>
+                <p>Type the Admin password to create <strong>{form.username}</strong>.</p>
+              </div>
+            </div>
+            {dialogError && <div className="notice error">{dialogError}</div>}
+            <label>
+              Admin password
+              <input type="password" value={createPassword} onChange={(event) => setCreatePassword(event.target.value)} placeholder="Enter Admin password" autoComplete="current-password" autoFocus required />
+            </label>
+            <div className="button-row dialog-actions">
+              <button type="button" className="ghost-btn" onClick={() => {
+                setPendingCreation(false);
+                setCreatePassword("");
+                setDialogError("");
+              }} disabled={busy}>Cancel</button>
+              <button className="primary-btn" disabled={busy}>{busy ? "Creating..." : "Confirm and create"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {pendingRemoval && (
+        <div className="security-dialog-backdrop">
+          <form className="security-dialog" onSubmit={removeAccount} role="dialog" aria-modal="true" aria-labelledby="remove-account-title">
+            <div className="account-form-title">
+              <KeyRound size={20} />
+              <div>
+                <h3 id="remove-account-title">Remove {pendingRemoval.username}?</h3>
+                <p>Type the Admin password to confirm.</p>
+              </div>
+            </div>
+            {dialogError && <div className="notice error">{dialogError}</div>}
+            <label>
+              Admin password
+              <input type="password" value={removePassword} onChange={(event) => setRemovePassword(event.target.value)} placeholder="Admin password" autoComplete="current-password" autoFocus required />
+            </label>
+            <div className="button-row dialog-actions">
+              <button type="button" className="ghost-btn" onClick={() => {
+                setPendingRemoval(null);
+                setRemovePassword("");
+                setDialogError("");
+              }} disabled={busy}>Cancel</button>
+              <button className="danger-btn" disabled={busy}>{busy ? "Removing..." : "Remove account"}</button>
+            </div>
+          </form>
+        </div>
+      )}
     </section>
   );
 }
@@ -2118,7 +2217,8 @@ function ArchivedPanel({ requests, items, openItem, openRequest }) {
   );
 }
 
-function StaffDashboard({ role, staffSession, categories, requests, allItems, reloadAll, openItem, openRequest }) {
+function StaffDashboard({ staffSession, categories, requests, allItems, reloadAll, openItem, openRequest }) {
+  const role = staffSession.role;
   const allowedPanels = role === "admin"
     ? ["builder", "accounts", "requests", "approved", "rejected", "expired", "archived"]
     : ["requests", "approved", "rejected", "expired", "archived"];
@@ -2138,7 +2238,7 @@ function StaffDashboard({ role, staffSession, categories, requests, allItems, re
   }, [activePanel, storageKey]);
 
   return (
-    <main className="admin-page compact-admin">
+    <main className="admin-page compact-admin staff-dashboard">
       <div className={cx("stats-grid", "admin-nav-grid", role === "reviewer" && "reviewer-nav-grid")}>
         {role === "admin" && <StatCard icon={Plus} label="Builder" value="Details + Questions" active={activePanel === "builder"} onClick={() => setActivePanel("builder")} />}
         {role === "admin" && <StatCard icon={UserPlus} label="Accounts" value="Reviewers" active={activePanel === "accounts"} onClick={() => setActivePanel("accounts")} />}
@@ -2170,7 +2270,10 @@ export default function App() {
     return { kind: "", id: "" };
   }, []);
 
-  const savedMainTab = localStorage.getItem("qr-active-tab") || "user";
+  const storedMainTab = localStorage.getItem("qr-active-tab") || "user";
+  const savedMainTab = storedMainTab === "admin"
+    ? "reviewer"
+    : (["user", "reviewer"].includes(storedMainTab) ? storedMainTab : "user");
   const [tab, setTab] = useState(routeRecord.id ? "details" : savedMainTab);
   const [detailsReturn, setDetailsReturn] = useState({ tab: savedMainTab, userMode: "followup" });
   const [userMode, setUserMode] = useState("home");
@@ -2184,7 +2287,7 @@ export default function App() {
   const [staffSession, setStaffSession] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STAFF_SESSION_KEY) || "null");
-      return ["reviewer", "admin"].includes(saved?.role) ? saved : null;
+      return saved?.role === "reviewer" ? saved : null;
     } catch {
       return null;
     }
@@ -2194,6 +2297,15 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("qr-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STAFF_SESSION_KEY) || "null");
+      if (saved?.role === "admin") localStorage.removeItem(STAFF_SESSION_KEY);
+    } catch {
+      localStorage.removeItem(STAFF_SESSION_KEY);
+    }
+  }, []);
 
   async function loadCategories() {
     const data = await api.categories();
@@ -2235,7 +2347,7 @@ export default function App() {
   function openItem(qrId, keepReturn = false) {
     const finalQrId = parseQrText(qrId);
     if (!keepReturn) {
-      setDetailsReturn({ tab: ["admin", "reviewer"].includes(tab) ? tab : "user", userMode: userMode || "followup" });
+      setDetailsReturn({ tab: tab === "reviewer" ? "reviewer" : "user", userMode: userMode || "followup" });
     }
     setSelectedRecord({ kind: "item", id: finalQrId });
     setTab("details");
@@ -2245,7 +2357,7 @@ export default function App() {
   }
 
   function openRequest(requestId) {
-    setDetailsReturn({ tab: ["admin", "reviewer"].includes(tab) ? tab : (staffSession?.role || "reviewer"), userMode: userMode || "followup" });
+    setDetailsReturn({ tab: staffSession ? "reviewer" : "user", userMode: userMode || "followup" });
     setSelectedRecord({ kind: "request", id: requestId });
     setTab("details");
     if (window.location.pathname !== `/request/${requestId}`) {
@@ -2254,10 +2366,12 @@ export default function App() {
   }
 
   function setMainTab(nextTab) {
-    setTab(nextTab);
-    localStorage.setItem("qr-active-tab", nextTab);
-    if (nextTab === "user") setUserMode("home");
-    if (nextTab !== "details" && (window.location.pathname.startsWith("/item/") || window.location.pathname.startsWith("/request/"))) {
+    const finalTab = nextTab === "admin" ? "reviewer" : nextTab;
+    if (finalTab !== "reviewer" && staffSession?.role === "admin") logoutStaff();
+    setTab(finalTab);
+    localStorage.setItem("qr-active-tab", finalTab);
+    if (finalTab === "user") setUserMode("home");
+    if (finalTab !== "details" && (window.location.pathname.startsWith("/item/") || window.location.pathname.startsWith("/request/"))) {
       window.history.pushState({}, "", "/");
     }
   }
@@ -2266,9 +2380,9 @@ export default function App() {
     if (window.location.pathname.startsWith("/item/") || window.location.pathname.startsWith("/request/")) {
       window.history.pushState({}, "", "/");
     }
-    if (["admin", "reviewer"].includes(detailsReturn.tab)) {
-      setTab(detailsReturn.tab);
-      localStorage.setItem("qr-active-tab", detailsReturn.tab);
+    if (detailsReturn.tab === "reviewer") {
+      setTab("reviewer");
+      localStorage.setItem("qr-active-tab", "reviewer");
       return;
     }
     setUserMode(detailsReturn.userMode || "followup");
@@ -2276,15 +2390,27 @@ export default function App() {
     localStorage.setItem("qr-active-tab", "user");
   }
 
-  const activeMainTab = tab === "details" ? detailsReturn.tab : tab;
+  const activeMainTab = tab === "details"
+    ? (detailsReturn.tab === "admin" ? "reviewer" : detailsReturn.tab)
+    : tab;
   const pendingRequestCount = requests.filter((entry) => entry.status === "pending" && !entry.archivedAt).length;
 
   function loginStaff(session) {
+    if (session.role === "reviewer") {
+      localStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(session));
+    } else {
+      localStorage.removeItem(STAFF_SESSION_KEY);
+    }
     setStaffSession(session);
   }
 
+  function logoutStaff() {
+    localStorage.removeItem(STAFF_SESSION_KEY);
+    setStaffSession(null);
+  }
+
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-developer-credit={DEVELOPER_CREDIT}>
       <header className="topbar">
         <button className="brand" onClick={() => setMainTab("user")}>
           <span><ShieldCheck size={20} /></span>
@@ -2296,14 +2422,23 @@ export default function App() {
             <button className={cx(activeMainTab === "user" && "active")} onClick={() => setMainTab("user")}><UserCircle size={16} /> User</button>
             <button className={cx(activeMainTab === "reviewer" && "active", "nav-with-badge")} onClick={() => setMainTab("reviewer")}>
               <ListChecks size={16} /> Reviewer
-              {staffSession?.role === "reviewer" && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
-            </button>
-            <button className={cx(activeMainTab === "admin" && "active", "nav-with-badge")} onClick={() => setMainTab("admin")}>
-              <LayoutDashboard size={16} /> Admin
-              {staffSession?.role === "admin" && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
+              {staffSession && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
             </button>
           </nav>
-          <span className="live-pill">Live</span>
+          {staffSession && (
+            <div className="topbar-session">
+              <span className={cx("topbar-session-icon", staffSession.role)}>
+                {staffSession.role === "admin" ? <ShieldCheck size={15} /> : <ListChecks size={15} />}
+              </span>
+              <span className="topbar-session-copy">
+                <strong>{staffSession.username}</strong>
+                <small>{staffSession.role === "admin" ? "Admin" : "Reviewer"}</small>
+              </span>
+              <button type="button" onClick={logoutStaff} aria-label="Sign out" title="Sign out">
+                <LogOut size={15} />
+              </button>
+            </div>
+          )}
           <button className="top-action icon-only" onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")} aria-label="Toggle light and dark mode">
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
@@ -2317,10 +2452,8 @@ export default function App() {
         {tab === "user" && userMode === "home" && <UserHome onPick={setUserMode} />}
         {tab === "user" && userMode === "register" && <UserRegister categories={categories} onCreated={reloadAll} onBack={() => setUserMode("home")} />}
         {tab === "user" && userMode === "followup" && <ScanPage onOpenItem={openItem} onBack={() => setUserMode("home")} />}
-        {tab === "reviewer" && staffSession?.role !== "reviewer" && <StaffLogin role="reviewer" onLogin={loginStaff} />}
-        {tab === "reviewer" && staffSession?.role === "reviewer" && <StaffDashboard role="reviewer" staffSession={staffSession} categories={categories} requests={requests} allItems={allItems} reloadAll={reloadAll} openItem={openItem} openRequest={openRequest} />}
-        {tab === "admin" && staffSession?.role !== "admin" && <StaffLogin role="admin" onLogin={loginStaff} />}
-        {tab === "admin" && staffSession?.role === "admin" && <StaffDashboard role="admin" staffSession={staffSession} categories={categories} requests={requests} allItems={allItems} reloadAll={reloadAll} openItem={openItem} openRequest={openRequest} />}
+        {tab === "reviewer" && !staffSession && <StaffLogin onLogin={loginStaff} />}
+        {tab === "reviewer" && staffSession && <StaffDashboard staffSession={staffSession} categories={categories} requests={requests} allItems={allItems} reloadAll={reloadAll} openItem={openItem} openRequest={openRequest} />}
         {tab === "details" && selectedRecord.kind === "item" && (
           <ItemDetails qrId={selectedRecord.id} onBack={backFromDetails} staffSession={staffSession} reload={reloadAll} />
         )}
