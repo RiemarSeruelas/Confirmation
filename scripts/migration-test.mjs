@@ -5,6 +5,7 @@ import path from "node:path";
 
 const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "power-tool-migration-"));
 process.env.POWER_TOOL_DATA_DIR = dataDir;
+process.env.POSTGRES_ENABLED = "false";
 
 const oldDb = {
   meta: { appName: "Power Tool", version: 5, updatedAt: "2026-07-23T00:00:00.000Z" },

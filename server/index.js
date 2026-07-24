@@ -4,7 +4,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { customAlphabet } from "nanoid";
 import QRCode from "qrcode";
-import { readDb, writeDb, getDbPath } from "./dataStore.js";
+import {
+  checkDb,
+  closeDb,
+  getDbPath,
+  initializeDataStore,
+  readDb,
+  writeDb
+} from "./dataStore.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +22,7 @@ const nanoid = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", 8);
 const TOOL_TYPE_IDS = ["cat-elc", "cat-portable-tool"];
 const QUESTION_TYPES = new Set(["text", "number", "date", "textarea", "radio", "checkboxes", "select", "yesno", "image"]);
 const OPTION_QUESTION_TYPES = new Set(["radio", "checkboxes", "select"]);
+app.set("trust proxy", 1);
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
@@ -436,7 +444,8 @@ function sortItemsDefault(a, b) {
 }
 
 app.get("/api/health", async (req, res) => {
-  res.json({ ok: true, dbPath: getDbPath(), time: nowIso() });
+  const database = await checkDb();
+  res.json({ ok: true, database, dbPath: getDbPath(), time: nowIso() });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -1025,14 +1034,44 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Server error.", detail: err.message });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Power Tool backend running on http://0.0.0.0:${PORT}`);
-  console.log(`JSON database: ${getDbPath()}`);
-  readDb()
-    .then((db) => {
-      const usage = ensureUsage(db);
-      logUsage(usage, "stored totals");
-      logUsageByIp(usage);
-    })
-    .catch((error) => console.error(`[Usage] Could not load stored totals: ${error.message}`));
+let httpServer;
+
+async function startServer() {
+  await initializeDataStore();
+  const db = await readDb();
+  const usage = ensureUsage(db);
+
+  httpServer = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Power Tool backend running on http://0.0.0.0:${PORT}`);
+    console.log(`Database: ${getDbPath()}`);
+    logUsage(usage, "stored totals");
+    logUsageByIp(usage);
+  });
+}
+
+async function shutdown(signal) {
+  console.log(`[Server] ${signal} received. Closing connections.`);
+  if (httpServer) {
+    await new Promise((resolve) => httpServer.close(resolve));
+  }
+  await closeDb();
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => {
+  shutdown("SIGTERM").catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+});
+process.on("SIGINT", () => {
+  shutdown("SIGINT").catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+});
+
+startServer().catch((error) => {
+  console.error(`[Server] Startup failed: ${error.message}`);
+  process.exit(1);
 });
