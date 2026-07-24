@@ -16,10 +16,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 5178);
 const isProduction = process.env.NODE_ENV === "production";
 
-const AI_FACE_BASE_URLS = getServiceBaseUrls(
-  process.env.AI_FACE_BASE_URL || "http://10.156.119.146:5005",
-  process.env.AI_FACE_FALLBACK_URL
-);
+const AI_FACE_BASE_URL = process.env.AI_FACE_BASE_URL || "http://10.156.119.146:5005";
 const AI_FACE_REGISTER_PATH = process.env.AI_FACE_REGISTER_PATH || "/register";
 const AI_FACE_SEARCH_PATH = process.env.AI_FACE_SEARCH_PATH || "/search";
 const AI_FACE_TIMEOUT_MS = Number(process.env.AI_FACE_TIMEOUT_MS || 30000);
@@ -29,44 +26,27 @@ const AI_FACE_ALIGN = process.env.AI_FACE_ALIGN !== "false";
 const AI_FACE_L2_NORMALIZE = process.env.AI_FACE_L2_NORMALIZE !== "false";
 const AI_FACE_DISTANCE_METRIC = process.env.AI_FACE_DISTANCE_METRIC || "cosine";
 const AI_FACE_SEARCH_METHOD = process.env.AI_FACE_SEARCH_METHOD || "exact";
-const AI_IMAGE_BASE_URLS = getServiceBaseUrls(
-  process.env.AI_IMAGE_BASE_URL || process.env.AI_WORKSTATION_URL || "http://10.156.119.146:11434",
-  process.env.AI_IMAGE_FALLBACK_URL || process.env.AI_WORKSTATION_FALLBACK_URL
-);
+const AI_IMAGE_BASE_URL = cleanEnv(process.env.AI_IMAGE_BASE_URL);
 const AI_IMAGE_PATH = process.env.AI_IMAGE_PATH || "/api/generate";
-const AI_IMAGE_MODEL = process.env.AI_IMAGE_MODEL || process.env.AI_WORKSTATION_MODEL || "qwen3-vl:8b";
-const AI_IMAGE_TIMEOUT_MS = Number(process.env.AI_IMAGE_TIMEOUT_MS || process.env.AI_WORKSTATION_TIMEOUT_MS || 180000);
+const AI_IMAGE_MODEL = process.env.AI_IMAGE_MODEL || "llama3.2-vision:11b";
+const AI_IMAGE_TIMEOUT_MS = Number(process.env.AI_IMAGE_TIMEOUT_MS || 60000);
 const MAX_PROOF_IMAGE_BYTES = Number(process.env.MAX_PROOF_IMAGE_BYTES || 6 * 1024 * 1024);
-const DOCLING_ENABLED = String(process.env.DOCLING_ENABLED || "true").toLowerCase() !== "false";
-const DOCLING_BASE_URL = cleanEnv(process.env.DOCLING_BASE_URL || "http://host.docker.internal:5006");
-const DOCLING_PATH = process.env.DOCLING_PATH || "/extract";
-const DOCLING_TIMEOUT_MS = Number(process.env.DOCLING_TIMEOUT_MS || 120000);
 
 let schemaReadyPromise = null;
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+app.use("/api", (_req, res, next) => {
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Expires: "0",
+    Pragma: "no-cache",
+  });
+  next();
+});
 
 function cleanEnv(value) {
   return String(value || "").trim();
-}
-
-function alternateNetworkUrl(value) {
-  try {
-    const url = new URL(cleanEnv(value));
-    if (url.hostname === "10.156.119.146") url.hostname = "172.27.1.92";
-    else if (url.hostname === "172.27.1.92") url.hostname = "10.156.119.146";
-    else return "";
-    return url.origin;
-  } catch {
-    return "";
-  }
-}
-
-function getServiceBaseUrls(primaryValue, fallbackValue = "") {
-  const primary = cleanEnv(primaryValue);
-  const fallback = cleanEnv(fallbackValue) || alternateNetworkUrl(primary);
-  return uniqueValues([primary, fallback]);
 }
 
 function cleanText(value, fallback = "") {
@@ -137,6 +117,10 @@ function buildServiceUrl(baseUrl, endpointPath) {
   return new URL(cleanPath, base).toString();
 }
 
+function buildAiUrl(endpointPath) {
+  return buildServiceUrl(AI_FACE_BASE_URL, endpointPath);
+}
+
 function parseImageDataUrl(imageDataUrl) {
   const input = cleanText(imageDataUrl);
   if (!input) throw new Error("No image was received.");
@@ -184,265 +168,125 @@ async function readAiPayload(response) {
   return response.text();
 }
 
-async function postJsonWithFallback({ baseUrls, endpointPath, body, timeoutMs, serviceName }) {
-  const attempts = [];
+function generatedTextFromPayload(payload) {
+  if (typeof payload === "string") return payload;
 
-  for (const baseUrl of baseUrls) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const candidates = [
+    payload?.response,
+    payload?.message?.content,
+    payload?.content,
+    payload?.text,
+    payload?.output_text,
+    payload?.value,
+    payload?.reading,
+    payload?.weight,
+    payload?.result,
+    payload?.choices?.[0]?.message?.content,
+    payload?.choices?.[0]?.text,
+    // Thinking-capable Ollama models can put the final JSON here while
+    // returning an empty `response`, even when `think: false` is requested.
+    payload?.thinking,
+    payload?.message?.thinking,
+  ];
 
-    try {
-      const response = await fetch(buildServiceUrl(baseUrl, endpointPath), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      const payload = await readAiPayload(response);
-
-      if (response.ok) return { payload, baseUrl };
-
-      const detail = typeof payload === "string" ? payload : JSON.stringify(compactJsonValue(payload, 1500));
-      const error = new Error(`${serviceName} returned HTTP ${response.status}. ${detail}`);
-      const retryable = response.status === 404 || response.status === 408 || response.status === 429 || response.status >= 500;
-      if (!retryable) throw Object.assign(error, { stopFallback: true });
-      attempts.push(`${baseUrl}: HTTP ${response.status}`);
-    } catch (error) {
-      if (error.stopFallback) throw error;
-      const reason = error.name === "AbortError" ? "timed out" : error.message || "connection failed";
-      attempts.push(`${baseUrl}: ${reason}`);
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  throw new Error(`${serviceName} is unavailable on both networks. ${attempts.join(" | ")}`);
+  return candidates
+    .map((candidate) => {
+      if (candidate === null || candidate === undefined) return "";
+      if (typeof candidate === "object") {
+        try {
+          return JSON.stringify(candidate);
+        } catch {
+          return "";
+        }
+      }
+      return cleanText(candidate);
+    })
+    .find(Boolean) || "";
 }
 
-function escapeRegExp(value) {
-  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function normalizeDoclingLines(value) {
-  return cleanText(value)
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) =>
-      line
-        .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
-        .replace(/^\s{0,3}#{1,6}\s*/, "")
-        .replace(/[`*_>]+/g, " ")
-        .replace(/\|/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-    )
-    .filter(Boolean);
-}
-
-function cleanDoclingCandidate(value) {
-  const candidate = cleanText(value)
-    .replace(/^[\s:;=\-–—]+/, "")
-    .replace(/[\s|]+$/, "")
+function generatedValueFromText(text) {
+  const source = cleanText(text)
+    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
+    .replace(/^```(?:json|text)?\s*|\s*```$/gi, "")
     .trim();
+  if (!source) return "";
 
-  if (!candidate) return "";
+  const jsonCandidates = [
+    source,
+    ...(source.match(/\{[^{}]*\}/g) || []).reverse(),
+  ];
 
-  const numeric = candidate.match(/^[-+]?\d+(?:[.,]\d+)?/);
-  if (numeric) return numeric[0].replace(",", ".");
-
-  return candidate.length <= 120 ? candidate : candidate.slice(0, 120).trim();
-}
-
-function extractDoclingValue(markdown, target) {
-  const lines = normalizeDoclingLines(markdown);
-  const cleanedTarget = cleanText(target);
-  if (!lines.length) return "";
-
-  if (cleanedTarget) {
-    const targetPattern = escapeRegExp(cleanedTarget).replace(/\\\s+/g, "\\s+");
-    const sameLinePattern = new RegExp(`(?:^|\\b)${targetPattern}\\b\\s*[:=\\-–—]?\\s*(.+)$`, "i");
-    const targetOnlyPattern = new RegExp(`^${targetPattern}\\s*[:=\\-–—]?$`, "i");
-
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index];
-      const sameLineMatch = line.match(sameLinePattern);
-      if (sameLineMatch?.[1]) {
-        const candidate = cleanDoclingCandidate(sameLineMatch[1]);
-        if (candidate && candidate.toLowerCase() !== cleanedTarget.toLowerCase()) return candidate;
-      }
-
-      if (targetOnlyPattern.test(line) && lines[index + 1]) {
-        const candidate = cleanDoclingCandidate(lines[index + 1]);
-        if (candidate) return candidate;
-      }
+  for (const jsonCandidate of jsonCandidates) {
+    try {
+      const parsed = JSON.parse(jsonCandidate);
+      if (parsed !== null && typeof parsed !== "object") return cleanText(parsed);
+      const parsedValue = cleanText(parsed?.value ?? parsed?.reading ?? parsed?.weight ?? parsed?.result);
+      if (parsedValue) return parsedValue;
+    } catch {
+      // Try the remaining candidates and then the tolerant patterns below.
     }
   }
 
-  const joined = lines.join(" ");
-  const numbers = joined.match(/[-+]?\d+(?:[.,]\d+)?/g) || [];
-  if (numbers.length === 1) return numbers[0].replace(",", ".");
+  const keyedValue = source.match(
+    /(?:["']?(?:value|reading|weight|result)["']?)\s*(?::|=|\bis\b)\s*["']?([^"'`,}\]\r\n]+)["']?/i
+  )?.[1];
+  if (cleanText(keyedValue)) return cleanText(keyedValue);
 
-  if (lines.length === 1) {
-    const words = lines[0].split(/\s+/);
-    if (words.length === 1) return cleanDoclingCandidate(words[0]);
-  }
+  const compact = source.replace(/^["']|["']$/g, "").trim();
+  if (!compact || compact === "*" || /^(?:null|undefined)$/i.test(compact)) return "";
 
+  // A direct short response such as 821, ON, or AUTO is a valid result.
+  if (compact.length <= 120 && !/[\r\n]/.test(compact)) return compact;
   return "";
 }
 
-async function postToDocling({ imageDataUrl, target, machineName }) {
-  if (!DOCLING_ENABLED || !DOCLING_BASE_URL) throw new Error("Docling is disabled.");
+function generatedValueFromPayload(payload) {
+  if (payload && typeof payload === "object") {
+    const directValue = cleanText(payload.value ?? payload.reading ?? payload.weight ?? payload.result);
+    if (directValue) return directValue;
+  }
+  return generatedValueFromText(generatedTextFromPayload(payload));
+}
 
+function imageAiPayloadSummary(payload) {
+  if (typeof payload === "string") return { type: "text", textLength: payload.length };
+  return {
+    type: typeof payload,
+    keys: payload && typeof payload === "object" ? Object.keys(payload).slice(0, 20) : [],
+    responseLength: cleanText(payload?.response).length,
+    thinkingLength: cleanText(payload?.thinking ?? payload?.message?.thinking).length,
+    done: payload?.done,
+    doneReason: payload?.done_reason || "",
+    model: payload?.model || AI_IMAGE_MODEL,
+  };
+}
+
+async function postFaceJson({ endpointType, imageDataUrl, operatorName = "" }) {
+  const isRegister = endpointType === "register";
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DOCLING_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), AI_FACE_TIMEOUT_MS);
 
   try {
-    const response = await fetch(buildServiceUrl(DOCLING_BASE_URL, DOCLING_PATH), {
+    const response = await fetch(buildAiUrl(isRegister ? AI_FACE_REGISTER_PATH : AI_FACE_SEARCH_PATH), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imageDataUrl, target, machineName }),
+      body: JSON.stringify(deepFaceBody({ imageDataUrl, operatorName, isRegister })),
       signal: controller.signal,
     });
     const payload = await readAiPayload(response);
 
     if (!response.ok) {
-      const detail = typeof payload === "string" ? payload : JSON.stringify(compactJsonValue(payload, 1200));
-      throw new Error(`Docling returned HTTP ${response.status}. ${detail}`);
+      const message = typeof payload === "string" ? payload : JSON.stringify(payload);
+      throw new Error(`Face AI returned HTTP ${response.status}. ${message || "Check the Face AI endpoint."}`);
     }
 
-    const markdown = cleanText(
-      payload?.markdown ?? payload?.text ?? payload?.document?.md_content ?? payload?.document?.text_content
-    );
-    const value = extractDoclingValue(markdown, target);
-
-    return { value, markdown, payload };
+    return normalizeFaceResult(payload);
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("Docling timed out.");
+    if (error.name === "AbortError") throw new Error("Face AI request timed out.");
     throw error;
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function generatedTextFromPayload(payload) {
-  if (payload === null || payload === undefined) return "";
-  if (typeof payload === "string" || typeof payload === "number") return cleanText(payload);
-
-  const candidates = [
-    payload?.response,
-    payload?.thinking,
-    payload?.message?.content,
-    payload?.content,
-    payload?.text,
-    payload?.value,
-    payload?.result,
-    payload?.answer,
-    payload?.output,
-    payload?.data?.response,
-    payload?.data?.content,
-    payload?.data?.text,
-    payload?.data?.value,
-    payload?.choices?.[0]?.message?.content,
-    payload?.choices?.[0]?.text,
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate === null || candidate === undefined) continue;
-    if (typeof candidate === "string" || typeof candidate === "number") {
-      const text = cleanText(candidate);
-      if (text) return text;
-    }
-    if (Array.isArray(candidate)) {
-      const joined = candidate
-        .map((item) => {
-          if (typeof item === "string" || typeof item === "number") return cleanText(item);
-          return cleanText(item?.text ?? item?.content ?? item?.value);
-        })
-        .filter(Boolean)
-        .join(" ");
-      if (joined) return joined;
-    }
-  }
-
-  return "";
-}
-
-function scalarText(value) {
-  if (value === null || value === undefined) return "";
-  if (["string", "number", "boolean"].includes(typeof value)) return cleanText(value);
-  return "";
-}
-
-function valueFromParsedJson(parsed, target = "") {
-  for (const key of ["value", "reading", "weight", "result", "text", "answer", "output"]) {
-    const value = scalarText(parsed?.[key]);
-    if (value) return value;
-  }
-
-  const normalizedTarget = cleanText(target).toLowerCase();
-  if (normalizedTarget && parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    const matchingKey = Object.keys(parsed).find(
-      (key) => cleanText(key).toLowerCase() === normalizedTarget
-    );
-    const targetValue = scalarText(matchingKey ? parsed[matchingKey] : "");
-    if (targetValue) return targetValue;
-  }
-
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    const scalarValues = Object.values(parsed).map(scalarText).filter(Boolean);
-    if (scalarValues.length === 1) return scalarValues[0];
-  }
-
-  if (Array.isArray(parsed)) {
-    for (const item of parsed) {
-      const value = scalarText(item) || valueFromParsedJson(item, target);
-      if (value) return value;
-    }
-  }
-
-  return scalarText(parsed);
-}
-
-function generatedValueFromText(text, target = "") {
-  const source = cleanText(text)
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-
-  if (!source) return "";
-
-  try {
-    const value = valueFromParsedJson(JSON.parse(source), target);
-    if (value) return value;
-  } catch {
-    // Try embedded JSON or plain text below.
-  }
-
-  const jsonCandidate = source.match(/\{[\s\S]*\}/)?.[0];
-  if (jsonCandidate) {
-    try {
-      const value = valueFromParsedJson(JSON.parse(jsonCandidate), target);
-      if (value) return value;
-    } catch {
-      // Fall through.
-    }
-  }
-
-  const shortPlainText = source.replace(/^["']|["']$/g, "").trim();
-  return shortPlainText.length <= 160 ? shortPlainText : "";
-}
-
-async function postFaceJson({ endpointType, imageDataUrl, operatorName = "" }) {
-  const isRegister = endpointType === "register";
-  const { payload } = await postJsonWithFallback({
-    baseUrls: AI_FACE_BASE_URLS,
-    endpointPath: isRegister ? AI_FACE_REGISTER_PATH : AI_FACE_SEARCH_PATH,
-    body: deepFaceBody({ imageDataUrl, operatorName, isRegister }),
-    timeoutMs: AI_FACE_TIMEOUT_MS,
-    serviceName: "Face AI",
-  });
-
-  return normalizeFaceResult(payload);
 }
 
 function walkObjects(value, output = [], depth = 0) {
@@ -954,7 +798,15 @@ app.post("/api/ai/image-field", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Image is required." });
   }
 
-  let doclingIssue = "";
+  if (!AI_IMAGE_BASE_URL) {
+    return res.status(503).json({
+      ok: false,
+      error: "AI image scanning is not configured. Set AI_IMAGE_BASE_URL in .env.",
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_IMAGE_TIMEOUT_MS);
 
   try {
     const image = parseImageDataUrl(req.body.imageDataUrl);
@@ -967,85 +819,95 @@ app.post("/api/ai/image-field", async (req, res) => {
 
     const target = cleanText(req.body?.target || req.body?.fieldLabel, "target value");
     const machineName = cleanText(req.body?.machineName, "machine");
-
-    if (DOCLING_ENABLED && DOCLING_BASE_URL) {
-      try {
-        const doclingResult = await postToDocling({
-          imageDataUrl: image.dataUrl,
-          target,
-          machineName,
-        });
-
-        if (doclingResult.value) {
-          return res.json({
-            ok: true,
-            value: doclingResult.value,
-            source: "docling",
-            service: DOCLING_BASE_URL,
-          });
-        }
-
-        doclingIssue = `Docling read the image but could not find a value for ${target}.`;
-        console.warn("Docling OCR text did not contain a usable target value:", {
-          target,
-          markdown: doclingResult.markdown.slice(0, 1200),
-        });
-      } catch (error) {
-        doclingIssue = error.message || "Docling failed.";
-        console.warn(`Docling primary extraction failed: ${doclingIssue}`);
-      }
-    }
-
     const prompt = [
       `Inspect this ${machineName} confirmation image.`,
-      `Read only the value associated with "${target}".`,
+      `Find the label "${target}" and read the value printed beside or directly below it.`,
       "The value may be a number, status, word, or short phrase.",
       'Return only strict JSON in this format: {"value":"recognized value"}.',
+      'For example, if the image shows "Production 821", return {"value":"821"}.',
       "Do not explain the result.",
     ].join(" ");
 
-    const { payload, baseUrl } = await postJsonWithFallback({
-      baseUrls: AI_IMAGE_BASE_URLS,
-      endpointPath: AI_IMAGE_PATH,
-      body: {
+    const imageBase64 = image.dataUrl.split(",").pop();
+
+    async function requestImageValue(requestPrompt, structured = true) {
+      const requestBody = {
         model: AI_IMAGE_MODEL,
         stream: false,
-        prompt,
-        images: [image.dataUrl.split(",").pop()],
-        format: "json",
-      },
-      timeoutMs: AI_IMAGE_TIMEOUT_MS,
-      serviceName: "Image AI",
-    });
+        prompt: requestPrompt,
+        images: [imageBase64],
+        think: false,
+        options: {
+          temperature: 0,
+        },
+      };
+      if (structured) requestBody.format = "json";
 
-    const generatedText = generatedTextFromPayload(payload);
-    const value = generatedValueFromText(generatedText, target);
+      const response = await fetch(buildServiceUrl(AI_IMAGE_BASE_URL, AI_IMAGE_PATH), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
 
+      const payload = await readAiPayload(response);
+      if (!response.ok) {
+        const detail = typeof payload === "string" ? payload : JSON.stringify(compactJsonValue(payload, 1500));
+        throw new Error(`Image AI returned HTTP ${response.status}. ${detail}`);
+      }
+
+      return {
+        payload,
+        value: generatedValueFromPayload(payload),
+      };
+    }
+
+    let result = await requestImageValue(prompt, true);
+
+    // Some Ollama/vision-model combinations finish with an empty structured
+    // response. Retry once without the JSON formatter so a direct value can
+    // still be recovered instead of incorrectly returning HTTP 422.
+    if (!result.value) {
+      console.warn("[image-field] Empty structured AI result; retrying.", {
+        target,
+        machineName,
+        ...imageAiPayloadSummary(result.payload),
+      });
+
+      const retryPrompt = [
+        `Look at the image and find "${target}".`,
+        `Return only the value beside or below "${target}".`,
+        "Do not return an explanation, label, sentence, or JSON.",
+      ].join(" ");
+      result = await requestImageValue(retryPrompt, false);
+    }
+
+    const value = result.value;
     if (!value) {
-      console.warn(
-        "Image AI returned a successful response but no recognized value could be parsed:",
-        compactJsonValue(payload, 2500)
-      );
+      console.warn("[image-field] AI returned no usable value.", {
+        target,
+        machineName,
+        ...imageAiPayloadSummary(result.payload),
+      });
       return res.status(422).json({
         ok: false,
-        error: [doclingIssue, `Image AI responded, but no readable value could be parsed for ${target}.`]
-          .filter(Boolean)
-          .join(" "),
+        error: `The image reached the AI, but it returned no value for ${target}. Retake closer or check the AI model logs.`,
       });
     }
 
-    return res.json({ ok: true, value, source: "image-ai", service: baseUrl });
+    return res.json({ ok: true, value });
   } catch (error) {
-    const message = [doclingIssue, error.message || "Image scan failed."].filter(Boolean).join(" ");
-    return res.status(502).json({ ok: false, error: message });
+    const message = error.name === "AbortError" ? "Image AI request timed out." : error.message || "Image scan failed.";
+    return res.status(error.name === "AbortError" ? 504 : 502).json({ ok: false, error: message });
+  } finally {
+    clearTimeout(timeout);
   }
 });
 
 app.get("/api/face/config", (_req, res) => {
   res.json({
     ok: true,
-    baseUrl: AI_FACE_BASE_URLS[0],
-    fallbackUrl: AI_FACE_BASE_URLS[1] || "",
+    baseUrl: AI_FACE_BASE_URL,
     registerPath: AI_FACE_REGISTER_PATH,
     searchPath: AI_FACE_SEARCH_PATH,
     modelName: AI_FACE_MODEL_NAME,
@@ -1571,7 +1433,7 @@ async function prepareRecordInput(body, queryable = pool) {
   };
 }
 
-async function insertRecordWithProofs(queryable, input) {
+async function insertRecordWithProofs(queryable, input, submittedAt = new Date().toISOString()) {
   const recordResult = await queryable.query(
     `
       INSERT INTO app.confirmation_test_records (
@@ -1589,7 +1451,7 @@ async function insertRecordWithProofs(queryable, input) {
         response_fields,
         record_timestamp
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', NULL, $9, $10::jsonb, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', NULL, $9, $10::jsonb, $11::timestamptz)
       RETURNING *
     `,
     [
@@ -1603,6 +1465,7 @@ async function insertRecordWithProofs(queryable, input) {
       input.batchNumber,
       input.remarks,
       JSON.stringify(input.responseFields),
+      submittedAt,
     ]
   );
 
@@ -1662,7 +1525,7 @@ app.post("/api/records/upsert", async (req, res) => {
     client = await pool.connect();
     await client.query("BEGIN");
     const input = await prepareRecordInput(req.body || {}, client);
-    const record = await insertRecordWithProofs(client, input);
+    const record = await insertRecordWithProofs(client, input, new Date().toISOString());
     await client.query("COMMIT");
     res.status(201).json({ ok: true, action: "created", record });
   } catch (error) {
@@ -1686,10 +1549,11 @@ app.post("/api/records/bulk", async (req, res) => {
     client = await pool.connect();
     await client.query("BEGIN");
     const records = [];
+    const submittedAt = new Date().toISOString();
 
     for (const body of source) {
       const input = await prepareRecordInput(body, client);
-      records.push(await insertRecordWithProofs(client, input));
+      records.push(await insertRecordWithProofs(client, input, submittedAt));
     }
 
     await client.query("COMMIT");

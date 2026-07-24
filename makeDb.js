@@ -1,112 +1,56 @@
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import dotenv from "dotenv";
 import { pool, testDbConnection } from "./db.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+dotenv.config();
 
-const setupFiles = ["schema.sql", "confirmationproof.sql"];
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_DATABASE = "confirmation_test_db";
 
-function getDatabaseName() {
-  if (process.env.DATABASE_URL) {
-    const url = new URL(process.env.DATABASE_URL);
-    return decodeURIComponent(url.pathname.replace(/^\//, "")) || "mydatabase";
-  }
-
-  return process.env.PGDATABASE || "mydatabase";
+function targetDatabaseName() {
+  if (!process.env.DATABASE_URL) return process.env.PGDATABASE || DEFAULT_DATABASE;
+  const url = new URL(process.env.DATABASE_URL);
+  return decodeURIComponent(url.pathname.replace(/^\//, "")) || DEFAULT_DATABASE;
 }
 
-function getConnectionTarget() {
+function printableTarget() {
   if (process.env.DATABASE_URL) {
-    const url = new URL(process.env.DATABASE_URL);
-    url.password = "****";
-    return url.toString();
+    return new URL(process.env.DATABASE_URL).toString().replace(/:[^:@/]+@/, ":****@");
   }
 
-  return `${process.env.PGUSER || "postgres"}@${process.env.PGHOST || "localhost"}:${process.env.PGPORT || 5432}/${getDatabaseName()}`;
+  return `${process.env.PGUSER || "postgres"}@${process.env.PGHOST || "localhost"}:${process.env.PGPORT || 5432}/${targetDatabaseName()}`;
 }
 
-function getFriendlyError(error) {
-  const host = process.env.PGHOST || "localhost";
-  const port = process.env.PGPORT || 5432;
-  const database = getDatabaseName();
-
-  if (error.code === "ECONNREFUSED") {
-    return `PostgreSQL refused the connection at ${host}:${port}. Check that PostgreSQL is running and reachable.`;
-  }
-
-  if (error.code === "ENOTFOUND") {
-    return `PostgreSQL host "${host}" could not be resolved. Check PGHOST.`;
-  }
-
-  if (error.code === "28P01") {
-    return "PostgreSQL username or password is incorrect. Check PGUSER and PGPASSWORD.";
-  }
-
-  if (error.code === "3D000") {
-    return `Database "${database}" does not exist. Create it first or set PGDATABASE to the correct existing database.`;
-  }
-
-  if (error.code === "42501") {
-    return `User "${process.env.PGUSER || "postgres"}" does not have permission to create or update objects in database "${database}".`;
-  }
-
-  return error.message || "Database setup failed.";
+function setupError(error) {
+  const messages = {
+    ECONNREFUSED: `PostgreSQL refused the connection at ${process.env.PGHOST || "localhost"}:${process.env.PGPORT || 5432}.`,
+    ENOTFOUND: `Cannot find PostgreSQL host "${process.env.PGHOST}".`,
+    "28P01": "PostgreSQL username or password is incorrect.",
+    "3D000": `Database "${targetDatabaseName()}" does not exist.`,
+    "42501": `The PostgreSQL user cannot create or update tables in "${targetDatabaseName()}".`,
+  };
+  return messages[error.code] || error.message;
 }
 
 async function runSqlFile(filename) {
-  const filePath = path.join(__dirname, filename);
-
-  try {
-    const sql = await fs.readFile(filePath, "utf8");
-
-    if (!sql.trim()) {
-      console.log(`Skipped empty file: ${filename}`);
-      return;
-    }
-
-    await pool.query(sql);
-    console.log(`Applied: ${filename}`);
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      throw new Error(`Missing setup file: ${filePath}`);
-    }
-
-    throw error;
-  }
+  const sql = await fs.readFile(path.join(__dirname, filename), "utf8");
+  await pool.query(sql);
 }
 
 async function main() {
   try {
-    console.log(`Connection target: ${getConnectionTarget()}`);
-
+    console.log(`Target: ${printableTarget()}`);
     const connection = await testDbConnection();
+    console.log(`Connected: ${connection.current_database}`);
 
-    if (connection.current_database !== getDatabaseName()) {
-      throw new Error(
-        `Connected to "${connection.current_database}" instead of "${getDatabaseName()}". Check PGDATABASE or DATABASE_URL.`
-      );
-    }
+    await runSqlFile("schema.sql");
+    await runSqlFile("confirmationproof.sql");
 
-    console.log(`Connected to database: ${connection.current_database}`);
-
-    for (const filename of setupFiles) {
-      await runSqlFile(filename);
-    }
-
-    const result = await pool.query(`
-      SELECT
-        to_regclass('app.confirmation_test_records') AS confirmation_test_records,
-        to_regclass('app.face_identities') AS face_identities,
-        to_regclass('app.machine_configs') AS machine_configs,
-        to_regclass('app.confirmationproof') AS confirmationproof
-    `);
-
-    console.log("Database setup complete.");
-    console.table(result.rows[0]);
+    console.log("Tables ready: app.confirmation_test_records, app.face_identities, app.machine_configs, app.confirmationproof");
   } catch (error) {
-    console.error(getFriendlyError(error));
+    console.error(setupError(error));
     process.exitCode = 1;
   } finally {
     await pool.end();

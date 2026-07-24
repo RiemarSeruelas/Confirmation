@@ -1,0 +1,1750 @@
+/*
+  Confirmation Test mobile UI
+  Compact, feed-style layout for phones and tablets.
+  Desktop remains controlled by styles.css.
+*/
+
+@media (max-width: 900px) {
+  :root {
+    --nav-h: auto;
+    --mobile-edge: 8px;
+    --mobile-radius: 10px;
+    --mobile-bg: #f0f2f5;
+    --mobile-card: #ffffff;
+    --mobile-line: #e4e6eb;
+    --mobile-text: #1c1e21;
+    --mobile-muted: #65676b;
+    --mobile-blue: #1877f2;
+    --mobile-blue-soft: #e7f3ff;
+    --mobile-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    min-width: 0;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  body {
+    margin: 0;
+    color: var(--mobile-text);
+    background: var(--mobile-bg);
+    font-size: 13px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font-size: 12px;
+  }
+
+  .factory-os-page,
+  .factory-logs-page,
+  .form-page,
+  .landing-page,
+  .system-builder-page,
+  .admin-page {
+    width: 100%;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+    background: var(--mobile-bg);
+  }
+
+  /* Shared header: the same structure and sizing on every page. */
+  .factory-topbar.shared-factory-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    flex: 0 0 auto;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand actions"
+      "nav nav";
+    grid-template-rows: 34px 36px;
+    gap: 2px 8px;
+    padding: max(6px, env(safe-area-inset-top)) var(--mobile-edge) 0;
+    overflow: visible;
+    background: rgba(255, 255, 255, .98);
+    border-bottom: 1px solid var(--mobile-line);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+    backdrop-filter: blur(12px);
+  }
+
+  .factory-brand.confirmation-brand {
+    grid-area: brand;
+    min-width: 0;
+    min-height: 32px;
+    height: 32px;
+    gap: 7px;
+  }
+
+  .confirmation-mark {
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    border-radius: 50%;
+    font-size: 10px;
+    background: var(--mobile-blue);
+    box-shadow: none;
+  }
+
+  .confirmation-brand-copy {
+    min-width: 0;
+    gap: 1px;
+  }
+
+  .confirmation-brand-copy strong {
+    color: var(--mobile-text);
+    font-size: 13px;
+    line-height: 1.05;
+  }
+
+  .confirmation-brand-copy small {
+    color: var(--mobile-muted);
+    font-size: 9px;
+    line-height: 1.1;
+  }
+
+  .factory-top-actions,
+  .factory-top-actions-no-calendar {
+    grid-area: actions;
+    height: 32px;
+    gap: 5px;
+  }
+
+  .factory-bell.notification-bell,
+  .factory-user-chip {
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    padding: 0;
+    border: 0;
+    font-size: 10px;
+    box-shadow: none;
+  }
+
+  .factory-bell.notification-bell {
+    background: #e4e6eb;
+  }
+
+  .factory-bell.notification-bell svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .factory-bell-count {
+    top: -2px;
+    right: -2px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    font-size: 8px;
+  }
+
+  .factory-user-chip {
+    background: #243b5a;
+  }
+
+  .factory-nav-tabs {
+    grid-area: nav;
+    width: calc(100% + (var(--mobile-edge) * 2));
+    height: 36px;
+    margin-left: calc(var(--mobile-edge) * -1);
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(58px, 1fr);
+    align-items: stretch;
+    justify-content: start;
+    gap: 0;
+    padding: 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+    scrollbar-width: none;
+  }
+
+  .factory-nav-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .factory-nav-tabs button {
+    position: relative;
+    min-width: 58px;
+    height: 36px;
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 6px;
+    border-radius: 0;
+    color: var(--mobile-muted);
+    background: transparent;
+    box-shadow: none;
+    font-size: 10px;
+    font-weight: 850;
+  }
+
+  .factory-nav-tabs button:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  .factory-nav-tabs button::before {
+    display: inline-grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  .factory-nav-tabs button[data-nav-id="record"]::before { content: "✓"; }
+  .factory-nav-tabs button[data-nav-id="machine"]::before { content: "▣"; }
+  .factory-nav-tabs button[data-nav-id="trends"]::before { content: "▥"; }
+  .factory-nav-tabs button[data-nav-id="system"]::before { content: "⌘"; }
+  .factory-nav-tabs button[data-nav-id="register"]::before { content: "+"; }
+  .factory-nav-tabs button[data-nav-id="logs"]::before { content: "≡"; }
+  .factory-nav-tabs button[data-nav-id="logout"]::before { content: "↪"; }
+
+  .factory-nav-tabs button.active {
+    color: var(--mobile-blue);
+    background: transparent;
+    box-shadow: inset 0 -3px 0 var(--mobile-blue);
+  }
+
+  .factory-nav-tabs button.active::after {
+    display: none;
+  }
+
+  .factory-nav-tabs .factory-logout-tab {
+    color: #b42318;
+  }
+
+  /* Shared mobile cards and controls. */
+  .glass-card,
+  .record-command-bar,
+  .record-machines-panel,
+  .record-recent-panel,
+  .factory-summary-panel,
+  .system-point-map-card,
+  .factory-trends-overview-card,
+  .system-builder-form-card,
+  .logs-main-panel,
+  .input-form,
+  .side-card,
+  .dashboard-summary {
+    border: 1px solid var(--mobile-line);
+    border-radius: var(--mobile-radius);
+    background: var(--mobile-card);
+    box-shadow: var(--mobile-shadow);
+    backdrop-filter: none;
+  }
+
+  input,
+  select,
+  textarea {
+    min-height: 34px;
+    border-color: #ccd0d5;
+    border-radius: 7px;
+    padding: 6px 8px;
+    background: #f5f6f7;
+    font-weight: 750;
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    border-color: var(--mobile-blue);
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(24, 119, 242, .12);
+  }
+
+  button,
+  .secondary-button,
+  .ghost-button {
+    min-height: 34px;
+    border-radius: 7px;
+    box-shadow: none;
+  }
+
+  /* Submit */
+  .record-page-mobile {
+    height: 100dvh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+    background: var(--mobile-bg);
+  }
+
+  .record-workspace {
+    width: 100%;
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    gap: 7px;
+    padding: 8px var(--mobile-edge) max(16px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  .record-command-bar {
+    position: static;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+    padding: 9px;
+  }
+
+  .record-command-copy p:not(.eyebrow) {
+    display: none;
+  }
+
+  .record-command-copy .eyebrow {
+    color: var(--mobile-blue);
+    font-size: 8px;
+    letter-spacing: .09em;
+  }
+
+  .record-command-copy h1 {
+    margin-top: 2px;
+    font-size: 16px;
+    line-height: 1.05;
+    letter-spacing: -.025em;
+  }
+
+  .record-command-actions {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) 64px 98px;
+    gap: 5px;
+  }
+
+  .record-area-control {
+    gap: 2px;
+  }
+
+  .record-area-control > span {
+    color: var(--mobile-muted);
+    font-size: 9px;
+  }
+
+  .record-area-control select,
+  .record-ready-summary,
+  .record-submit-all-button {
+    height: 34px;
+    min-height: 34px;
+    border-radius: 7px;
+  }
+
+  .record-area-control select {
+    padding: 0 7px;
+    font-size: 11px;
+  }
+
+  .record-ready-summary strong {
+    font-size: 12px;
+  }
+
+  .record-ready-summary span {
+    font-size: 8px;
+  }
+
+  .record-submit-all-button {
+    width: auto;
+    padding: 0 8px;
+    background: var(--mobile-blue);
+    font-size: 10px;
+  }
+
+  .record-global-message,
+  .compact-message {
+    padding: 6px 8px;
+    border-radius: 7px;
+    font-size: 10px;
+  }
+
+  .record-mobile-view-switch {
+    min-height: 38px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--mobile-line);
+    border-radius: 9px;
+    background: #fff;
+    box-shadow: var(--mobile-shadow);
+  }
+
+  .record-mobile-view-switch button {
+    min-height: 30px;
+    border-radius: 6px;
+    color: var(--mobile-muted);
+    background: transparent;
+    box-shadow: none;
+    font-size: 10px;
+  }
+
+  .record-mobile-view-switch button.active {
+    color: var(--mobile-blue);
+    background: var(--mobile-blue-soft);
+    box-shadow: none;
+  }
+
+  .record-main-layout {
+    display: block;
+  }
+
+  .record-machines-panel,
+  .record-recent-panel {
+    min-height: 0;
+    padding: 8px;
+  }
+
+  .record-section-heading {
+    min-height: 30px;
+    padding: 0 1px 6px;
+  }
+
+  .record-section-heading span {
+    color: var(--mobile-blue);
+    font-size: 9px;
+  }
+
+  .record-section-heading strong {
+    margin-top: 1px;
+    font-size: 11px;
+  }
+
+  .record-machines-heading > small,
+  .latest-heading strong {
+    display: none;
+  }
+
+  .latest-heading .secondary-button {
+    height: 28px;
+    min-height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 9px;
+  }
+
+  .record-machine-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .record-machine-card {
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--mobile-line);
+    border-radius: 9px;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .record-machine-card::before {
+    display: none;
+  }
+
+  .record-machine-card-head {
+    gap: 5px;
+    padding-bottom: 5px;
+    border-bottom-color: var(--mobile-line);
+  }
+
+  .record-machine-title-row {
+    gap: 7px;
+  }
+
+  .record-machine-number {
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    font-size: 10px;
+    box-shadow: none;
+  }
+
+  .record-machine-title-row small {
+    font-size: 8px;
+  }
+
+  .record-machine-title-row h2 {
+    margin-top: 1px;
+    font-size: 12px;
+    line-height: 1.05;
+  }
+
+  .record-machine-title-row p {
+    display: none;
+  }
+
+  .record-machine-state {
+    min-height: 22px;
+    padding: 0 6px;
+    font-size: 8px;
+  }
+
+  .record-machine-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .record-machine-fields label {
+    gap: 3px;
+    font-size: 10px;
+  }
+
+  .record-machine-fields .wide-field,
+  .record-machine-fields label:has(textarea),
+  .record-machine-fields label:has(.image-answer-row) {
+    grid-column: 1 / -1;
+  }
+
+  .record-machine-fields input,
+  .record-machine-fields select,
+  .record-machine-fields textarea {
+    min-height: 31px;
+    height: 31px;
+    padding: 5px 7px;
+    border-radius: 7px;
+    font-size: 11px;
+  }
+
+  .record-machine-fields textarea {
+    min-height: 54px;
+    height: 54px;
+  }
+
+  .binary-option-control {
+    min-height: 31px;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 7px;
+  }
+
+  .binary-option-button {
+    min-height: 25px;
+    padding: 0 4px;
+    border-radius: 5px;
+    font-size: 10px;
+  }
+
+  .image-answer-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .image-scan-button {
+    min-height: 34px;
+    height: 34px;
+    border-radius: 7px;
+    font-size: 10px;
+  }
+
+  .new-proof-preview {
+    min-height: 44px;
+    padding: 4px;
+  }
+
+  .new-proof-preview img {
+    width: 40px;
+    height: 36px;
+  }
+
+  .latest-response-list {
+    gap: 9px;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .latest-response-card {
+    position: relative;
+    padding: 10px;
+    overflow: hidden;
+    border: 1px solid #d8e6f7;
+    border-radius: 10px;
+    background: linear-gradient(145deg, #fff 0%, #f5f9ff 100%);
+    box-shadow: 0 2px 7px rgba(24, 119, 242, .07);
+  }
+
+  .latest-response-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: #bcc7d8;
+  }
+
+  .latest-response-card.has-data::before {
+    background: var(--mobile-blue);
+  }
+
+  .latest-response-card.has-data {
+    border-color: #c8ddf8;
+    background: linear-gradient(145deg, #fff 0%, #edf6ff 100%);
+  }
+
+  .latest-response-card-head {
+    padding-bottom: 6px;
+  }
+
+  .latest-response-card-head strong {
+    color: #17345d;
+    font-size: 12px;
+  }
+
+  .latest-response-card-head span {
+    font-size: 9px;
+  }
+
+  .latest-response-values {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+    padding-top: 6px;
+  }
+
+  .latest-response-field {
+    min-height: 40px;
+    padding: 6px 7px;
+    border: 1px solid #e2eaf5;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, .9);
+  }
+
+  .latest-response-field span {
+    font-size: 9px;
+  }
+
+  .latest-response-field strong {
+    font-size: 11px;
+  }
+
+  .mobile-view-answer .record-recent-panel {
+    display: none;
+  }
+
+  .mobile-view-latest .record-machines-panel {
+    display: none;
+  }
+
+  /* Machines: image, dots, lines, and cards share one fitted canvas. */
+  .factory-machine-page {
+    height: auto;
+    min-height: 100dvh;
+    display: block;
+    overflow: visible;
+  }
+
+  .factory-machine-page .factory-workspace {
+    height: auto;
+    min-height: 0;
+    padding: 8px var(--mobile-edge) max(16px, env(safe-area-inset-bottom));
+    gap: 6px;
+    overflow: visible;
+  }
+
+  .factory-machine-page .factory-main-card {
+    height: auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    gap: 6px;
+    overflow: visible;
+  }
+
+  .factory-machine-page .system-point-map-card {
+    order: 1;
+    height: auto;
+    min-height: 0;
+    padding: 6px;
+    gap: 5px;
+    overflow: hidden;
+  }
+
+  .system-point-map-head-controls-only {
+    justify-content: stretch;
+  }
+
+  .system-point-map-tools {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(78px, .72fr) minmax(0, 1.28fr) 58px;
+    gap: 4px;
+  }
+
+  .system-map-select,
+  .system-site-toggle,
+  .system-map-action-button,
+  .system-delete-button {
+    width: 100%;
+    min-width: 0;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 6px;
+    border-radius: 7px;
+    font-size: 10px;
+  }
+
+  .system-site-toggle {
+    padding: 0 6px;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .system-site-toggle small {
+    display: none;
+  }
+
+  .factory-machine-page .machine-map-tools {
+    grid-template-columns: 82px minmax(0, 1fr) 58px;
+    grid-template-areas:
+      "site machine refresh"
+      "category category refresh";
+  }
+
+  .factory-machine-page .machine-map-tools > .system-site-toggle {
+    grid-area: site;
+  }
+
+  .factory-machine-page .machine-map-tools > .machine-category-dropdown {
+    grid-area: category;
+  }
+
+  .factory-machine-page .machine-map-tools > .system-map-select {
+    grid-area: machine;
+  }
+
+  .factory-machine-page .machine-map-tools > .system-map-action-button {
+    grid-area: refresh;
+    height: 100%;
+  }
+
+  .factory-machine-page .machine-category-dropdown {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .factory-machine-page .machine-category-dropdown .category-dropdown-trigger,
+  .factory-machine-page .machine-equipment-select {
+    height: 32px;
+    min-height: 32px;
+    padding-inline: 7px;
+    border-width: 1px;
+    border-radius: 7px;
+    box-shadow: 0 0 0 2px rgba(15,107,255,.06);
+    font-size: 10px;
+  }
+
+  .factory-machine-page .shared-point-map-stage {
+    height: clamp(310px, 58dvh, 500px);
+    min-height: clamp(310px, 58dvh, 500px);
+    max-height: none;
+    display: grid;
+    place-items: center;
+    padding: 6px;
+    border-radius: 8px;
+    background: #f5f6f7;
+  }
+
+  .factory-machine-page .system-map-canvas {
+    max-width: 100%;
+    max-height: 100%;
+    contain: layout paint;
+    isolation: isolate;
+    transform: translateZ(0);
+  }
+
+  .factory-machine-page .system-map-canvas img {
+    border: 0;
+    border-radius: 4px;
+    box-shadow: none;
+    pointer-events: none;
+  }
+
+  .factory-machine-page .factory-summary-panel {
+    order: 2;
+    min-height: 0;
+    padding: 6px;
+    gap: 4px;
+    overflow: hidden;
+  }
+
+  .factory-machine-page .factory-summary-overview-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .factory-machine-page .factory-summary-parameter-section {
+    gap: 4px;
+    padding-top: 5px;
+    border-top: 1px solid var(--mobile-line);
+  }
+
+  .factory-machine-page .factory-summary-section-label {
+    color: var(--mobile-blue);
+    font-size: 8px;
+    letter-spacing: .08em;
+  }
+
+  .factory-machine-page .factory-summary-parameter-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px;
+  }
+
+  .factory-machine-page .factory-panel-head h2 {
+    font-size: 11px;
+  }
+
+  .factory-machine-page .factory-summary-list > div:not(.factory-summary-divider) {
+    min-height: 29px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+    align-content: center;
+    padding: 3px 4px;
+    border: 1px solid var(--mobile-line);
+    border-radius: 7px;
+    background: #f5f6f7;
+    font-size: 8px;
+  }
+
+  .factory-machine-page .factory-summary-list strong {
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9px;
+  }
+
+  .factory-machine-page .factory-summary-divider,
+  .factory-machine-page .factory-alarm-box-compact {
+    display: none;
+  }
+
+  .factory-machine-page .factory-callout-card {
+    width: clamp(64px, 20vw, 82px);
+    padding: 3px 4px;
+    border-radius: 6px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+  }
+
+  .factory-machine-page .factory-callout-card span {
+    font-size: 6.5px;
+  }
+
+  .factory-machine-page .factory-callout-card strong {
+    margin-top: 2px;
+    font-size: 9px;
+  }
+
+  .factory-machine-page .factory-callout-card small {
+    font-size: 6.5px;
+  }
+
+  .factory-machine-page .factory-callout-card em {
+    width: 12px;
+    height: 12px;
+    font-size: 6px;
+  }
+
+  .factory-machine-page .factory-callout-card p {
+    display: none;
+  }
+
+  .factory-machine-page .factory-target-dot {
+    width: 8px;
+    height: 8px;
+    min-height: 8px;
+  }
+
+  /* Trends: chart first, then a two-row horizontal machine carousel. */
+  .factory-trends-page .factory-trends-workspace {
+    height: auto;
+    min-height: 0;
+    padding: 7px var(--mobile-edge) max(16px, env(safe-area-inset-bottom));
+    gap: 7px;
+    overflow: visible;
+  }
+
+  .factory-trends-page .factory-trends-overview-card {
+    flex: none;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    overflow: hidden;
+  }
+
+  .factory-trends-page .factory-trends-chart-panel {
+    min-height: 0;
+    grid-template-rows: auto 310px;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .factory-trends-page .factory-trends-card-head {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .factory-trends-page .factory-trends-title .eyebrow {
+    color: var(--mobile-blue);
+    font-size: 9px;
+    letter-spacing: .08em;
+  }
+
+  .factory-trends-page .factory-trends-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr) 58px;
+    grid-template-areas:
+      "view area refresh"
+      "equipment parameter refresh";
+    gap: 4px;
+    align-items: end;
+  }
+
+  .factory-trends-page .factory-trends-actions.trend-view-operator {
+    grid-template-areas: "view operator refresh";
+  }
+
+  .factory-trends-page .trend-view-switch {
+    grid-area: view;
+    width: 100%;
+    height: 32px;
+    min-height: 32px;
+    padding: 2px;
+    border-radius: 999px;
+  }
+
+  .factory-trends-page .factory-trends-actions .trend-view-switch button {
+    min-height: 26px;
+    height: 26px;
+    padding: 0 4px;
+    border-radius: 999px;
+    color: #34435f;
+    background: transparent;
+    font-size: 9px;
+  }
+
+  .factory-trends-page .factory-trends-actions .trend-view-switch button.active {
+    color: #fff;
+    background: linear-gradient(135deg, #2775ef, #0ea5e9);
+  }
+
+  .factory-trends-page .area-filter-control {
+    grid-area: area;
+  }
+
+  .factory-trends-page .equipment-filter-control {
+    grid-area: equipment;
+  }
+
+  .factory-trends-page .operator-filter-control {
+    grid-area: operator;
+  }
+
+  .factory-trends-page .detail-filter-control {
+    grid-area: parameter;
+  }
+
+  .factory-trends-page .trend-refresh-button {
+    grid-area: refresh;
+    align-self: stretch;
+  }
+
+  .factory-trends-page .trend-filter-control {
+    min-width: 0;
+    gap: 2px;
+    color: var(--mobile-muted);
+    font-size: 8px;
+  }
+
+  .factory-trends-page .factory-trends-actions .trend-filter-control,
+  .factory-trends-page .factory-trends-actions .detail-filter-control {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .factory-trends-page .trend-filter-control select,
+  .factory-trends-page .trend-site-toggle,
+  .factory-trends-page .trend-category-dropdown .category-dropdown-trigger,
+  .factory-trends-page .factory-trends-actions .detail-filter-control select,
+  .factory-trends-page .trend-refresh-button {
+    width: 100%;
+    min-width: 0;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 5px;
+    border-radius: 7px;
+    font-size: 10px;
+  }
+
+  .factory-trends-page .trend-refresh-button {
+    background: var(--mobile-blue);
+    height: 100%;
+  }
+
+  .factory-trends-page .trend-site-toggle {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 5px;
+    color: #fff;
+    background: var(--mobile-blue);
+    text-align: left;
+  }
+
+  .factory-trends-page .trend-site-toggle .site-toggle-indicator {
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(255,255,255,.18);
+  }
+
+  .factory-trends-page .trend-site-toggle small {
+    display: none;
+  }
+
+  .factory-trends-page .trend-category-dropdown {
+    width: 100%;
+  }
+
+  .factory-trends-page .trend-category-dropdown .category-dropdown-menu {
+    min-width: 150px;
+  }
+
+  .factory-trends-page .trend-overview-chart-wrap {
+    grid-template-columns: 34px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 25px;
+    gap: 2px 4px;
+    padding: 6px;
+    border-radius: 8px;
+    background: #f7f8fa;
+  }
+
+  .factory-trends-page .trend-overview-axis {
+    font-size: 8px;
+  }
+
+  .factory-trends-page .trend-entry-axis b {
+    font-size: 8px;
+  }
+
+  .factory-trends-page .trend-entry-axis small {
+    font-size: 7px;
+  }
+
+  .factory-trends-page .trend-overview-empty {
+    min-height: 184px;
+    padding: 0;
+    font-size: 10px;
+  }
+
+  .factory-trends-page .factory-trends-stats-panel {
+    min-height: 142px;
+    max-height: none;
+    padding: 6px 8px;
+    gap: 4px;
+    border-top: 1px solid var(--mobile-line);
+    border-left: 0;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  .factory-trends-page .trend-side-label {
+    font-size: 9px;
+  }
+
+  .factory-trends-page .trend-side-header-row strong {
+    font-size: 12px;
+  }
+
+  .factory-trends-page .trend-side-header-row .small {
+    min-height: 26px;
+    height: 26px;
+    padding: 0 7px;
+    font-size: 9px;
+  }
+
+  .factory-trends-page .trend-compare-series-list {
+    min-height: 88px;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 188px;
+    gap: 5px;
+    padding: 0 0 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .factory-trends-page .trend-compare-series-list .empty-state {
+    min-width: min(300px, calc(100vw - 42px));
+    padding: 7px;
+    font-size: 9px;
+  }
+
+  .factory-trends-page .trend-compare-series-card {
+    min-height: 78px;
+    padding: 5px;
+    border-radius: 7px;
+    box-shadow: none;
+  }
+
+  .factory-trends-page .trend-compare-series-head {
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .factory-trends-page .trend-compare-series-head strong {
+    font-size: 10px;
+  }
+
+  .factory-trends-page .trend-compare-series-head small {
+    font-size: 8px;
+  }
+
+  .factory-trends-page .trend-compare-series-head button {
+    width: 22px;
+    height: 22px;
+    min-height: 22px;
+    padding: 0;
+  }
+
+  .factory-trends-page .trend-compare-current-grid {
+    gap: 3px;
+  }
+
+  .factory-trends-page .trend-compare-current-grid article {
+    padding: 4px;
+    border-radius: 5px;
+  }
+
+  .factory-trends-page .trend-compare-current-grid span {
+    font-size: 8px;
+  }
+
+  .factory-trends-page .trend-compare-current-grid strong {
+    font-size: 10px;
+  }
+
+  .factory-trends-page .factory-trends-machine-grid {
+    position: sticky;
+    bottom: 0;
+    z-index: 35;
+    flex: none;
+    width: 100%;
+    height: 86px;
+    max-height: 86px;
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    grid-template-rows: 76px;
+    grid-auto-columns: 132px;
+    align-content: start;
+    gap: 6px;
+    padding: 5px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    border-top: 1px solid var(--mobile-line);
+    background: rgba(240, 242, 245, .97);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, .06);
+    backdrop-filter: blur(10px);
+  }
+
+  .factory-trends-page .factory-trends-machine-grid::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  .factory-trends-page .factory-trends-machine-grid::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #bcc0c4;
+  }
+
+  .factory-trends-page .trend-machine-tile {
+    width: 100%;
+    min-width: 0;
+    min-height: 76px;
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr);
+    grid-template-rows: 1fr;
+    gap: 6px;
+    align-items: stretch;
+    padding: 6px;
+    overflow: hidden;
+    border: 1px solid var(--mobile-line);
+    border-radius: 9px;
+    background: #fff;
+    box-shadow: var(--mobile-shadow);
+    scroll-snap-align: start;
+  }
+
+  .factory-trends-page .trend-machine-tile.active {
+    border-color: var(--mobile-blue);
+    background: var(--mobile-blue-soft);
+    box-shadow: inset 0 0 0 1px var(--mobile-blue);
+  }
+
+  .factory-trends-page .trend-machine-thumb {
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    padding: 3px;
+    border: 0;
+    border-radius: 6px;
+    background: #f5f6f7;
+  }
+
+  .factory-trends-page .trend-machine-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .factory-trends-page .trend-machine-info {
+    min-width: 0;
+    align-content: center;
+    gap: 5px;
+    padding: 0;
+  }
+
+  .factory-trends-page .trend-machine-tile h3 {
+    display: block;
+    font-size: 10px;
+    white-space: normal;
+    line-height: 1.15;
+  }
+
+  .factory-trends-page .trend-machine-tile p,
+  .factory-trends-page .trend-machine-status,
+  .factory-trends-page .trend-machine-value-row,
+  .factory-trends-page .trend-machine-meta-row {
+    display: none;
+  }
+
+  .factory-trends-page .trend-machine-value-row strong {
+    font-size: 12px;
+  }
+
+  .factory-trends-page .trend-machine-value-row small {
+    font-size: 8px;
+  }
+
+  .factory-trends-page .trend-machine-status {
+    max-width: 50px;
+    overflow: hidden;
+    padding: 2px 4px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 8px;
+  }
+
+  .factory-trends-page .trend-tile-sparkline {
+    display: none;
+  }
+
+  .factory-trends-page .factory-trends-footer {
+    display: none;
+  }
+
+  /* System, Register, and Logs use the same compact card language. */
+  .system-builder-workspace,
+  .logs-dashboard-shell,
+  .admin-page {
+    height: auto;
+    min-height: 0;
+    padding: 7px var(--mobile-edge) max(16px, env(safe-area-inset-bottom));
+    overflow: visible;
+  }
+
+  .landing-page {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: max(16px, env(safe-area-inset-top)) var(--mobile-edge) max(16px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+  }
+
+  .login-card {
+    width: min(390px, 100%);
+    margin: auto 0;
+    gap: 7px;
+    padding: 14px;
+  }
+
+  .login-card .brand-mark {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+  }
+
+  .login-card h1 {
+    font-size: 22px;
+  }
+
+  .login-card .login-subtitle {
+    font-size: 11px;
+  }
+
+  .login-actions {
+    gap: 6px;
+  }
+
+  .login-actions button {
+    min-height: 34px;
+    font-size: 11px;
+  }
+
+  .system-builder-shell,
+  .system-builder-shell-editing {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .system-builder-form-card,
+  .system-point-map-card {
+    padding: 6px;
+    gap: 5px;
+  }
+
+  .system-builder-page .shared-point-map-stage {
+    height: clamp(310px, 58dvh, 500px);
+    min-height: clamp(310px, 58dvh, 500px);
+    max-height: none;
+  }
+
+  .system-builder-page .system-map-canvas {
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  .system-builder-card-head h1,
+  .system-inline-editor-head h2 {
+    font-size: 12px;
+  }
+
+  .system-builder-page input,
+  .system-builder-page select,
+  .system-builder-page textarea,
+  .system-builder-page button:not(.system-clickable-dot):not(.system-builder-callout-button) {
+    min-height: 30px;
+    font-size: 10px;
+  }
+
+  .system-builder-page .system-site-upload-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .system-builder-page .system-form-site-toggle,
+  .system-builder-page .compact-upload-tile {
+    width: 100%;
+    height: 30px;
+    min-height: 30px;
+    border-radius: 7px;
+  }
+
+  .system-builder-page .system-form-site-toggle {
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 0 6px;
+  }
+
+  .system-builder-page .system-form-site-toggle small,
+  .system-builder-page .compact-upload-tile small {
+    display: none;
+  }
+
+  .system-builder-page .compact-upload-tile {
+    padding-left: 25px;
+  }
+
+  .system-builder-page .compact-upload-tile .system-upload-icon {
+    left: 4px;
+    width: 18px;
+    height: 18px;
+  }
+
+  .system-builder-page .category-dropdown-menu {
+    min-width: 160px;
+  }
+
+  .system-builder-page .system-clickable-dot {
+    width: 8px;
+    height: 8px;
+    min-height: 8px;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .system-builder-page .system-builder-callout-button {
+    min-height: 0;
+    width: clamp(64px, 20vw, 82px);
+    padding: 3px 4px;
+    border-radius: 6px;
+  }
+
+  .system-builder-page .system-builder-callout-button span {
+    font-size: 6.5px;
+  }
+
+  .system-builder-page .system-builder-callout-button strong {
+    margin-top: 2px;
+    font-size: 9px;
+  }
+
+  .system-builder-page .system-builder-callout-button small {
+    font-size: 6.5px;
+  }
+
+  .system-builder-page .system-builder-callout-button em {
+    width: 12px;
+    height: 12px;
+    font-size: 6px;
+  }
+
+  .system-builder-page .system-builder-callout-button p {
+    display: none;
+  }
+
+  .system-builder-fields,
+  .system-variable-list-card,
+  .variable-editor-body {
+    gap: 5px;
+  }
+
+  .system-variable-item {
+    min-height: 36px;
+    padding: 4px 6px;
+  }
+
+  .system-variable-item strong {
+    font-size: 10px;
+  }
+
+  .system-variable-item small,
+  .system-variable-item em {
+    font-size: 8px;
+  }
+
+  .admin-grid,
+  .form-layout,
+  .builder-row,
+  .modal-editor-row,
+  .callout-builder-row,
+  .admin-page .field-grid.two {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-page {
+    padding: 8px var(--mobile-edge) max(16px, env(safe-area-inset-bottom));
+  }
+
+  .admin-grid {
+    gap: 7px;
+  }
+
+  .admin-page .input-form,
+  .admin-page .dashboard-summary {
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .admin-page .input-form h1 {
+    font-size: 17px;
+  }
+
+  .admin-page input,
+  .admin-page select,
+  .admin-page button {
+    min-height: 31px;
+    font-size: 10px;
+  }
+
+  .admin-page .face-capture-row {
+    min-height: 42px;
+    padding: 5px 7px;
+  }
+
+  .admin-page .user-list {
+    gap: 4px;
+    margin-top: 2px;
+  }
+
+  .admin-page .user-list article {
+    padding: 5px 7px;
+    font-size: 10px;
+  }
+
+  .logs-main-panel {
+    gap: 0;
+    padding: 0;
+  }
+
+  .logs-records-card {
+    gap: 6px;
+    padding: 8px;
+    border-radius: 12px;
+  }
+
+  .logs-records-head h1 {
+    font-size: 15px;
+  }
+
+  .logs-refresh-button {
+    min-height: 31px;
+    font-size: 10px;
+  }
+
+  .logs-records-actions {
+    gap: 3px;
+  }
+
+  .logs-records-actions .logs-clear-all,
+  .logs-records-actions .logs-refresh-button {
+    min-height: 30px;
+    padding: 4px 7px;
+    font-size: 9px;
+  }
+
+  .logs-filters-grid,
+  .compact-logs-layout .logs-filters-grid {
+    width: min(620px, 100%);
+    margin-inline: auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, auto);
+    gap: 5px;
+    align-items: end;
+  }
+
+  .logs-filters-grid label {
+    min-width: 0;
+    gap: 2px;
+    font-size: 8px;
+  }
+
+  .logs-filters-grid input,
+  .logs-filters-grid select {
+    min-width: 0;
+    min-height: 36px;
+    height: 36px;
+    padding: 5px 8px;
+    font-size: 10px;
+  }
+
+  .logs-site-control {
+    gap: 2px;
+  }
+
+  .logs-filter-label {
+    font-size: 8px;
+  }
+
+  .logs-site-segment {
+    height: 36px;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 8px;
+  }
+
+  .logs-site-segment button {
+    min-height: 28px;
+    padding: 3px;
+    font-size: 9px;
+  }
+
+  .logs-table-wrap {
+    flex: 0 1 auto;
+    margin-top: auto;
+    overflow-x: auto;
+  }
+
+  .logs-table {
+    min-width: 780px;
+  }
+
+  .logs-table th,
+  .logs-table td {
+    padding: 7px 8px;
+    font-size: 10px;
+  }
+
+  .logs-table th:first-child,
+  .logs-table td:first-child {
+    min-width: 160px;
+    white-space: nowrap;
+  }
+
+  .logs-when-cell {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+
+  .logs-avatar {
+    width: 22px;
+    height: 22px;
+    font-size: 8px;
+  }
+
+  .logs-variable-value {
+    min-width: 42px;
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+
+  .logs-table-footer {
+    gap: 5px;
+    font-size: 9px;
+  }
+
+  .logs-pagination {
+    gap: 3px;
+  }
+
+  .logs-pagination button,
+  .logs-page-size {
+    min-height: 26px;
+    padding: 3px 5px;
+  }
+
+  /* Native camera remains full-screen and touch friendly. */
+  .modal-backdrop {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .native-camera-modal {
+    width: 100vw;
+    max-height: 100dvh;
+    min-height: 100dvh;
+    padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+    align-content: start;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .native-camera-box {
+    min-height: min(62dvh, 560px);
+    border-radius: 10px;
+  }
+
+  .native-camera-box img {
+    max-height: min(62dvh, 560px);
+  }
+
+  .native-camera-actions {
+    margin-top: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .native-camera-actions button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 540px) {
+  .record-command-actions {
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+
+  .record-submit-all-button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+@media (max-width: 390px) {
+  :root {
+    --mobile-edge: 6px;
+  }
+
+  .confirmation-brand-copy strong {
+    font-size: 12px;
+  }
+
+  .factory-nav-tabs {
+    grid-auto-columns: minmax(56px, 1fr);
+  }
+
+  .factory-nav-tabs button {
+    min-width: 56px;
+    padding: 0 4px;
+    font-size: 9px;
+  }
+
+  .latest-response-values {
+    grid-template-columns: 1fr;
+  }
+
+  .system-point-map-tools {
+    grid-template-columns: minmax(76px, .72fr) minmax(0, 1.28fr);
+  }
+
+  .factory-machine-page .factory-summary-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .system-map-action-button,
+  .system-delete-button {
+    grid-column: 1 / -1;
+  }
+
+  .factory-trends-page .factory-trends-actions {
+    grid-template-columns: 116px minmax(0, 1fr) 54px;
+  }
+
+  .factory-trends-page .factory-trends-machine-grid {
+    grid-template-columns: none;
+    grid-auto-columns: 120px;
+    gap: 5px;
+  }
+
+  .factory-trends-page .trend-machine-tile {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 5px;
+    padding: 5px;
+  }
+
+  .factory-trends-page .factory-trends-chart-panel {
+    grid-template-rows: auto 280px;
+  }
+
+  .logs-filters-grid,
+  .compact-logs-layout .logs-filters-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .logs-site-segment button {
+    font-size: 8px;
+  }
+}

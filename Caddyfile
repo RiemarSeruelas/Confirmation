@@ -1,7 +1,0 @@
-# For LAN camera access, use HTTPS. Replace confirmation-test.local with your own internal DNS name.
-# Add that name to DNS or each client PC hosts file, pointing to the Docker host IP.
-
-https://confirmation-test.local:5055 {
-  tls internal
-  reverse_proxy app:5178
-}

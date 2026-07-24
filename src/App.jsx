@@ -1,2472 +1,3852 @@
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  ArrowDown,
-  ArrowUp,
-  Archive,
-  Bell,
-  Camera,
-  CalendarDays,
-  CheckCircle2,
-  ClipboardList,
-  Copy,
-  Download,
-  Eye,
-  GripVertical,
-  Images,
-  KeyRound,
-  ListChecks,
-  LogOut,
-  Moon,
-  PackageCheck,
-  Plus,
-  QrCode,
-  RefreshCw,
-  ScanLine,
-  Search,
-  ShieldCheck,
-  Sun,
-  Trash2,
-  UserPlus,
-  UserCircle,
-  XCircle
-} from "lucide-react";
-import { api } from "./api.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import "./styles.css";
+import "./mobile.css";
 
-const STAFF_SESSION_KEY = "power-tool-staff-session";
-const VISIT_SESSION_KEY = "power-tool-visit-session";
-const DEVELOPER_CREDIT = "Made by Riemar R. Seruelas Jr - Data Digital Intern";
-const QUESTION_TYPES = [
-  { value: "text", label: "Short answer" },
-  { value: "textarea", label: "Paragraph" },
-  { value: "radio", label: "Multiple choice" },
-  { value: "checkboxes", label: "Checkboxes" },
-  { value: "select", label: "Dropdown" },
-  { value: "yesno", label: "Yes / No" },
-  { value: "number", label: "Number" },
-  { value: "date", label: "Date" },
-  { value: "image", label: "Image" }
+const siteOptions = ["Savoury", "Dressings"];
+const roleOptions = ["operator", "admin"];
+const APP_TIME_ZONE = "Asia/Manila";
+const shiftOptions = [
+  { value: "1st Shift", label: "1st Shift || 6:00 AM - 2:00 PM" },
+  { value: "2nd Shift", label: "2nd Shift || 2:00 PM - 10:00 PM" },
+  { value: "3rd Shift", label: "3rd Shift || 10:00 PM - 6:00 AM" },
 ];
-const OPTION_QUESTION_TYPES = new Set(["radio", "checkboxes", "select"]);
-const SITE_OPTIONS = ["Savoury", "Engineering", "Dressings"];
 
-console.info(`%c${DEVELOPER_CREDIT}`, "color:#0f62fe;font-weight:800;");
+const emptyUserForm = {
+  operatorName: "",
+  siteName: "Savoury",
+};
 
-function canStaffActOnRequest(session, request) {
-  return ["reviewer", "admin"].includes(session?.role) && request.status === "pending";
+const emptyMachineForm = {
+  id: null,
+  machine_name: "",
+  site_name: "Savoury",
+  details: "",
+  image_data_url: "",
+  fields: [],
+  callouts: [],
+};
+
+const fallbackEquipmentCategory = "Other Equipment";
+const pointMapFitPadding = 16;
+
+function equipmentCategoryForMachine(machine) {
+  const configuredCategory = String(
+    machine?.equipment_category || machine?.details || ""
+  ).trim();
+
+  if (configuredCategory) return configuredCategory;
+
+  const machineName = String(machine?.machine_name || "").trim();
+  if (/interklima|chiller/i.test(machineName)) return "Chiller";
+
+  return fallbackEquipmentCategory;
 }
 
-function formatDate(value) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" });
+function equipmentCategoriesForMachines(machines = []) {
+  return [...new Set(
+    machines
+      .map(equipmentCategoryForMachine)
+      .filter(Boolean)
+  )].sort((a, b) => {
+    if (a === "Chiller") return -1;
+    if (b === "Chiller") return 1;
+    if (a === fallbackEquipmentCategory) return 1;
+    if (b === fallbackEquipmentCategory) return -1;
+    return a.localeCompare(b);
+  });
+}
+
+function preferredEquipmentCategory(categories = [], current = "") {
+  if (categories.includes(current)) return current;
+  return categories.find((category) => category.toLowerCase() === "chiller")
+    || categories[0]
+    || "";
+}
+
+function machinesForEquipmentCategory(machines = [], category = "") {
+  if (!category) return machines;
+  return machines.filter(
+    (machine) => equipmentCategoryForMachine(machine) === category
+  );
+}
+
+function uid(prefix = "id") {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function imageFileToCompactDataUrl(file, maxWidth = 1000, maxHeight = 650, quality = 0.78) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error("No image selected."));
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read image file."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Could not load image preview."));
+      img.onload = () => {
+        const ratio = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
+        const width = Math.max(1, Math.round(img.width * ratio));
+        const height = Math.max(1, Math.round(img.height * ratio));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function useFittedImageCanvas(imageDataUrl, padding = 12) {
+  const stageRef = useRef(null);
+  const [naturalSize, setNaturalSize] = useState(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    setNaturalSize(null);
+    setCanvasSize({ width: 0, height: 0 });
+
+    if (!imageDataUrl) return undefined;
+
+    let active = true;
+    const imageProbe = new Image();
+    imageProbe.onload = () => {
+      if (!active || !imageProbe.naturalWidth || !imageProbe.naturalHeight) return;
+      setNaturalSize({
+        width: imageProbe.naturalWidth,
+        height: imageProbe.naturalHeight,
+      });
+    };
+    imageProbe.src = imageDataUrl;
+
+    return () => {
+      active = false;
+      imageProbe.onload = null;
+    };
+  }, [imageDataUrl]);
+
+  useEffect(() => {
+    if (!imageDataUrl || !naturalSize || !stageRef.current) return undefined;
+
+    let frameId = 0;
+
+    function fitImageToStage() {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      const rect = stage.getBoundingClientRect();
+      const stageStyle = window.getComputedStyle(stage);
+      const horizontalPadding = Number.parseFloat(stageStyle.paddingLeft || "0") + Number.parseFloat(stageStyle.paddingRight || "0");
+      const verticalPadding = Number.parseFloat(stageStyle.paddingTop || "0") + Number.parseFloat(stageStyle.paddingBottom || "0");
+      const availableWidth = Math.max(1, rect.width - horizontalPadding - padding);
+      const availableHeight = Math.max(1, rect.height - verticalPadding - padding);
+      const scale = Math.min(availableWidth / naturalSize.width, availableHeight / naturalSize.height);
+      const nextWidth = Math.max(1, Math.round(naturalSize.width * scale));
+      const nextHeight = Math.max(1, Math.round(naturalSize.height * scale));
+
+      setCanvasSize((current) => (
+        current.width === nextWidth && current.height === nextHeight
+          ? current
+          : { width: nextWidth, height: nextHeight }
+      ));
+      });
+    }
+
+    fitImageToStage();
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fitImageToStage) : null;
+    if (resizeObserver) resizeObserver.observe(stageRef.current);
+    window.addEventListener("resize", fitImageToStage);
+    window.visualViewport?.addEventListener("resize", fitImageToStage);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      if (resizeObserver) resizeObserver.disconnect();
+      window.removeEventListener("resize", fitImageToStage);
+      window.visualViewport?.removeEventListener("resize", fitImageToStage);
+    };
+  }, [imageDataUrl, naturalSize, padding]);
+
+  function handleImageLoad(event) {
+    const image = event.currentTarget;
+    if (image.naturalWidth && image.naturalHeight) {
+      setNaturalSize({ width: image.naturalWidth, height: image.naturalHeight });
+    }
+  }
+
+  const canvasStyle = imageDataUrl && canvasSize.width && canvasSize.height
+    ? {
+      width: `${canvasSize.width}px`,
+      height: `${canvasSize.height}px`,
+      aspectRatio: naturalSize ? `${naturalSize.width} / ${naturalSize.height}` : undefined,
+    }
+    : undefined;
+
+  return { stageRef, canvasStyle, handleImageLoad };
+}
+
+function requiredLabel(text) {
+  return <span className="label-text">{text}<em>*</em></span>;
+}
+
+function SiteToggleButton({ value, onChange, className = "" }) {
+  const currentSite = siteOptions.includes(value) ? value : siteOptions[0];
+  const nextSite = siteOptions.find((site) => site !== currentSite) || siteOptions[0];
+
+  return (
+    <button
+      className={`site-toggle-button site-${currentSite.toLowerCase()} ${className}`.trim()}
+      type="button"
+      onClick={() => onChange?.(nextSite)}
+      aria-label={`Currently ${currentSite}. Switch to ${nextSite}`}
+      title={`Switch to ${nextSite}`}
+    >
+      <span className="site-toggle-indicator" aria-hidden="true" />
+      <strong key={currentSite}>{currentSite}</strong>
+    </button>
+  );
+}
+
+function CategoryDropdown({
+  value,
+  options = [],
+  onChange,
+  allowAdd = false,
+  placeholder = "Choose category",
+  className = "",
+}) {
+  const rootRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const categoryOptions = [...new Set(
+    [...options, value]
+      .map((option) => String(option || "").trim())
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b));
+
+  useEffect(() => {
+    function closeFromOutside(event) {
+      if (!rootRef.current?.contains(event.target)) {
+        setOpen(false);
+        setAdding(false);
+        setDraft("");
+      }
+    }
+
+    document.addEventListener("pointerdown", closeFromOutside);
+    return () => document.removeEventListener("pointerdown", closeFromOutside);
+  }, []);
+
+  function chooseCategory(category) {
+    onChange?.(category);
+    setOpen(false);
+    setAdding(false);
+    setDraft("");
+  }
+
+  function addCategory() {
+    const category = String(draft || "").trim();
+    if (!category) return;
+    chooseCategory(category);
+  }
+
+  return (
+    <div ref={rootRef} className={`category-dropdown ${open ? "open" : ""} ${className}`.trim()}>
+      <button
+        className="category-dropdown-trigger"
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        <span>{value || placeholder}</span>
+        <i aria-hidden="true">⌄</i>
+      </button>
+
+      {open && (
+        <div className="category-dropdown-menu" role="listbox" aria-label="Categories">
+          <div className="category-dropdown-options">
+            {!categoryOptions.length && <span className="category-dropdown-empty">No categories yet</span>}
+            {categoryOptions.map((category) => (
+              <button
+                key={category}
+                className={category === value ? "active" : ""}
+                type="button"
+                role="option"
+                aria-selected={category === value}
+                onClick={() => chooseCategory(category)}
+              >
+                <span>{category}</span>
+                {category === value && <b aria-hidden="true">✓</b>}
+              </button>
+            ))}
+          </div>
+
+          {allowAdd && (
+            <div className="category-dropdown-add">
+              {adding ? (
+                <div className="category-dropdown-add-form">
+                  <input
+                    autoFocus
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addCategory();
+                      }
+                      if (event.key === "Escape") {
+                        setAdding(false);
+                        setDraft("");
+                      }
+                    }}
+                    placeholder="New category"
+                    aria-label="New category name"
+                  />
+                  <button type="button" onClick={addCategory} disabled={!draft.trim()}>Add</button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setAdding(true)}>+ Add category</button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function shiftDisplayName(value) {
+  return shiftOptions.find((shift) => shift.value === value)?.label || value || "—";
 }
 
 function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("en-PH", {
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-PH", {
     year: "numeric",
     month: "short",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false
-  });
+    hour12: false,
+    timeZone: APP_TIME_ZONE,
+  }).format(date);
 }
 
-function cx(...classes) {
-  return classes.filter(Boolean).join(" ");
+function formatNumber(value, decimals = 2) {
+  if (value === null || value === undefined || value === "") return "—";
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return String(value);
+  return numberValue.toFixed(decimals);
 }
 
-function getVisitSessionId() {
-  let sessionId = sessionStorage.getItem(VISIT_SESSION_KEY);
-  if (!sessionId) {
-    sessionId = globalThis.crypto?.randomUUID?.() || `visit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    sessionStorage.setItem(VISIT_SESSION_KEY, sessionId);
-  }
-  return sessionId;
-}
+function splitFieldOptions(value) {
+  const source = Array.isArray(value) ? value : String(value || "").split(/[\n,|;]+/);
+  const output = [];
+  const seen = new Set();
 
-function parseQrText(text) {
-  const raw = String(text || "").trim();
-  if (!raw) return "";
-
-  try {
-    const url = new URL(raw);
-    const parts = url.pathname.split("/").filter(Boolean);
-    const itemIndex = parts.findIndex((part) => part.toLowerCase() === "item");
-    if (itemIndex !== -1 && parts[itemIndex + 1]) return decodeURIComponent(parts[itemIndex + 1]);
-  } catch {
-    // Normal QR-ID text is still valid.
+  for (const item of source) {
+    const option = String(item || "").trim();
+    const key = option.toLowerCase();
+    if (!option || seen.has(key)) continue;
+    seen.add(key);
+    output.push(option);
   }
 
-  if (raw.startsWith("POWERTOOL:")) return raw.replace("POWERTOOL:", "").trim();
-  if (raw.startsWith("MACHINEQR:")) return raw.replace("MACHINEQR:", "").trim();
-  if (raw.startsWith("QR-")) return raw;
-  return raw;
+  return output.slice(0, 40);
 }
 
-function StatCard({ icon: Icon, label, value, tone = "default", active = false, onClick, badge = 0 }) {
-  const finalBadge = Number(badge || 0);
-  const cardContent = (
-    <>
-      <div className="stat-icon"><Icon size={15} /></div>
-      <div className="stat-text">
-        <p>{label}</p>
-        <strong>{value}</strong>
-      </div>
-      {finalBadge > 0 && <span className="notif-badge">{finalBadge > 99 ? "99+" : finalBadge}</span>}
-    </>
-  );
+function optionsToText(options) {
+  return splitFieldOptions(options).join("\n");
+}
 
-  if (onClick) {
-    return (
-      <button type="button" className={cx("stat-card", "clickable", `tone-${tone}`, active && "active")} onClick={onClick}>
-        {cardContent}
-      </button>
-    );
+function normalizeMachinePrefix(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function stripMachinePrefixLabel(label, machineName) {
+  const raw = String(label || "").trim();
+  const prefix = normalizeMachinePrefix(machineName);
+  if (!raw || !prefix) return raw;
+  const normalized = normalizeMachinePrefix(raw);
+  if (!normalized.startsWith(prefix) || normalized === prefix) return raw;
+
+  const suffixNormalized = normalized.slice(prefix.length);
+  const suffixStart = raw.search(new RegExp(suffixNormalized.split("").map((char) => `${char}[^a-zA-Z0-9]*`).join(""), "i"));
+  if (suffixStart >= 0) {
+    const suffix = raw.slice(suffixStart).replace(/^[\s_\-:]+/, "").trim();
+    if (suffix) return suffix;
   }
 
-  return <section className={cx("stat-card", `tone-${tone}`)}>{cardContent}</section>;
+  return raw.replace(new RegExp(`^${String(machineName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\s_\-:]*`, "i"), "").trim() || raw;
 }
 
-function StatusBadge({ validity, status }) {
-  const finalStatus = status || validity?.status || "unknown";
-  const labels = {
-    valid: "Good",
-    expired: "Expired",
-    archived: "Archived",
-    approved: "Accepted",
-    accepted: "Accepted",
-    rejected: "Rejected",
-    pending: "Pending"
+function normalizeVariableKey(value, fallback = "variable") {
+  const cleaned = String(value || "").trim().replace(/[^a-zA-Z0-9_\-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned || fallback;
+}
+
+function makeFieldIdFromLabel(label, existingFields = []) {
+  const base = normalizeVariableKey(label, "variable");
+  const seen = new Set((existingFields || []).map((field) => String(field.id)));
+  if (!seen.has(base)) return base;
+  let index = 2;
+  while (seen.has(`${base}_${index}`)) index += 1;
+  return `${base}_${index}`;
+}
+
+function visibleVariableName(field, machineName = "") {
+  return stripMachinePrefixLabel(field?.label || field?.id || "Variable", machineName) || "Variable";
+}
+
+function makeCalloutForField(field, index = 0) {
+  return {
+    id: `callout-${field.id || index}`,
+    title: field.label || `Variable ${index + 1}`,
+    valueKey: field.id,
+    cardX: Math.min(88, 18 + (index % 4) * 18),
+    cardY: Math.min(88, 18 + Math.floor(index / 4) * 16),
+    pointX: 50,
+    pointY: 50,
+    x: 50,
+    y: 50,
   };
-  return <span className={cx("status-badge", finalStatus)}>{labels[finalStatus] || finalStatus}</span>;
 }
 
-function qrDownloadName({ itemCode, itemName, qrId, referenceId } = {}) {
-  const safeName = String(itemCode || itemName || referenceId || qrId || "qr-code")
-    .trim()
-    .replace(/[^a-z0-9-_]+/gi, "-")
-    .replace(/(^-|-$)/g, "") || "qr-code";
-  return `${safeName}-qr.svg`;
-}
+function normalizeFields(fields) {
+  if (!Array.isArray(fields) || !fields.length) return [];
+  return fields.map((field, index) => {
+    const type = ["text", "number", "textarea", "image", "option"].includes(field.type) ? field.type : "text";
+    const options = splitFieldOptions(field.options ?? field.choices ?? field.optionValues ?? field.optionsText);
 
-function DownloadQrLink({ qrImageDataUrl, itemCode, itemName, qrId, referenceId, className = "ghost-btn tiny" }) {
-  if (!qrImageDataUrl) return null;
-  return (
-    <a className={className} href={qrImageDataUrl} download={qrDownloadName({ itemCode, itemName, qrId, referenceId })}>
-      <Download size={14} /> Download QR
-    </a>
-  );
-}
-
-async function imageFileToDataUrl(file) {
-  const raw = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+    return {
+      id: field.id || uid(`field-${index}`),
+      label: field.label || `Field ${index + 1}`,
+      type,
+      options: type === "option" ? (options.length ? options : ["Yes", "No"]) : options,
+      optionsText: type === "option" ? optionsToText(options.length ? options : ["Yes", "No"]) : optionsToText(options),
+      aiTarget: field.aiTarget ?? field.ai_target ?? field.target ?? "",
+      required: Boolean(field.required),
+      showOnPointMap: field.showOnPointMap !== false,
+      mapsTo: field.mapsTo || "custom",
+      thresholdEnabled: Boolean(field.thresholdEnabled || field.threshold_enabled),
+      threshold_min: field.threshold_min ?? field.thresholdMin ?? "",
+      threshold_max: field.threshold_max ?? field.thresholdMax ?? "",
+    };
   });
-
-  const image = await new Promise((resolve, reject) => {
-    const next = new Image();
-    next.onload = () => resolve(next);
-    next.onerror = reject;
-    next.src = raw;
-  });
-
-  const maxDimension = 1600;
-  const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-  const context = canvas.getContext("2d");
-  if (!context) return raw;
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "high";
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.82);
 }
 
-function recordImages(record) {
-  const images = Array.isArray(record?.toolImages)
-    ? record.toolImages
-    : (record?.toolImage ? [record.toolImage] : []);
-  return images.filter(Boolean);
+function clampPercent(value, fallback = 50, min = 3, max = 97) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return fallback;
+  return Math.max(min, Math.min(max, numberValue));
 }
 
-function MultiImageInput({ images = [], onChange }) {
-  const [busy, setBusy] = useState(false);
-
-  async function addImages(event) {
-    const files = [...(event.target.files || [])];
-    event.target.value = "";
-    if (!files.length) return;
-    if (images.length + files.length > 8) {
-      alert("You can upload up to 8 equipment images.");
-      return;
-    }
-    if (files.some((file) => !file.type.startsWith("image/"))) {
-      alert("Please select image files only.");
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const uploaded = [];
-      for (const file of files) uploaded.push(await imageFileToDataUrl(file));
-      onChange([...images, ...uploaded]);
-    } catch {
-      alert("One of the selected images could not be read.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function removeImage(index) {
-    onChange(images.filter((_, imageIndex) => imageIndex !== index));
-  }
-
-  return (
-    <div className="multi-image-input">
-      <div className="image-upload-row">
-        <label className="secondary-btn small image-upload-button">
-          <Images size={15} /> {busy ? "Adding..." : images.length ? "Add more images" : "Add images"}
-          <input type="file" accept="image/*" capture="environment" multiple disabled={busy} onChange={addImages} />
-        </label>
-        <span>{images.length}/8 image(s)</span>
-      </div>
-      {images.length > 0 && (
-        <div className="image-upload-grid">
-          {images.map((image, index) => (
-            <div key={`${image.slice(-24)}-${index}`} className="image-upload-preview">
-              <img src={image} alt={`Equipment ${index + 1}`} />
-              <button type="button" onClick={() => removeImage(index)}>Remove</button>
-              {index === 0 && <small>Primary</small>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ToolImageGallery({ record }) {
-  const images = recordImages(record);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [showMore, setShowMore] = useState(false);
-
-  useEffect(() => {
-    setActiveIndex(0);
-    setShowMore(false);
-  }, [record?.id]);
-
-  if (!images.length) return null;
-
-  return (
-    <div className="details-list tool-photo-panel">
-      <div className="tool-photo-heading">
-        <h3>Tool image</h3>
-        {images.length > 1 && (
-          <button type="button" className="secondary-btn tiny" onClick={() => setShowMore((current) => !current)}>
-            <Images size={14} /> {showMore ? "Hide images" : `More images (${images.length - 1})`}
-          </button>
-        )}
-      </div>
-      <img src={images[activeIndex]} alt={`${record.itemName} image ${activeIndex + 1}`} className="tool-photo" />
-      {showMore && (
-        <div className="tool-photo-thumbnails">
-          {images.map((image, index) => (
-            <button type="button" key={`${image.slice(-24)}-${index}`} className={cx(index === activeIndex && "active")} onClick={() => setActiveIndex(index)}>
-              <img src={image} alt={`Show equipment image ${index + 1}`} />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FieldInput({ field, value, onChange }) {
-  if (field.type === "image") {
-    async function handleFile(event) {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      if (!file.type.startsWith("image/")) {
-        alert("Please select an image file.");
-        event.target.value = "";
-        return;
-      }
-      try {
-        onChange(field.id, await imageFileToDataUrl(file));
-      } catch {
-        alert("The selected image could not be read.");
-      }
-    }
-
-    return (
-      <div className="image-input-box">
-        {value ? <img src={value} alt={field.label} className="image-preview" /> : <div className="image-placeholder">No image</div>}
-        <div className="image-input-actions">
-          <input id={field.id} type="file" accept="image/*" capture="environment" required={field.required && !value} onChange={handleFile} />
-          {value && <button type="button" className="ghost-btn tiny" onClick={() => onChange(field.id, "")}>Remove</button>}
-        </div>
-      </div>
-    );
-  }
-
-  const commonProps = {
-    id: field.id,
-    value: value ?? "",
-    required: field.required,
-    placeholder: field.placeholder || field.label,
-    onChange: (event) => onChange(field.id, event.target.value)
+function getCalloutPoint(callout) {
+  const oldX = callout?.x;
+  const oldY = callout?.y;
+  return {
+    x: clampPercent(callout?.pointX ?? oldX, 50),
+    y: clampPercent(callout?.pointY ?? oldY, 50, 6, 94),
   };
-
-  if (field.type === "textarea") return <textarea {...commonProps} rows={2} />;
-
-  if (field.type === "select") {
-    return (
-      <select {...commonProps}>
-        <option value="">Select {field.label}</option>
-        {(field.options || []).map((option) => <option key={option} value={option}>{option}</option>)}
-      </select>
-    );
-  }
-
-  if (field.type === "radio" || field.type === "yesno") {
-    const options = field.type === "yesno" ? ["Yes", "No"] : (field.options || []);
-    return (
-      <div className="answer-options" role="radiogroup" aria-label={field.label}>
-        {options.map((option) => (
-          <label key={option} className="answer-option">
-            <input
-              type="radio"
-              name={field.id}
-              value={option}
-              checked={value === option}
-              required={field.required}
-              onChange={(event) => onChange(field.id, event.target.value)}
-            />
-            <span>{option}</span>
-          </label>
-        ))}
-      </div>
-    );
-  }
-
-  if (field.type === "checkboxes") {
-    const selected = Array.isArray(value) ? value : [];
-    return (
-      <div className="answer-options" aria-label={field.label}>
-        {(field.options || []).map((option) => (
-          <label key={option} className="answer-option">
-            <input
-              type="checkbox"
-              value={option}
-              checked={selected.includes(option)}
-              onChange={(event) => {
-                const next = event.target.checked
-                  ? [...selected, option]
-                  : selected.filter((entry) => entry !== option);
-                onChange(field.id, next);
-              }}
-            />
-            <span>{option}</span>
-          </label>
-        ))}
-      </div>
-    );
-  }
-
-  return <input {...commonProps} type={field.type || "text"} />;
 }
 
-function FieldRows({ fields = [], values = {}, compact = false }) {
-  const knownRows = (fields || []).map((field) => ({
-    id: field.id,
-    label: field.label,
-    type: field.type,
-    value: values?.[field.id]
-  }));
-  const knownIds = new Set(knownRows.map((row) => row.id));
-  const extraRows = Object.entries(values || {})
-    .filter(([key]) => !knownIds.has(key))
-    .map(([key, value]) => ({ id: key, label: key.replace(/^field-/, "").replaceAll("-", " "), value }));
-
-  const rows = [...knownRows, ...extraRows];
-  if (rows.length === 0) return <p className="muted">No extra details submitted.</p>;
-
-  return (
-    <div className={compact ? "detail-lines compact" : "details-lines-full"}>
-      {rows.map((row) => {
-        const isImage = row.type === "image" && row.value;
-        return (
-          <div key={row.id} className={cx(compact ? undefined : "detail-line", isImage && "image-line")}>
-            <span>{row.label}</span>
-            {isImage ? (
-              <img src={row.value} alt={row.label} className="stored-image" />
-            ) : (
-              <strong>{row.type === "date" ? formatDate(row.value) : (Array.isArray(row.value) ? (row.value.join(", ") || "—") : (row.value || "—"))}</strong>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
+function getCalloutCard(callout) {
+  const point = getCalloutPoint(callout);
+  const fallbackX = point.x < 50 ? Math.max(8, point.x - 20) : Math.min(92, point.x + 20);
+  const fallbackY = point.y;
+  return {
+    x: clampPercent(callout?.cardX, fallbackX, 5, 95),
+    y: clampPercent(callout?.cardY, fallbackY, 8, 92),
+  };
 }
 
-function ReviewAnswerSummary({ questions = [], answers = {} }) {
-  if (!questions.length) return <p className="muted">No review questions were configured for this tool type.</p>;
-  return (
-    <div className="review-answer-summary">
-      {questions.map((question, index) => {
-        const rawAnswer = answers?.[question.id];
-        const answer = Array.isArray(rawAnswer) ? rawAnswer.join(", ") : rawAnswer;
-        return (
-          <div key={question.id || index} className="review-answer-chip">
-            <strong>{question.label}</strong>
-            <span>{answer || "—"}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ReviewerFeedback({ note, reviewedBy, reviewedAt, label = "Reviewer feedback" }) {
-  return (
-    <div className="review-feedback">
-      <div>
-        <strong>{label}</strong>
-        <span>{note || "No feedback was added."}</span>
-      </div>
-      {(reviewedBy || reviewedAt) && (
-        <small>
-          {reviewedBy ? `By ${reviewedBy}` : ""}
-          {reviewedBy && reviewedAt ? " • " : ""}
-          {reviewedAt ? formatDateTime(reviewedAt) : ""}
-        </small>
-      )}
-    </div>
-  );
-}
-
-function EmptyState({ icon: Icon = ClipboardList, title, message }) {
-  return (
-    <div className="empty-state">
-      <Icon size={30} />
-      <h3>{title}</h3>
-      <p>{message}</p>
-    </div>
-  );
-}
-
-function UserHome({ onPick }) {
-  return (
-    <main className="choice-page">
-      <div className="choice-grid">
-        <button className="choice-card" onClick={() => onPick("register")}>
-          <PackageCheck size={26} />
-          <strong>Register tool</strong>
-          <span>Add an ELC or Portable Tools item.</span>
-        </button>
-        <button className="choice-card" onClick={() => onPick("followup")}>
-          <ScanLine size={26} />
-          <strong>Follow up</strong>
-          <span>Scan QR or check reference.</span>
-        </button>
-      </div>
-    </main>
-  );
-}
-
-function UserRegister({ categories, onCreated, onBack }) {
-  const [form, setForm] = useState({
-    itemName: "",
-    site: SITE_OPTIONS[0],
-    submittedBy: "",
-    categoryId: categories[0]?.id || "",
-    toolImages: [],
-    detailValues: {}
+function normalizeCallouts(callouts) {
+  const source = Array.isArray(callouts) && callouts.length ? callouts : [];
+  return source.map((callout, index) => {
+    const point = getCalloutPoint(callout);
+    const card = getCalloutCard({ ...callout, pointX: point.x, pointY: point.y });
+    return {
+      id: callout.id || uid(`callout-${index}`),
+      title: callout.title || `Callout ${index + 1}`,
+      valueKey: callout.valueKey || "reading_value",
+      pointX: point.x,
+      pointY: point.y,
+      cardX: card.x,
+      cardY: card.y,
+      x: point.x,
+      y: point.y,
+    };
   });
-  const [message, setMessage] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!form.categoryId && categories[0]?.id) {
-      setForm((current) => ({ ...current, categoryId: categories[0].id }));
-    }
-  }, [categories, form.categoryId]);
-
-  const category = categories.find((entry) => entry.id === form.categoryId);
-
-  function updateBase(key, value) {
-    setForm((current) => ({ ...current, [key]: value }));
-  }
-
-  function updateDetailValue(fieldId, value) {
-    setForm((current) => ({ ...current, detailValues: { ...current.detailValues, [fieldId]: value } }));
-  }
-
-  async function submit(event) {
-    event.preventDefault();
-    setBusy(true);
-    setMessage(null);
-    try {
-      const created = await api.createRequest(form);
-      setMessage({
-        type: "success",
-        text: `Request submitted. Save this reference ID: ${created.referenceId}` ,
-        referenceId: created.referenceId
-      });
-      setForm({
-        itemName: "",
-        site: form.site || SITE_OPTIONS[0],
-        submittedBy: "",
-        categoryId: form.categoryId,
-        toolImages: [],
-        detailValues: {}
-      });
-      onCreated?.();
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <main className="single-page tight-page">
-      <section className="panel form-panel compact-panel">
-        <div className="panel-heading compact-heading">
-          <div>
-            <p className="eyebrow">User</p>
-            <h2>Register equipment</h2>
-          </div>
-          <button type="button" className="ghost-btn small" onClick={onBack}>Back</button>
-        </div>
-
-        {message && (
-          <div className={cx("notice", message.type)}>
-            <span>{message.text}</span>
-            {message.referenceId && <strong className="reference-chip">{message.referenceId}</strong>}
-          </div>
-        )}
-
-        <form onSubmit={submit} className="stack-form compact-form">
-          <div className="form-row two">
-            <label>
-              Equipment Name <span>*</span>
-              <input value={form.itemName} onChange={(event) => updateBase("itemName", event.target.value)} required placeholder="Equipment name" />
-            </label>
-            <label>
-              Site <span>*</span>
-              <select value={form.site} onChange={(event) => updateBase("site", event.target.value)} required>
-                {SITE_OPTIONS.map((site) => <option key={site} value={site}>{site}</option>)}
-              </select>
-            </label>
-            <label>
-              Submitted by <span>*</span>
-              <input value={form.submittedBy} onChange={(event) => updateBase("submittedBy", event.target.value)} placeholder="Name / team" required />
-            </label>
-          </div>
-
-          <label>
-            Tool type <span>*</span>
-            <select value={form.categoryId} onChange={(event) => updateBase("categoryId", event.target.value)} required>
-              {categories.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-            </select>
-          </label>
-
-          <div className="dynamic-card tool-image-card">
-            <div className="dynamic-head">
-              <strong>Tool images</strong>
-              <span>Add up to 8 images</span>
-            </div>
-            <MultiImageInput images={form.toolImages} onChange={(toolImages) => updateBase("toolImages", toolImages)} />
-          </div>
-
-          {(category?.detailFields || []).length > 0 && (
-            <div className="dynamic-card equipment-details-card">
-              <div className="dynamic-head">
-                <div>
-                  <strong>{category.name} details</strong>
-                  <small>Configured by the Admin</small>
-                </div>
-                <ClipboardList size={18} />
-              </div>
-              <div className="dynamic-fields-grid">
-                {(category.detailFields || []).map((field) => (
-                  <label key={field.id} className={cx("dynamic-field", ["textarea", "image"].includes(field.type) && "wide")}>
-                    {field.label} {field.required && <span>*</span>}
-                    <FieldInput field={field} value={form.detailValues[field.id]} onChange={updateDetailValue} />
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <button className="primary-btn" disabled={busy}>{busy ? "Submitting..." : "Submit request"}</button>
-        </form>
-      </section>
-    </main>
-  );
 }
 
-function ScanPage({ onOpenItem, onBack }) {
-  const [lookupText, setLookupText] = useState("");
-  const [error, setError] = useState("");
-  const [referenceResult, setReferenceResult] = useState(null);
+function calloutLine(callout) {
+  const point = getCalloutPoint(callout);
+  const card = getCalloutCard(callout);
+  return { point, card };
+}
+
+function recordDateKey(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-CA", { timeZone: APP_TIME_ZONE });
+}
+
+function summarizeRecords(records = []) {
+  const operatorSet = new Set();
+  let savouryCount = 0;
+  let dressingsCount = 0;
+  for (const record of records) {
+    if (record.operator_name) operatorSet.add(String(record.operator_name).trim().toLowerCase());
+    const site = String(record.site_name || "").trim().toLowerCase();
+    if (site === "savoury") savouryCount += 1;
+    if (site === "dressings") dressingsCount += 1;
+  }
+  return {
+    total_submissions: records.length,
+    unique_operators: operatorSet.size,
+    savoury_count: savouryCount,
+    dressings_count: dressingsCount,
+  };
+}
+
+export async function fetchJson(url, options = {}) {
+  const response = await fetch(url, {
+    cache: "no-store",
+    ...options,
+    headers: {
+      Accept: "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) throw new Error(data.error || `Request failed: ${response.status}`);
+  return data;
+}
+
+function userDisplayName(user) {
+  return user?.operator_name || user?.name || "Operator";
+}
+
+function userSite(user) {
+  return user?.site_name || "Savoury";
+}
+
+function userRole(user) {
+  return user?.role_name || "operator";
+}
+
+function isAdminUser(user) {
+  return userRole(user) === "admin";
+}
+
+function canAccessPage(user, page, standalone = false) {
+  if (standalone || !user) return ["auth", "register", "machine", "trends"].includes(page);
+  if (isAdminUser(user)) return true;
+  return ["record", "machine", "trends"].includes(page);
+}
+
+function valueFromRecord(record, key, summary) {
+  if (!record && key !== "total_submissions") return "—";
+  if (key === "total_submissions") return summary?.total_submissions ?? 0;
+  if (key === "machine_name") return record?.machine_name || "Waiting";
+  if (key === "site_name") return record?.site_name || "—";
+  if (key === "operator_name") return record?.operator_name || "No operator";
+  if (key === "shift_name") return shiftDisplayName(record?.shift_name);
+  if (key === "record_timestamp") return formatDateTime(record?.record_timestamp);
+  if (key === "reading_value") return formatNumber(record?.reading_value);
+  if (key === "product") return record?.product || "—";
+  if (key === "batch_number") return record?.batch_number || "—";
+  if (key === "remarks") return record?.remarks || "—";
+  const extra = record?.response_fields || {};
+  const value = extra[key];
+  return value === undefined || value === null || value === "" ? "—" : String(value);
+}
+
+function getMachineReadingThresholds(machine) {
+  if (!machine) return { thresholdMin: null, thresholdMax: null };
+  const fields = normalizeFields(machine.fields);
+  const readingField =
+    fields.find((field) => field.mapsTo === "reading_value") ||
+    fields.find((field) => field.id === "reading_value") ||
+    fields.find((field) => field.type === "number" && field.thresholdEnabled);
+  const fieldLimitsEnabled = readingField?.thresholdEnabled && readingField?.type === "number";
+  const minSource = fieldLimitsEnabled ? readingField.threshold_min : machine.threshold_min;
+  const maxSource = fieldLimitsEnabled ? readingField.threshold_max : machine.threshold_max;
+  const min = minSource === "" || minSource === null || minSource === undefined ? null : Number(minSource);
+  const max = maxSource === "" || maxSource === null || maxSource === undefined ? null : Number(maxSource);
+  return {
+    thresholdMin: Number.isFinite(min) ? min : null,
+    thresholdMax: Number.isFinite(max) ? max : null,
+  };
+}
+
+function slugText(value = "") {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function makeAutoFieldId(label, fields = [], selfId = "") {
+  const base = normalizeVariableKey(label, "variable");
+  const existing = new Set((fields || []).filter((field) => String(field.id) !== String(selfId)).map((field) => String(field.id)));
+  if (!existing.has(base)) return base;
+  let index = 2;
+  while (existing.has(`${base}_${index}`)) index += 1;
+  return `${base}_${index}`;
+}
+
+function valueFromRecordField(record, field) {
+  if (!record || !field) return "";
+  const responseFields = record.response_fields && typeof record.response_fields === "object" ? record.response_fields : {};
+  if (Object.prototype.hasOwnProperty.call(responseFields, field.id)) return responseFields[field.id];
+  if (field.mapsTo === "reading_value") return record.reading_value;
+  if (field.mapsTo === "product") return record.product;
+  if (field.mapsTo === "batch_number") return record.batch_number;
+  if (field.mapsTo === "remarks") return record.remarks;
+  return responseFields[field.id];
+}
+
+function numericValueFromField(record, field) {
+  const value = valueFromRecordField(record, field);
+  if (value === null || value === undefined || value === "") return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function normalizedPersonName(value = "") {
+  return String(value || "").trim().toLowerCase();
+}
+
+function recordMatchesMachine(record, machine) {
+  if (!record || !machine) return false;
+
+  const recordMachineId = record.machine_config_id;
+  if (
+    recordMachineId !== null
+    && recordMachineId !== undefined
+    && recordMachineId !== ""
+    && String(recordMachineId) === String(machine.id)
+  ) {
+    return true;
+  }
+
+  const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
+  const machineName = String(machine.machine_name || "").trim().toLowerCase();
+  return Boolean(recordMachineName && machineName && recordMachineName === machineName);
+}
+
+function numericTrendFieldsForMachine(machine, records = []) {
+  const fields = normalizeFields(machine?.fields).filter((field) => field.type === "number");
+  return fields.filter((field) => records.some((record) => numericValueFromField(record, field) !== null));
+}
+
+function trendFieldKey(field, machineName = "") {
+  return slugText(visibleVariableName(field, machineName) || field?.label || field?.id || "");
+}
+
+function trendOptionsForMachines(machines = []) {
+  const options = new Map();
+
+  for (const machine of machines) {
+    for (const field of normalizeFields(machine?.fields).filter((item) => item.type === "number")) {
+      const value = trendFieldKey(field, machine?.machine_name);
+      const label = visibleVariableName(field, machine?.machine_name) || field.label || field.id;
+      if (value && !options.has(value)) options.set(value, { value, label });
+    }
+  }
+
+  return [...options.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function buildTrendDataFromRecords(machine, records = [], selectedDetail = "") {
+  const sorted = [...records].sort((a, b) => new Date(a.record_timestamp).getTime() - new Date(b.record_timestamp).getTime() || Number(a.id || 0) - Number(b.id || 0));
+  const configuredFields = normalizeFields(machine?.fields).filter((item) => item.type === "number");
+  const numericFields = numericTrendFieldsForMachine(machine, sorted);
+  const field = selectedDetail
+    ? configuredFields.find((item) => trendFieldKey(item, machine?.machine_name) === selectedDetail || slugText(item.id) === selectedDetail) || null
+    : numericFields[0] || configuredFields[0] || null;
+  if (!field) {
+    return {
+      field: null,
+      trends: [],
+      warnings: [],
+      stats: { points: 0, warning_count: 0, latest_status: "no-data", min_reading: null, max_reading: null, avg_reading: null, threshold_min: null, threshold_max: null },
+    };
+  }
+
+  const thresholdMin = field.thresholdEnabled && field.threshold_min !== "" ? Number(field.threshold_min) : null;
+  const thresholdMax = field.thresholdEnabled && field.threshold_max !== "" ? Number(field.threshold_max) : null;
+  const safeMin = Number.isFinite(thresholdMin) ? thresholdMin : null;
+  const safeMax = Number.isFinite(thresholdMax) ? thresholdMax : null;
+  const trends = sorted.map((record) => {
+    const reading = numericValueFromField(record, field);
+    const below = Number.isFinite(reading) && Number.isFinite(safeMin) && reading < safeMin;
+    const above = Number.isFinite(reading) && Number.isFinite(safeMax) && reading > safeMax;
+    return {
+      ...record,
+      reading_value: reading,
+      trend_field_id: field.id,
+      trend_field_label: field.label,
+      threshold_min: safeMin,
+      threshold_max: safeMax,
+      warning_status: below ? "below" : above ? "above" : Number.isFinite(reading) ? "normal" : "no-reading",
+      warning_message: below ? `Below limit: ${reading} < ${safeMin}` : above ? `Above limit: ${reading} > ${safeMax}` : "",
+    };
+  });
+  const numericRows = trends.filter((row) => (
+    row.reading_value !== null
+    && row.reading_value !== undefined
+    && row.reading_value !== ""
+    && Number.isFinite(Number(row.reading_value))
+  ));
+  const numericValues = numericRows.map((row) => Number(row.reading_value));
+  const warnings = trends.filter((row) => row.warning_status === "below" || row.warning_status === "above");
+  return {
+    field,
+    trends,
+    warnings,
+    stats: {
+      points: trends.length,
+      numeric_points: numericValues.length,
+      warning_count: warnings.length,
+      latest_status: numericRows[numericRows.length - 1]?.warning_status || "no-data",
+      min_reading: numericValues.length ? Math.min(...numericValues) : null,
+      max_reading: numericValues.length ? Math.max(...numericValues) : null,
+      avg_reading: numericValues.length ? numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length : null,
+      threshold_min: safeMin,
+      threshold_max: safeMax,
+    },
+  };
+}
+
+function variableToneClass(label = "") {
+  const name = String(label).toLowerCase();
+  if (name.includes("temp")) return "tone-temperature";
+  if (name.includes("status")) return "tone-status";
+  if (name.includes("mode")) return "tone-mode";
+  if (name.includes("image") || name.includes("photo")) return "tone-image";
+  if (name.includes("parameter")) return "tone-parameter";
+  return "tone-default";
+}
+
+function NativePhotoModal({
+  title = "Take Photo",
+  description,
+  capture = "environment",
+  onClose,
+  onPhoto,
+}) {
+  const inputRef = useRef(null);
+  const openedRef = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [imageBusy, setImageBusy] = useState(false);
-  const [scanPreview, setScanPreview] = useState(null);
-  const isMobileDevice = useMemo(() => {
-    if (typeof navigator === "undefined") return false;
-    const ua = navigator.userAgent || "";
-    const platform = navigator.platform || "";
-    const iPadLike = platform === "MacIntel" && Number(navigator.maxTouchPoints || 0) > 1;
-    return iPadLike || /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua);
-  }, []);
+  const [status, setStatus] = useState("Open the camera or choose an image.");
+  const [previewUrl, setPreviewUrl] = useState("");
 
-  useEffect(() => {
-    return () => {
-      if (scanPreview?.url) URL.revokeObjectURL(scanPreview.url);
-    };
-  }, [scanPreview?.url]);
-
-  async function openItemFromDecodedText(decodedText, delayMs = 0) {
-    const qrId = parseQrText(decodedText);
-    if (!qrId) throw new Error("No QR text was found.");
-    setLookupText(qrId);
-    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    onOpenItem(qrId);
+  function openPicker() {
+    if (!busy) inputRef.current?.click();
   }
 
-  function pickLargestBox(boxes = []) {
-    return [...boxes].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0] || null;
-  }
-
-  function boxFromQrLocation(location) {
-    if (!location) return null;
-    const points = [
-      location.topLeftCorner,
-      location.topRightCorner,
-      location.bottomRightCorner,
-      location.bottomLeftCorner,
-      location.topLeftFinderPattern,
-      location.topRightFinderPattern,
-      location.bottomLeftFinderPattern
-    ].filter(Boolean);
-
-    if (!points.length) return null;
-
-    const xs = points.map((point) => point.x).filter((value) => Number.isFinite(value));
-    const ys = points.map((point) => point.y).filter((value) => Number.isFinite(value));
-    if (!xs.length || !ys.length) return null;
-
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-
-    return {
-      x: minX,
-      y: minY,
-      width: Math.max(1, maxX - minX),
-      height: Math.max(1, maxY - minY)
-    };
-  }
-
-  async function loadImageElement(file) {
-    const objectUrl = URL.createObjectURL(file);
-    const image = new Image();
-    image.decoding = "async";
-
-    try {
-      await new Promise((resolve, reject) => {
-        image.onload = resolve;
-        image.onerror = reject;
-        image.src = objectUrl;
-      });
-
-      const naturalWidth = image.naturalWidth || image.width;
-      const naturalHeight = image.naturalHeight || image.height;
-      if (!naturalWidth || !naturalHeight) throw new Error("Could not read image size.");
-
-      return { image, naturalWidth, naturalHeight, objectUrl };
-    } catch (err) {
-      URL.revokeObjectURL(objectUrl);
-      throw err;
-    }
-  }
-
-  function getCanvasDataFromImage(image, sourceSize, crop, maxDimension = 2400) {
-    const scale = Math.min(1, maxDimension / Math.max(crop.sw, crop.sh));
-    const width = Math.max(1, Math.round(crop.sw * scale));
-    const height = Math.max(1, Math.round(crop.sh * scale));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("Could not read image pixels.");
-
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    context.drawImage(image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
-
-    return {
-      imageData: context.getImageData(0, 0, width, height),
-      canvasSize: { width, height },
-      imageSize: sourceSize,
-      crop
-    };
-  }
-
-  function getPercentileFromHistogram(histogram, total, percentile) {
-    const target = Math.max(0, Math.min(total - 1, Math.floor(total * percentile)));
-    let cumulative = 0;
-    for (let value = 0; value < histogram.length; value += 1) {
-      cumulative += histogram[value];
-      if (cumulative > target) return value;
-    }
-    return 255;
-  }
-
-  function getOtsuThreshold(histogram, total) {
-    let sum = 0;
-    for (let i = 0; i < 256; i += 1) sum += i * histogram[i];
-
-    let sumBackground = 0;
-    let weightBackground = 0;
-    let bestVariance = -1;
-    let threshold = 128;
-
-    for (let i = 0; i < 256; i += 1) {
-      weightBackground += histogram[i];
-      if (!weightBackground) continue;
-
-      const weightForeground = total - weightBackground;
-      if (!weightForeground) break;
-
-      sumBackground += i * histogram[i];
-      const meanBackground = sumBackground / weightBackground;
-      const meanForeground = (sum - sumBackground) / weightForeground;
-      const variance = weightBackground * weightForeground * ((meanBackground - meanForeground) ** 2);
-
-      if (variance > bestVariance) {
-        bestVariance = variance;
-        threshold = i;
-      }
-    }
-
-    return threshold;
-  }
-
-  function enhanceImageData(imageData, mode) {
-    if (mode === "normal") return imageData;
-
-    const { width, height, data } = imageData;
-    const output = new Uint8ClampedArray(data.length);
-    const histogram = new Array(256).fill(0);
-    const totalPixels = width * height;
-
-    for (let index = 0; index < data.length; index += 4) {
-      const lum = Math.max(0, Math.min(255, Math.round((data[index] * 0.299) + (data[index + 1] * 0.587) + (data[index + 2] * 0.114))));
-      histogram[lum] += 1;
-    }
-
-    const low = getPercentileFromHistogram(histogram, totalPixels, 0.03);
-    const high = Math.max(low + 8, getPercentileFromHistogram(histogram, totalPixels, 0.97));
-    const threshold = getOtsuThreshold(histogram, totalPixels);
-
-    for (let index = 0; index < data.length; index += 4) {
-      const lum = Math.max(0, Math.min(255, Math.round((data[index] * 0.299) + (data[index + 1] * 0.587) + (data[index + 2] * 0.114))));
-      let value;
-
-      if (mode === "threshold") {
-        value = lum > threshold ? 255 : 0;
-      } else if (mode === "highContrast") {
-        const stretched = ((lum - low) / (high - low)) * 255;
-        value = Math.max(0, Math.min(255, Math.round(((stretched - 128) * 1.28) + 128)));
-      } else if (mode === "brightContrast") {
-        const stretched = ((lum - low) / (high - low)) * 255;
-        value = Math.max(0, Math.min(255, Math.round((stretched * 1.12) + 14)));
-      } else {
-        value = lum;
-      }
-
-      output[index] = value;
-      output[index + 1] = value;
-      output[index + 2] = value;
-      output[index + 3] = data[index + 3];
-    }
-
-    return new ImageData(output, width, height);
-  }
-
-  function translateCanvasBoxToSource(box, canvasData) {
-    if (!box) return null;
-    const { crop, canvasSize } = canvasData;
-    const scaleX = crop.sw / canvasSize.width;
-    const scaleY = crop.sh / canvasSize.height;
-
-    return {
-      x: crop.sx + (box.x * scaleX),
-      y: crop.sy + (box.y * scaleY),
-      width: Math.max(1, box.width * scaleX),
-      height: Math.max(1, box.height * scaleY)
-    };
-  }
-
-  function withTimeout(promise, ms, label = "Operation") {
-    return Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        window.setTimeout(() => reject(new Error(`${label} timed out.`)), ms);
-      })
-    ]);
-  }
-
-  function makeCropPlans(width, height) {
-    const plans = [];
-    const seen = new Set();
-    const addPlan = (name, sx, sy, sw, sh, maxDimension = 1200, modes = ["normal"]) => {
-      const safeSw = Math.min(width, Math.max(120, sw));
-      const safeSh = Math.min(height, Math.max(120, sh));
-      const safeSx = Math.max(0, Math.min(width - safeSw, sx));
-      const safeSy = Math.max(0, Math.min(height - safeSh, sy));
-      const key = [safeSx, safeSy, safeSw, safeSh].map((value) => Math.round(value / 20) * 20).join(":");
-      if (seen.has(key)) return;
-      seen.add(key);
-      plans.push({ name, sx: safeSx, sy: safeSy, sw: safeSw, sh: safeSh, maxDimension, modes });
-    };
-
-    // Keep the default scan intentionally small. Huge phone photos were making
-    // jsQR spend minutes on pixels, so we downscale and scan fewer smart regions.
-    addPlan("full", 0, 0, width, height, 1280, ["normal", "highContrast"]);
-
-    [0.78, 0.58].forEach((ratio) => {
-      const sw = width * ratio;
-      const sh = height * ratio;
-      addPlan(`center-${Math.round(ratio * 100)}`, (width - sw) / 2, (height - sh) / 2, sw, sh, 1350, ["normal", "highContrast"]);
-    });
-
-    // Quick 3x3 pass. This gives leeway when the QR is off-center without
-    // scanning dozens of expensive filtered copies.
-    const gridRatio = 0.54;
-    const gridSw = width * gridRatio;
-    const gridSh = height * gridRatio;
-    [0, 0.5, 1].forEach((xPos) => {
-      [0, 0.5, 1].forEach((yPos) => {
-        addPlan(`grid-${xPos}-${yPos}`, (width - gridSw) * xPos, (height - gridSh) * yPos, gridSw, gridSh, 1200, ["normal"]);
-      });
-    });
-
-    // One final center threshold pass helps dim photos, but keep it small.
-    const finalRatio = 0.68;
-    const finalSw = width * finalRatio;
-    const finalSh = height * finalRatio;
-    addPlan("center-threshold", (width - finalSw) / 2, (height - finalSh) / 2, finalSw, finalSh, 1250, ["threshold"]);
-
-    return plans;
-  }
-
-  function scanCanvasDataWithJsQr(jsQR, canvasData, mode = "normal") {
-    const scanData = mode === "normal" ? canvasData.imageData : enhanceImageData(canvasData.imageData, mode);
-    const result = jsQR(scanData.data, canvasData.canvasSize.width, canvasData.canvasSize.height, {
-      inversionAttempts: "attemptBoth"
-    });
-
-    if (!result?.data) return null;
-
-    const box = translateCanvasBoxToSource(boxFromQrLocation(result.location), canvasData);
-    return {
-      decodedText: result.data,
-      boxes: box ? [box] : [],
-      imageSize: canvasData.imageSize,
-      detector: mode === "normal" ? "smart-jsqr" : `smart-jsqr-${mode}`
-    };
-  }
-
-  async function trySmartJsQr(file) {
-    const { default: jsQR } = await import("jsqr");
-    const loaded = await loadImageElement(file);
-
-    try {
-      const sourceSize = { width: loaded.naturalWidth, height: loaded.naturalHeight };
-      const cropPlans = makeCropPlans(loaded.naturalWidth, loaded.naturalHeight);
-
-      for (const crop of cropPlans) {
-        const canvasData = getCanvasDataFromImage(loaded.image, sourceSize, crop, crop.maxDimension);
-        for (const mode of crop.modes || ["normal"]) {
-          const decoded = scanCanvasDataWithJsQr(jsQR, canvasData, mode);
-          if (decoded?.decodedText) return { ...decoded, detector: `${decoded.detector}-${crop.name}` };
-        }
-      }
-    } finally {
-      URL.revokeObjectURL(loaded.objectUrl);
-    }
-
-    throw new Error("No QR code detected.");
-  }
-
-  async function tryBarcodeDetector(file) {
-    if (typeof window === "undefined" || !("BarcodeDetector" in window) || typeof createImageBitmap !== "function") {
-      throw new Error("Native barcode detector is not available.");
-    }
-
-    const formats = await window.BarcodeDetector.getSupportedFormats?.().catch(() => []) || [];
-    const detector = new window.BarcodeDetector({ formats: formats.includes("qr_code") ? ["qr_code"] : undefined });
-    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => createImageBitmap(file));
-
-    try {
-      const results = await detector.detect(bitmap);
-      const qrResults = results.filter((entry) => entry.rawValue);
-      if (!qrResults.length) throw new Error("No QR code detected.");
-
-      const boxes = qrResults
-        .filter((entry) => entry.boundingBox)
-        .map((entry) => ({
-          x: entry.boundingBox.x,
-          y: entry.boundingBox.y,
-          width: entry.boundingBox.width,
-          height: entry.boundingBox.height
-        }));
-
-      const selectedBox = pickLargestBox(boxes);
-      const selected = selectedBox
-        ? qrResults.find((entry) => entry.boundingBox && entry.boundingBox.x === selectedBox.x && entry.boundingBox.y === selectedBox.y) || qrResults[0]
-        : qrResults[0];
-
-      return {
-        decodedText: selected.rawValue,
-        boxes: selectedBox ? [selectedBox] : [],
-        imageSize: { width: bitmap.width, height: bitmap.height },
-        detector: "native"
-      };
-    } finally {
-      bitmap.close?.();
-    }
-  }
-
-  async function tryHtml5QrCode(file) {
-    const { Html5Qrcode } = await import("html5-qrcode");
-    const scanner = new Html5Qrcode("qr-upload-reader", { verbose: false });
-    try {
-      const decodedText = await scanner.scanFile(file, false);
-      return { decodedText, boxes: [], imageSize: null, detector: "html5-qrcode" };
-    } finally {
-      try {
-        await scanner.clear();
-      } catch {
-        // scanFile does not always create a persistent scanner instance.
-      }
-    }
-  }
-
-  async function decodeQrFromFile(file) {
-    const errors = [];
-
-    // Native detector is fast when Chrome/Android supports it. Do not let it hang.
-    try {
-      return await withTimeout(tryBarcodeDetector(file), 1800, "Native QR scan");
-    } catch (err) {
-      errors.push(err?.message || "Native detector failed");
-    }
-
-    // Fast jsQR pass: downscaled full image + a small set of smart crops.
-    try {
-      return await withTimeout(trySmartJsQr(file), 4500, "Fast QR scan");
-    } catch (err) {
-      errors.push(err?.message || "Fast QR scan failed");
-    }
-
-    throw new Error(errors.join(" | "));
-  }
-
-  async function handleQrPhoto(event) {
+  async function handleFile(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      setError("Please take or upload an image of a QR code.");
+      setStatus("Choose an image file.");
       return;
     }
 
-    const previewUrl = URL.createObjectURL(file);
-    setError("");
-    setReferenceResult(null);
-    setImageBusy(true);
-    setScanPreview((current) => {
-      if (current?.url) URL.revokeObjectURL(current.url);
-      return {
-        url: previewUrl,
-        status: "scanning",
-        message: "Fast scanning image and smart QR crops...",
-        decodedText: "",
-        boxes: [],
-        imageSize: null,
-        detector: ""
-      };
-    });
-
     try {
-      const decoded = await decodeQrFromFile(file);
-      const qrId = parseQrText(decoded.decodedText);
-      setScanPreview((current) => ({
-        ...(current || {}),
-        url: previewUrl,
-        status: "detected",
-        message: decoded.boxes?.length
-          ? `Detected ${qrId}. Green border marks the QR used.`
-          : `Detected ${qrId}. Exact QR border is not available in this browser.`,
-        decodedText: qrId,
-        boxes: decoded.boxes || [],
-        imageSize: decoded.imageSize || null,
-        detector: decoded.detector || ""
-      }));
-      await openItemFromDecodedText(decoded.decodedText, 700);
-    } catch (err) {
-      setScanPreview((current) => ({
-        ...(current || {}),
-        url: previewUrl,
-        status: "failed",
-        message: "No readable QR code found.",
-        decodedText: "",
-        boxes: [],
-        imageSize: null,
-        detector: ""
-      }));
-      setError("Could not read it quickly. Retake with the whole QR visible and make the QR fill more of the photo, or use manual QR / Reference ID below.");
-    } finally {
-      setImageBusy(false);
-    }
-  }
-
-  async function manualSubmit(event) {
-    event.preventDefault();
-    const value = lookupText.trim();
-    const normalized = value.toUpperCase();
-    if (!value) return setError("Enter a QR ID or Reference ID first.");
-
-    setError("");
-    setReferenceResult(null);
-
-    if (normalized.startsWith("REF-")) {
       setBusy(true);
-      try {
-        const data = await api.requestByReference(normalized);
-        setReferenceResult(data);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setBusy(false);
-      }
-      return;
+      setStatus("Preparing photo...");
+      const imageDataUrl = await imageFileToCompactDataUrl(file, 1280, 1280, 0.9);
+      setPreviewUrl(imageDataUrl);
+      await onPhoto(imageDataUrl, file);
+    } catch (error) {
+      setStatus(error.message || "Could not use this photo. Try again.");
+    } finally {
+      setBusy(false);
     }
-
-    onOpenItem(parseQrText(value));
   }
 
+  useEffect(() => {
+    if (openedRef.current) return;
+    openedRef.current = true;
+    const timer = setTimeout(() => inputRef.current?.click(), 80);
+    return () => clearTimeout(timer);
+  }, []);
+
   return (
-    <main className="single-page tight-page">
-      <section className="panel scanner-panel compact-panel">
-        <div className="panel-heading compact-heading">
+    <div className="modal-backdrop native-camera-backdrop" role="dialog" aria-modal="true" aria-label={title}>
+      <section className="native-camera-modal">
+        <header className="native-camera-header">
           <div>
-            <p className="eyebrow">User</p>
-            <h2>Follow up</h2>
+            <p className="eyebrow">Photo Capture</p>
+            <h2>{title}</h2>
+            {description && <p>{description}</p>}
           </div>
-          <button type="button" className="ghost-btn small" onClick={onBack}>Back</button>
-        </div>
+          <button className="icon-button" type="button" onClick={onClose} disabled={busy} aria-label="Close">×</button>
+        </header>
 
-        {error && <div className="notice error">{error}</div>}
-
-        <div className="scanner-box capture-box">
-          {scanPreview?.url ? (
-            <div className={cx("scan-preview", scanPreview.status)}>
-              <img src={scanPreview.url} alt="QR scan preview" />
-              {scanPreview.boxes?.length > 0 && scanPreview.imageSize ? (
-                scanPreview.boxes.map((box, index) => (
-                  <span
-                    key={`${box.x}-${box.y}-${index}`}
-                    className="scan-detected-box"
-                    style={{
-                      left: `${(box.x / scanPreview.imageSize.width) * 100}%`,
-                      top: `${(box.y / scanPreview.imageSize.height) * 100}%`,
-                      width: `${(box.width / scanPreview.imageSize.width) * 100}%`,
-                      height: `${(box.height / scanPreview.imageSize.height) * 100}%`
-                    }}
-                  />
-                ))
-              ) : (
-                <span className="scan-frame" />
-              )}
-              <div className={cx("scan-state", scanPreview.status)}>
-                <strong>{scanPreview.status === "detected" ? "QR detected" : scanPreview.status === "failed" ? "Try again" : "Scanning"}</strong>
-                <span>{scanPreview.message}</span>
-              </div>
-            </div>
+        <button className={previewUrl ? "native-camera-box has-preview" : "native-camera-box"} type="button" onClick={openPicker} disabled={busy}>
+          {previewUrl ? (
+            <img src={previewUrl} alt="Selected preview" />
           ) : (
-            <>
-              <ScanLine size={27} />
-              <div className="capture-copy">
-                <strong>{isMobileDevice ? "Take QR photo" : "Upload QR image"}</strong>
-                <span>
-                  {isMobileDevice
-                    ? "Your camera opens, then the app auto-enhances the photo, searches crops, and marks the QR it detected."
-                    : "Upload a QR image, then the app auto-enhances/crops it and marks the QR it detected before opening the tool."}
-                </span>
-              </div>
-            </>
+            <span className="native-camera-placeholder">
+              <i aria-hidden="true">▣</i>
+              <strong>{capture === "user" ? "Open front camera" : "Open rear camera"}</strong>
+              <small>On a computer, this opens the image picker.</small>
+            </span>
           )}
+        </button>
 
-          <div className="capture-actions">
-            <label className="primary-btn file-action">
-              <Camera size={15} />
-              {imageBusy ? "Reading..." : isMobileDevice ? "Take / upload QR photo" : "Upload QR image"}
-              <input
-                type="file"
-                accept="image/*"
-                capture={isMobileDevice ? "environment" : undefined}
-                onChange={handleQrPhoto}
-                disabled={imageBusy}
-              />
-            </label>
-            {scanPreview?.url && (
-              <button
-                type="button"
-                className="ghost-btn small"
-                onClick={() => {
-                  setScanPreview((current) => {
-                    if (current?.url) URL.revokeObjectURL(current.url);
-                    return null;
-                  });
-                  setError("");
-                }}
-              >
-                Clear photo
-              </button>
-            )}
-          </div>
-          <div id="qr-upload-reader" className="qr-upload-reader" aria-hidden="true" />
+        <input
+          ref={inputRef}
+          className="native-camera-input"
+          type="file"
+          accept="image/*"
+          capture={capture}
+          onChange={handleFile}
+        />
+
+        <p className="native-camera-status" aria-live="polite">{busy ? "Processing..." : status}</p>
+
+        <div className="native-camera-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" onClick={openPicker} disabled={busy}>{previewUrl ? "Retake" : "Open Camera"}</button>
         </div>
-
-        <form onSubmit={manualSubmit} className="followup-check">
-          <label>
-            QR ID / Reference ID
-            <input value={lookupText} onChange={(event) => setLookupText(event.target.value)} placeholder="QR-XXXXXXXX or REF-XXXXXXXX" />
-          </label>
-          <button className="secondary-btn" disabled={busy}>{busy ? "Checking" : "Check"}</button>
-        </form>
-
-        {referenceResult && (
-          <div className={cx("reference-result", referenceResult.status, referenceResult.qrImageDataUrl && "with-qr") }>
-            <div>
-              <strong>{referenceResult.itemName}</strong>
-              <span>{referenceResult.referenceId} • {referenceResult.site}</span>
-              {(referenceResult.reviewedBy || referenceResult.rejectedBy) && (
-                <small>Reviewed by {referenceResult.reviewedBy || referenceResult.rejectedBy}</small>
-              )}
-              {referenceResult.reviewNote && <small>Feedback: {referenceResult.reviewNote}</small>}
-            </div>
-            {referenceResult.qrImageDataUrl && (
-              <div className="reference-qr-card">
-                <img src={referenceResult.qrImageDataUrl} alt={`QR for ${referenceResult.itemName}`} />
-                <small>{referenceResult.qrId}</small>
-              </div>
-            )}
-            <div className="reference-actions">
-              <span className={cx("status-badge", referenceResult.status)}>{referenceResult.status === "accepted" ? "Accepted" : referenceResult.status === "rejected" ? "Rejected" : "Pending"}</span>
-              {referenceResult.qrId && <button type="button" className="ghost-btn tiny" onClick={() => onOpenItem(referenceResult.qrId)}>Open QR</button>}
-              <DownloadQrLink
-                qrImageDataUrl={referenceResult.qrImageDataUrl}
-                itemCode={referenceResult.itemCode}
-                itemName={referenceResult.itemName}
-                qrId={referenceResult.qrId}
-                referenceId={referenceResult.referenceId}
-              />
-            </div>
-          </div>
-        )}
       </section>
-    </main>
+    </div>
   );
 }
 
-function ItemDetails({ qrId, onBack, staffSession, reload }) {
-  const [item, setItem] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [showChecklist, setShowChecklist] = useState(false);
-  const [showRenewal, setShowRenewal] = useState(false);
-  const [renewalDate, setRenewalDate] = useState("");
-  const [renewalAnswers, setRenewalAnswers] = useState({});
-  const [renewalFeedback, setRenewalFeedback] = useState("");
-  const [busy, setBusy] = useState(false);
-  const canManage = ["reviewer", "admin"].includes(staffSession?.role);
+function FaceCaptureModal({ title = "Face Capture", description, onClose, onCapture }) {
+  return (
+    <NativePhotoModal
+      title={title}
+      description={description}
+      capture="user"
+      onClose={onClose}
+      onPhoto={async (imageDataUrl) => onCapture(imageDataUrl)}
+    />
+  );
+}
 
-  useEffect(() => {
-    if (!qrId) return;
-    setLoading(true);
-    setError("");
-    api.itemByQr(qrId)
-      .then((data) => {
-        setItem(data);
-        setShowRenewal(false);
-        setRenewalDate("");
-        setRenewalAnswers({});
-        setRenewalFeedback("");
-        return api.trackUsageEvent({ type: "qr_open", targetId: qrId, sessionId: getVisitSessionId() }).catch(() => null);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [qrId]);
+function ImageScanModal({ field, machine, onClose, onScan }) {
+  const [status, setStatus] = useState("Take a clear photo of the value.");
 
-  function toggleChecklist() {
-    const next = !showChecklist;
-    setShowChecklist(next);
-    if (next) {
-      api.trackUsageEvent({ type: "checklist_view", targetId: qrId, sessionId: getVisitSessionId() }).catch(() => null);
-    }
-  }
+  async function handlePhoto(imageDataUrl) {
+    setStatus("Reading the value...");
 
-  function updateRenewalAnswer(fieldId, value) {
-    setRenewalAnswers((current) => ({ ...current, [fieldId]: value }));
-  }
-
-  async function renew() {
-    if (!item) return;
-    setBusy(true);
     try {
-      const updated = await api.renewItem(item.id, {
-        expiresAt: renewalDate,
-        reviewAnswers: renewalAnswers,
-        reviewNote: renewalFeedback,
-        role: staffSession.role,
-        renewedBy: staffSession.displayName || staffSession.username
+      const data = await fetchJson("/api/ai/image-field", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl,
+          target: field?.aiTarget || field?.label || "target",
+          fieldLabel: field?.label || "Image field",
+          machineName: machine?.machine_name || "",
+        }),
       });
-      setItem(updated);
-      setShowRenewal(false);
-      setRenewalDate("");
-      setRenewalAnswers({});
-      setRenewalFeedback("");
-      await reload?.({ silent: true });
-    } catch (actionError) {
-      alert(actionError.message);
-    } finally {
-      setBusy(false);
-    }
-  }
 
-  async function archiveToggle() {
-    if (!item) return;
-    setBusy(true);
-    try {
-      const updated = item.archivedAt
-        ? await api.restoreItem(item.id)
-        : await api.archiveItem(item.id, { archiveNote: "Archived from tool details" });
-      setItem(updated);
-      await reload?.({ silent: true });
-    } catch (actionError) {
-      alert(actionError.message);
-    } finally {
-      setBusy(false);
+      const extractedValue = data.value ?? data.weight ?? data.reading ?? "";
+      if (extractedValue === "" || extractedValue === null || extractedValue === undefined) {
+        throw new Error("No readable value was found. Take another photo closer to the reading.");
+      }
+
+      onScan({
+        value: String(extractedValue),
+        imageDataUrl,
+        mimeType: "image/jpeg",
+      });
+      onClose();
+    } catch (error) {
+      setStatus(error.message || "The value could not be recognized. Try another photo.");
+      throw error;
     }
   }
 
   return (
-    <main className="single-page tight-page">
-      <section className="panel detail-panel compact-panel">
-        <button className="ghost-btn small back-btn" onClick={onBack}>← Back</button>
-        {loading && <EmptyState icon={RefreshCw} title="Checking QR..." message="Loading tool details and validity status." />}
-        {error && <EmptyState icon={XCircle} title="QR not found" message={error} />}
-        {item && !loading && (
-          <>
-            <div className={cx("validity-banner", item.validity?.status)}>
-              <div className="validity-copy">
-                {item.validity?.status === "valid" ? <CheckCircle2 size={30} /> : <XCircle size={30} />}
-                <div>
-                  <p>Power Tool validity</p>
-                  <h1>{item.validity?.status === "valid" ? "This tool is still GOOD" : item.validity?.status === "expired" ? "This tool QR is EXPIRED" : "This tool is ARCHIVED"}</h1>
-                  <span>{item.validity?.status === "valid" ? `${item.validity?.daysLeft ?? "—"} day(s) left` : `Expiry date: ${formatDate(item.expiresAt)}`}</span>
-                </div>
-              </div>
-              <div className="validity-qr-card">
-                <img src={item.qrImageDataUrl} alt={`QR for ${item.itemName}`} />
-                <div>
-                  <span>{item.referenceId ? `Ref: ${item.referenceId}` : item.qrId}</span>
-                  <DownloadQrLink
-                    qrImageDataUrl={item.qrImageDataUrl}
-                    itemCode={item.itemCode}
-                    itemName={item.itemName}
-                    qrId={item.qrId}
-                    referenceId={item.referenceId}
-                    className="ghost-btn tiny qr-download-link"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="detail-title-row">
-              <div>
-                <p className="eyebrow">{item.toolType || item.categoryName}</p>
-                <h2>{item.itemName}</h2>
-                <p className="muted">QR: {item.qrId}{item.referenceId ? ` • Ref: ${item.referenceId}` : ""}</p>
-              </div>
-              <StatusBadge validity={item.validity} />
-            </div>
-
-            <div className="detail-grid">
-              <div><span>Tool type</span><strong>{item.toolType || item.categoryName}</strong></div>
-              <div><span>Site</span><strong>{item.site}</strong></div>
-              <div><span>Registered</span><strong>{formatDateTime(item.registeredAt)}</strong></div>
-              <div><span>Expires</span><strong>{formatDate(item.expiresAt)}</strong></div>
-              <div><span>Submitted by</span><strong>{item.submittedBy || "—"}</strong></div>
-              <div><span>Reviewed by</span><strong>{item.reviewedBy || "—"}</strong></div>
-            </div>
-
-            <div className="qr-detail-columns">
-              <ToolImageGallery record={item} />
-
-              {(item.detailsSnapshot || []).length > 0 && (
-                <div className="details-list power-summary">
-                  <h3><ClipboardList size={16} /> Equipment details</h3>
-                  <FieldRows fields={item.detailsSnapshot} values={item.detailValues || {}} />
-                </div>
-              )}
-            </div>
-
-            <div className="details-list checklist-panel">
-              <div className="checklist-title-row">
-                <div>
-                  <h3>Review questions</h3>
-                  <p className="muted small-text">{(item.reviewQuestionsSnapshot || []).length} answered question(s)</p>
-                </div>
-                <button type="button" className="secondary-btn small" onClick={toggleChecklist}>
-                  <ListChecks size={15} /> {showChecklist ? "Hide review" : "View review questions"}
-                </button>
-              </div>
-              {showChecklist && (
-                <>
-                  <ReviewAnswerSummary
-                    questions={item.reviewQuestionsSnapshot || []}
-                    answers={item.reviewAnswers || {}}
-                  />
-                  <ReviewerFeedback
-                    note={item.reviewNote}
-                    reviewedBy={item.reviewedBy}
-                    reviewedAt={item.updatedAt || item.approvedAt}
-                  />
-                </>
-              )}
-            </div>
-
-            {canManage && item.validity?.status === "expired" && showRenewal && (
-              <div className="details-list renewal-panel">
-                <div className="renewal-heading">
-                  <div>
-                    <p className="eyebrow">Expired item</p>
-                    <h3>Renew after the next inspection</h3>
-                  </div>
-                  <span>Checked by {staffSession.displayName || staffSession.username}</span>
-                </div>
-                <div className="reviewer-form">
-                  {(item.reviewQuestionsSnapshot || []).map((question) => (
-                    <label key={question.id} className="review-question-field">
-                      <span>{question.label} {question.required && "*"}</span>
-                      <FieldInput field={question} value={renewalAnswers[question.id]} onChange={updateRenewalAnswer} />
-                    </label>
-                  ))}
-                </div>
-                <div className="renewal-fields">
-                  <label>
-                    New next-check date
-                    <input type="date" value={renewalDate} onChange={(event) => setRenewalDate(event.target.value)} />
-                  </label>
-                  <label>
-                    Reviewer feedback
-                    <textarea value={renewalFeedback} onChange={(event) => setRenewalFeedback(event.target.value)} placeholder="Inspection findings or renewal remarks" />
-                  </label>
-                </div>
-                <div className="button-row renewal-actions">
-                  <button type="button" className="primary-btn small" onClick={renew} disabled={busy || !renewalDate}>
-                    <CheckCircle2 size={15} /> Renew tool
-                  </button>
-                  <button type="button" className="ghost-btn small" onClick={() => setShowRenewal(false)} disabled={busy}>Cancel</button>
-                </div>
-              </div>
-            )}
-
-            {canManage && (
-              <div className="detail-action-bar archive-only">
-                {item.validity?.status === "expired" && !showRenewal && (
-                  <button type="button" className="primary-btn small" onClick={() => setShowRenewal(true)} disabled={busy}>
-                    <RefreshCw size={15} /> Renew expired tool
-                  </button>
-                )}
-                <button type="button" className="danger-btn small subtle" onClick={archiveToggle} disabled={busy}>
-                  <Archive size={15} /> {item.archivedAt ? "Restore" : "Archive"}
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </section>
-    </main>
+    <NativePhotoModal
+      title={`Capture ${field?.label || "Image Field"}`}
+      description={status}
+      capture="environment"
+      onClose={onClose}
+      onPhoto={handlePhoto}
+    />
   );
 }
 
-function RequestDetails({ requestId, onBack, onApproved, staffSession, reload }) {
-  const [request, setRequest] = useState(null);
-  const [reviewAnswers, setReviewAnswers] = useState({});
-  const [note, setNote] = useState("");
-  const [showReview, setShowReview] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+function proofForField(record, fieldId) {
+  const proofs = Array.isArray(record?.proofs) ? record.proofs : [];
+  return proofs.find((proof) => String(proof.field_id) === String(fieldId)) || null;
+}
 
-  useEffect(() => {
-    if (!requestId) return;
-    setLoading(true);
-    setError("");
-    api.requestById(requestId)
-      .then((data) => {
-        setRequest(data);
-        setReviewAnswers(data.reviewAnswers || {});
-        setNote(data.reviewNote || "");
-      })
-      .catch((loadError) => setError(loadError.message))
-      .finally(() => setLoading(false));
-  }, [requestId]);
+function ProofValue({ value, proof }) {
+  const displayValue = value === null || value === undefined || value === "" ? "—" : String(value);
 
-  const canAct = request ? canStaffActOnRequest(staffSession, request) : false;
-  const questions = request?.reviewQuestionsSnapshot || [];
-  const finalStatus = request?.archivedAt ? "archived" : request?.status;
-
-  function updateReviewAnswer(fieldId, value) {
-    setReviewAnswers((current) => ({ ...current, [fieldId]: value }));
-  }
-
-  async function decide(decision) {
-    if (!request) return;
-    setBusy(true);
-    try {
-      const payload = {
-        reviewNote: note,
-        reviewAnswers,
-        role: staffSession.role,
-        approvedBy: staffSession.displayName || staffSession.username,
-        rejectedBy: staffSession.displayName || staffSession.username
-      };
-      if (decision === "approved") {
-        const result = await api.approveRequest(request.id, payload);
-        await reload?.({ silent: true });
-        onApproved(result.item.qrId);
-      } else {
-        const updated = await api.rejectRequest(request.id, payload);
-        setRequest(updated);
-        await reload?.({ silent: true });
-      }
-    } catch (actionError) {
-      alert(actionError.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function archiveToggle() {
-    if (!request) return;
-    setBusy(true);
-    try {
-      const updated = request.archivedAt
-        ? await api.restoreRequest(request.id)
-        : await api.archiveRequest(request.id, { archiveNote: "Archived from request details" });
-      setRequest(updated);
-      await reload?.({ silent: true });
-    } catch (actionError) {
-      alert(actionError.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  if (!proof?.image_url) return displayValue;
 
   return (
-    <main className="single-page tight-page">
-      <section className="panel detail-panel compact-panel">
-        <button className="ghost-btn small back-btn" onClick={onBack}>← Back</button>
-        {loading && <EmptyState icon={RefreshCw} title="Loading request..." message="Opening the submitted equipment details." />}
-        {error && <EmptyState icon={XCircle} title="Request not found" message={error} />}
-        {request && !loading && (
-          <>
-            <div className={cx("request-detail-banner", finalStatus)}>
-              {finalStatus === "pending" ? <Bell size={30} /> : finalStatus === "rejected" ? <XCircle size={30} /> : <Archive size={30} />}
+    <span className="proof-value">
+      <span>{displayValue}</span>
+      <a href={proof.image_url} target="_blank" rel="noreferrer" title={`Open proof for ${proof.field_label || "image field"}`}>
+        <img src={proof.image_url} alt={`Proof for ${proof.field_label || "image field"}`} loading="lazy" />
+      </a>
+    </span>
+  );
+}
+
+function LatestMachineResponseList({ records = [], machines = [] }) {
+  function recordForMachine(machine) {
+    const machineId = String(machine.id);
+    const machineName = String(machine.machine_name || "").trim().toLowerCase();
+    return records.find((record) => String(record.machine_config_id) === machineId) || records.find((record) => String(record.machine_name || "").trim().toLowerCase() === machineName) || null;
+  }
+
+  if (!machines.length) return <p className="empty-state">No machines are configured for this area.</p>;
+
+  return (
+    <div className="latest-response-list">
+      {machines.map((machine) => {
+        const record = recordForMachine(machine);
+        const fields = normalizeFields(machine.fields);
+
+        return (
+          <article className={record ? "latest-response-card has-data" : "latest-response-card"} key={machine.id}>
+            <header className="latest-response-card-head">
               <div>
-                <p>Power Tool review</p>
-                <h1>{finalStatus === "pending" ? "This request is awaiting review" : finalStatus === "rejected" ? "This request was REJECTED" : "This request is ARCHIVED"}</h1>
-                <span>Reference: {request.referenceId}</span>
+                <strong>{machine.machine_name}</strong>
+                <span>{record ? formatDateTime(record.record_timestamp) : "No submission yet"}</span>
               </div>
-            </div>
+              <i className={record ? "has-response" : "no-response"}>{record ? "Saved" : "Empty"}</i>
+            </header>
 
-            <div className="detail-title-row">
-              <div>
-                <p className="eyebrow">{request.toolType || request.categoryName}</p>
-                <h2>{request.itemName}</h2>
-                <p className="muted">Ref: {request.referenceId}</p>
-              </div>
-              <StatusBadge status={finalStatus} />
-            </div>
+            {record ? (
+              <div className="latest-response-values">
+                {fields.map((field) => {
+                  const value = valueFromRecordField(record, field);
+                  const proof = field.type === "image" ? proofForField(record, field.id) : null;
+                  const displayValue = value === null || value === undefined || value === "" ? "—" : String(value);
 
-            <div className="detail-grid">
-              <div><span>Tool type</span><strong>{request.toolType || request.categoryName}</strong></div>
-              <div><span>Site</span><strong>{request.site}</strong></div>
-              <div><span>Submitted</span><strong>{formatDateTime(request.submittedAt)}</strong></div>
-              <div><span>Submitted by</span><strong>{request.submittedBy || "—"}</strong></div>
-              {request.status !== "pending" && <div><span>Reviewed by</span><strong>{request.reviewedBy || request.rejectedBy || "—"}</strong></div>}
-            </div>
-
-            <div className="qr-detail-columns">
-              <ToolImageGallery record={request} />
-              {(request.detailsSnapshot || []).length > 0 && (
-                <div className="details-list power-summary">
-                  <h3><ClipboardList size={16} /> Equipment details</h3>
-                  <FieldRows fields={request.detailsSnapshot || []} values={request.detailValues || {}} />
-                </div>
-              )}
-            </div>
-
-            {request.status === "pending" ? (
-              <div className="details-list reviewer-form">
-                <h3>Review questions</h3>
-                {questions.length === 0 ? (
-                  <p className="muted">No review questions configured.</p>
-                ) : (
-                  questions.map((question) => (
-                    <label key={question.id} className="review-question-field">
-                      <span>{question.label} {question.required && "*"}</span>
-                      <FieldInput field={question} value={reviewAnswers[question.id]} onChange={updateReviewAnswer} />
-                    </label>
-                  ))
-                )}
+                  return (
+                    <div className={field.type === "image" ? "latest-response-field image-field" : "latest-response-field"} key={field.id}>
+                      <span>{visibleVariableName(field, machine.machine_name)}</span>
+                      <div>
+                        <strong>{displayValue}</strong>
+                        {proof?.image_url && (
+                          <a className="latest-proof-link" href={proof.image_url} target="_blank" rel="noreferrer" title={`Open proof for ${field.label}`}>
+                            <img src={proof.image_url} alt={`Proof for ${field.label}`} loading="lazy" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
-              <div className="details-list checklist-panel">
-                <div className="checklist-title-row">
-                  <div>
-                    <h3>Review questions</h3>
-                    <p className="muted small-text">{questions.length} answered question(s)</p>
-                  </div>
-                  <button type="button" className="secondary-btn small" onClick={() => setShowReview((current) => !current)}>
-                    <ListChecks size={15} /> {showReview ? "Hide review" : "View review questions"}
-                  </button>
-                </div>
-                {showReview && (
-                  <>
-                    <ReviewAnswerSummary questions={questions} answers={request.reviewAnswers || {}} />
-                    <ReviewerFeedback
-                      note={request.reviewNote}
-                      reviewedBy={request.reviewedBy || request.rejectedBy}
-                      reviewedAt={request.reviewedAt}
-                    />
-                  </>
-                )}
-              </div>
+              <p className="latest-response-empty">The latest submitted values will appear here.</p>
             )}
-
-            {request.status === "pending" && (
-              <div className="approval-box detail-approval-bar">
-                <label>
-                  Reviewer feedback
-                  <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Inspection findings or reason for the decision" disabled={!canAct} />
-                </label>
-                <div className="button-row">
-                  <button className="primary-btn small" disabled={busy || !canAct} onClick={() => decide("approved")}><CheckCircle2 size={15} /> Approve</button>
-                  <button className="danger-btn small" disabled={busy || !canAct} onClick={() => decide("rejected")}><XCircle size={15} /> Reject</button>
-                </div>
-              </div>
-            )}
-
-            {request.status === "rejected" && (
-              <div className="detail-action-bar archive-only">
-                <button type="button" className="danger-btn small subtle" onClick={archiveToggle} disabled={busy}>
-                  <Archive size={15} /> {request.archivedAt ? "Restore" : "Archive"}
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </section>
-    </main>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
-function StaffLogin({ onLogin }) {
-  const [form, setForm] = useState({ username: "", password: "" });
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+function trendStatusClass(status) {
+  if (status === "below" || status === "above") return "warning";
+  if (status === "normal") return "normal";
+  return "empty";
+}
 
-  async function submit(event) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const session = await api.login(form);
-      onLogin(session);
-    } catch (loginError) {
-      setError(loginError.message || "Login failed.");
-    } finally {
-      setBusy(false);
-    }
+function getRawValueFromRecord(record, key, summary) {
+  if (key === "total_submissions") return summary?.total_submissions ?? 0;
+  if (!record) return "";
+  if (key === "machine_name") return record.machine_name;
+  if (key === "site_name") return record.site_name;
+  if (key === "operator_name") return record.operator_name;
+  if (key === "record_timestamp") return record.record_timestamp;
+  if (key === "reading_value") return record.reading_value;
+  if (key === "product") return record.product;
+  if (key === "batch_number") return record.batch_number;
+  if (key === "remarks") return record.remarks;
+  return record.response_fields?.[key];
+}
+
+function inferMetricUnit(title = "", key = "") {
+  const text = `${title} ${key}`.toLowerCase();
+  if (text.includes("temp")) return "°C";
+  if (text.includes("pressure")) return "bar";
+  if (text.includes("current")) return "A";
+  if (text.includes("speed") || text.includes("rpm")) return "rpm";
+  if (text.includes("power") || text.includes("kw")) return "kW";
+  if (text.includes("vibration")) return "mm/s";
+  if (text.includes("health") || text.includes("quality") || text.includes("availability") || text.includes("performance")) return "%";
+  return "";
+}
+
+function defaultRangeForMetric(title = "", key = "") {
+  const text = `${title} ${key}`.toLowerCase();
+  if (text.includes("vibration")) return { min: 0, max: 4 };
+  if (text.includes("current")) return { min: 0, max: 25 };
+  if (text.includes("pressure")) return { min: 0, max: 5 };
+  if (text.includes("temp")) return { min: 0, max: 120 };
+  if (text.includes("speed") || text.includes("rpm")) return { min: 0, max: 3000 };
+  if (text.includes("power") || text.includes("kw")) return { min: 0, max: 15 };
+  if (text.includes("health")) return { min: 0, max: 100 };
+  return { min: null, max: null };
+}
+
+function getFieldForMetric(fields, key) {
+  return fields.find((field) => field.id === key || field.mapsTo === key) || null;
+}
+
+function getMetricThresholds(machine, fields, key, title) {
+  const field = getFieldForMetric(fields, key);
+  const fieldMin = field?.thresholdEnabled ? Number(field.threshold_min) : NaN;
+  const fieldMax = field?.thresholdEnabled ? Number(field.threshold_max) : NaN;
+  const machineThresholds = key === "reading_value" ? getMachineReadingThresholds(machine) : { thresholdMin: null, thresholdMax: null };
+  const fallback = defaultRangeForMetric(title, key);
+
+  return {
+    min: Number.isFinite(fieldMin) ? fieldMin : machineThresholds.thresholdMin ?? fallback.min,
+    max: Number.isFinite(fieldMax) ? fieldMax : machineThresholds.thresholdMax ?? fallback.max,
+  };
+}
+
+function compactMetricValue(value, decimals = 2) {
+  if (value === null || value === undefined || value === "") return "—";
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return String(value);
+  const maxDigits = Math.abs(numberValue) >= 100 ? 0 : Math.abs(numberValue) >= 10 ? 1 : decimals;
+  return numberValue.toLocaleString("en-US", { maximumFractionDigits: maxDigits, minimumFractionDigits: maxDigits === 0 ? 0 : Math.min(maxDigits, decimals) });
+}
+
+function metricStatus(value, min, max) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return "idle";
+  if (Number.isFinite(Number(min)) && numberValue < Number(min)) return "warning";
+  if (Number.isFinite(Number(max)) && numberValue > Number(max)) return "warning";
+  return "normal";
+}
+
+function rangeText(min, max, unit) {
+  if (!Number.isFinite(Number(min)) && !Number.isFinite(Number(max))) return "Latest database value";
+  const left = Number.isFinite(Number(min)) ? compactMetricValue(min, 1) : "—";
+  const right = Number.isFinite(Number(max)) ? compactMetricValue(max, 1) : "—";
+  return `Range: ${left} – ${right}${unit ? ` ${unit}` : ""}`;
+}
+
+function enhanceFactoryCallouts(configuredCallouts) {
+  return normalizeCallouts(configuredCallouts).slice(0, 8);
+}
+
+function buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields) {
+  const rawValue = getRawValueFromRecord(displayRecord, callout.valueKey, summary);
+  const field = fields.find((item) => String(item.id) === String(callout.valueKey));
+  const isNumericField = field?.type === "number";
+  const unit = isNumericField ? inferMetricUnit(callout.title, callout.valueKey) : "";
+  const thresholds = getMetricThresholds(selectedMachine, fields, callout.valueKey, callout.title);
+  const status = isNumericField ? metricStatus(rawValue, thresholds.min, thresholds.max) : "normal";
+  return {
+    ...callout,
+    rawValue,
+    value: compactMetricValue(rawValue),
+    unit,
+    range: isNumericField ? rangeText(thresholds.min, thresholds.max, unit) : "",
+    status,
+  };
+}
+
+function summaryKeyForField(field) {
+  if (!field) return "";
+  return field.mapsTo && field.mapsTo !== "custom" ? field.mapsTo : field.id;
+}
+
+function buildFactorySummaryRows({ latest, fields, summary }) {
+  const rows = [
+    {
+      type: "row",
+      label: "Latest Record:",
+      value: latest
+        ? new Intl.DateTimeFormat("en-PH", {
+            hour: "numeric",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: true,
+            timeZone: APP_TIME_ZONE,
+          }).format(new Date(latest.record_timestamp))
+        : "—",
+    },
+    { type: "row", label: "Operator:", value: latest?.operator_name || "—" },
+    { type: "divider", id: "top-divider" },
+  ];
+
+  for (const field of fields) {
+    const key = summaryKeyForField(field);
+    if (!key) continue;
+    rows.push({ type: "row", label: field.label, value: valueFromRecord(latest, key, summary) });
+  }
+
+  rows.push({ type: "divider", id: "input-divider" });
+  return rows;
+}
+
+function getMachineReadingMeta(machine, fieldOverride = null) {
+  const fields = normalizeFields(machine?.fields);
+  const readingField =
+    fieldOverride ||
+    fields.find((field) => field.type === "number") ||
+    fields.find((field) => field.mapsTo === "reading_value") ||
+    fields.find((field) => field.id === "reading_value");
+
+  return {
+    label: readingField?.label || "Numeric Value",
+    unit: readingField?.unit || readingField?.suffix || readingField?.measurementUnit || "",
+  };
+}
+
+function formatTrendEntryLabel(value) {
+  if (!value) return { date: "—", time: "—" };
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { date: "—", time: "—" };
+  return {
+    date: new Intl.DateTimeFormat("en-PH", {
+      month: "short",
+      day: "2-digit",
+      timeZone: APP_TIME_ZONE,
+    }).format(date),
+    time: new Intl.DateTimeFormat("en-PH", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: APP_TIME_ZONE,
+    }).format(date),
+  };
+}
+
+function trendMachineState(status) {
+  if (status === "normal") return "Running";
+  if (status === "below" || status === "above") return "Warning";
+  return "No Data";
+}
+
+function formatRangeText(minimum, maximum) {
+  const hasMin = minimum !== null && minimum !== undefined && minimum !== "" && Number.isFinite(Number(minimum));
+  const hasMax = maximum !== null && maximum !== undefined && maximum !== "" && Number.isFinite(Number(maximum));
+  if (!hasMin && !hasMax) return "— — —";
+  return `${hasMin ? formatNumber(minimum) : "—"} – ${hasMax ? formatNumber(maximum) : "—"}`;
+}
+
+function TrendMultiMachineChart({
+  seriesItems = [],
+  emptyMessage = "Select equipment with at least 2 submissions.",
+}) {
+  const prepared = seriesItems.map((series, seriesIndex) => {
+    const points = (series.data?.trends || [])
+      .map((item) => ({
+        ...item,
+        reading: item.reading_value === null || item.reading_value === undefined || item.reading_value === ""
+          ? NaN
+          : Number(item.reading_value),
+      }))
+      .filter((item) => Number.isFinite(item.reading))
+      .map((item, pointIndex) => ({ ...item, pointIndex }));
+    return { ...series, seriesIndex, points };
+  }).filter((series) => series.points.length);
+
+  const allPoints = prepared.flatMap((series) => series.points);
+  if (allPoints.length < 2 || !prepared.some((series) => series.points.length >= 2)) {
+    return <div className="trend-overview-empty">{emptyMessage}</div>;
+  }
+
+  const values = allPoints.map((point) => point.reading);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max === min ? 1 : max - min;
+  const width = 100;
+  const height = 60;
+  const chartTop = 5;
+  const chartBottom = height - 6;
+  const entryAxisSeries = prepared.reduce(
+    (longest, series) => series.points.length > longest.points.length ? series : longest,
+    prepared[0]
+  );
+  const entryIndexes = [
+    0,
+    Math.floor((entryAxisSeries.points.length - 1) / 2),
+    entryAxisSeries.points.length - 1,
+  ];
+  const entryLabels = entryIndexes.map((index) => (
+    formatTrendEntryLabel(entryAxisSeries.points[index]?.record_timestamp)
+  ));
+
+  function xForPoint(point, points) {
+    return points.length <= 1 ? width / 2 : (point.pointIndex / (points.length - 1)) * width;
+  }
+
+  function yForValue(value) {
+    return chartBottom - ((value - min) / range) * (chartBottom - chartTop);
   }
 
   return (
-    <main className="single-page staff-login-page">
-      <section className="panel login-panel staff-login-panel">
-        <div className="panel-heading compact-heading">
-          <div>
-            <p className="eyebrow">Secure access</p>
-            <h2>Reviewer account</h2>
-          </div>
-          <KeyRound size={24} />
-        </div>
-        {error && <div className="notice error">{error}</div>}
-        <form onSubmit={submit} className="stack-form">
-          <label>
-            Username
-            <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} placeholder="Enter username" autoComplete="username" autoFocus />
-          </label>
-          <label>
-            Password
-            <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="Enter password" autoComplete="current-password" />
-          </label>
-          <button className="primary-btn" disabled={busy}>{busy ? "Checking..." : "Sign in"}</button>
-        </form>
-      </section>
-    </main>
+    <div className="trend-overview-chart-wrap trend-multi-machine-chart-wrap">
+      <svg className="trend-overview-chart trend-multi-machine-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-label="Selected machine trend comparison chart">
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = chartTop + (chartBottom - chartTop) * ratio;
+          return <line key={ratio} className="trend-overview-gridline" x1="0" y1={y} x2="100" y2={y} />;
+        })}
+        {prepared.map((series) => {
+          if (series.points.length < 2) return null;
+          const path = series.points.map((point, index) => {
+            const x = xForPoint(point, series.points);
+            const y = yForValue(point.reading);
+            return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+          }).join(" ");
+          return (
+            <g key={series.id} className={`trend-series-group series-${series.seriesIndex % 8}`}>
+              <path className={`trend-series-line series-${series.seriesIndex % 8}`} d={path} />
+              {series.points.map((point) => (
+                <circle
+                  key={`${series.id}-${point.id || point.pointIndex}`}
+                  className={`trend-series-point series-${series.seriesIndex % 8}`}
+                  cx={xForPoint(point, series.points)}
+                  cy={yForValue(point.reading)}
+                  r="1.05"
+                />
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="trend-overview-axis y"><span>{formatNumber(max)}</span><span>{formatNumber((max + min) / 2)}</span><span>{formatNumber(min)}</span></div>
+      <div className="trend-overview-axis x trend-entry-axis">
+        {entryLabels.map((label, index) => (
+          <span key={`${label.date}-${label.time}-${index}`}>
+            <b>{label.date}</b>
+            <small>{label.time}</small>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
-function ReviewerAccounts({ adminSession }) {
-  const [accounts, setAccounts] = useState([]);
-  const [form, setForm] = useState({ username: "", password: "" });
-  const [pendingCreation, setPendingCreation] = useState(false);
-  const [createPassword, setCreatePassword] = useState("");
-  const [pendingRemoval, setPendingRemoval] = useState(null);
-  const [removePassword, setRemovePassword] = useState("");
-  const [dialogError, setDialogError] = useState("");
-  const [message, setMessage] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+function TrendSparkline({ trends = [], status = "normal" }) {
+  const points = trends
+    .map((item) => Number(item.reading_value))
+    .filter((value) => Number.isFinite(value));
 
-  function sortAccounts(nextAccounts) {
-    return [...nextAccounts].sort((a, b) => {
-      if (a.role !== b.role) return a.role === "admin" ? -1 : 1;
-      return a.username.localeCompare(b.username);
-    });
+  if (points.length < 2) {
+    return <div className="trend-tile-empty-line" aria-hidden="true" />;
   }
 
-  async function loadAccounts() {
-    setLoading(true);
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max === min ? 1 : max - min;
+  const width = 100;
+  const height = 28;
+  const path = points
+    .map((value, index) => {
+      const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
+      const y = height - ((value - min) / range) * (height - 6) - 3;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg className={`trend-tile-sparkline ${trendStatusClass(status)}`} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={path} />
+    </svg>
+  );
+}
+
+function TrendMachineTile({ machine, miniData, isSelected, onSelect }) {
+  const miniStats = miniData?.stats || {};
+  const miniTrends = miniData?.trends || [];
+  const latestPoint = miniTrends[miniTrends.length - 1] || null;
+  const latestStatus = miniStats.latest_status || latestPoint?.warning_status || "no-data";
+  const readingMeta = miniData?.field ? getMachineReadingMeta(machine, miniData.field) : { label: "Detail unavailable", unit: "" };
+  const thresholdMin = miniStats.threshold_min ?? null;
+  const thresholdMax = miniStats.threshold_max ?? null;
+  const latestReading = latestPoint?.reading_value ?? miniStats.avg_reading;
+  const hasImage = Boolean(machine?.image_data_url);
+
+  return (
+    <button type="button" className={`trend-machine-tile ${isSelected ? "active" : ""}`} onClick={onSelect}>
+      <div className="trend-machine-thumb" aria-hidden="true">
+        {hasImage && <img src={machine.image_data_url} alt="" />}
+      </div>
+      <div className="trend-machine-info">
+        <div className="trend-machine-tile-head">
+          <div>
+            <h3>{machine.machine_name}</h3>
+            <p>{readingMeta.label}</p>
+          </div>
+          <span className={`trend-machine-status ${trendStatusClass(latestStatus)}`}>{trendMachineState(latestStatus)}</span>
+        </div>
+        <div className="trend-machine-value-row">
+          <div>
+            <strong>{formatNumber(latestReading)}</strong>
+            <small>{readingMeta.unit || "value"}</small>
+          </div>
+          <TrendSparkline trends={miniTrends} status={latestStatus} />
+        </div>
+        <div className="trend-machine-meta-row">
+          <span><b>Target:</b> {thresholdMax !== null ? formatNumber(thresholdMax) : "—"}</span>
+          <span><b>Range:</b> {formatRangeText(thresholdMin, thresholdMax)}</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function FactoryTopNav({
+  activePage = "machine",
+  user = null,
+  setPage = null,
+  onLogout = null,
+  standalone = false,
+  warningCount = 0,
+}) {
+  const isAdmin = isAdminUser(user);
+
+  function go(target) {
+    if (!setPage) return;
+    const resolved = target === "register" ? "adminRegister" : target;
+    if (!isAdmin && ["adminRegister", "system", "logs"].includes(resolved)) {
+      setPage("record");
+      return;
+    }
+    setPage(resolved);
+  }
+
+  const navItems = isAdmin
+    ? [
+      { id: "machine", label: "Machines" },
+      { id: "trends", label: "Trends" },
+      { id: "system", label: "System" },
+      { id: "register", label: "Register" },
+      { id: "logs", label: "Logs" },
+    ]
+    : [
+      { id: "record", label: "Submit" },
+      { id: "machine", label: "Machines" },
+      { id: "trends", label: "Trends" },
+    ];
+
+  const initials = userDisplayName(user)
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "AD";
+
+  return (
+    <header className="factory-topbar shared-factory-topbar">
+      <div className="factory-brand confirmation-brand" aria-label="Confirmation Test">
+        <span className="confirmation-mark">CT</span>
+        <span className="confirmation-brand-copy">
+          <strong>Confirmation Test</strong>
+          <small>{userDisplayName(user)} • {userSite(user)}</small>
+        </span>
+      </div>
+
+      <nav className="factory-nav-tabs" aria-label="Main navigation">
+        {navItems.map((item) => (
+          <button
+            key={item.id}
+            className={activePage === item.id ? "active" : ""}
+            type="button"
+            data-nav-id={item.id}
+            onClick={() => go(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+
+        {standalone ? (
+          <button type="button" data-nav-id="logout" onClick={() => setPage?.("auth")}>Back</button>
+        ) : (
+          <button className="factory-logout-tab" type="button" data-nav-id="logout" onClick={() => onLogout?.()}>Logout</button>
+        )}
+      </nav>
+
+      <div className="factory-top-actions factory-top-actions-no-calendar">
+        {isAdmin && (
+          <button className="factory-bell notification-bell" type="button" onClick={() => go("logs")} aria-label="Notifications">
+            <span className="factory-bell-count">{warningCount || 0}</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15 17H9m9-1.5c-.9-.95-1.35-2.2-1.35-3.75V9.5a4.65 4.65 0 0 0-9.3 0v2.25c0 1.55-.45 2.8-1.35 3.75h12ZM13.45 19.15a1.7 1.7 0 0 1-2.9 0" />
+            </svg>
+          </button>
+        )}
+        <span className="factory-user-chip factory-user-chip-static" aria-label={`${userDisplayName(user)} profile`} title={`${userDisplayName(user)} • ${userSite(user)}`}>
+          {initials}
+        </span>
+      </div>
+    </header>
+  );
+}
+
+function MachinesPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [summary, setSummary] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [machines, setMachines] = useState([]);
+  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [selectedEquipmentCategory, setSelectedEquipmentCategory] = useState("");
+  const selectedDate = recordDateKey(new Date());
+  const [selectedMachineId, setSelectedMachineId] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function loadMachines(site = selectedArea) {
+    const query = site ? `?site=${encodeURIComponent(site)}` : "";
+    const machineData = await fetchJson(`/api/machines${query}`);
+    const machineList = machineData.machines || [];
+    const categoryOptions = equipmentCategoriesForMachines(machineList);
+    const currentMachine = machineList.find((machine) => String(machine.id) === String(selectedMachineId));
+    const nextCategory = currentMachine
+      ? equipmentCategoryForMachine(currentMachine)
+      : preferredEquipmentCategory(categoryOptions, selectedEquipmentCategory);
+    const categoryMachines = machinesForEquipmentCategory(machineList, nextCategory);
+    setMachines(machineList);
+    setSelectedEquipmentCategory(nextCategory);
+
+    const stillAvailable = categoryMachines.find((machine) => String(machine.id) === String(selectedMachineId));
+    if (stillAvailable) {
+      setSelectedMachineId(String(stillAvailable.id));
+    } else {
+      setSelectedMachineId(categoryMachines[0] ? String(categoryMachines[0].id) : "");
+    }
+
+    if (!machineList.length) {
+      setRecords([]);
+      setSummary(null);
+      setMessage(`No machines configured for ${site}`);
+    } else {
+      setMessage("");
+    }
+
+    return machineList;
+  }
+
+  async function loadDashboard(machineId = selectedMachineId, date = selectedDate) {
+    if (!machineId) return;
+
     try {
-      setAccounts(await api.staffAccounts(adminSession.username));
-    } catch (loadError) {
-      setMessage({ type: "error", text: loadError.message });
+      setLoading(true);
+      const params = new URLSearchParams({ machine_config_id: String(machineId), limit: "500" });
+      if (date) params.set("date", date);
+      const data = await fetchJson(`/api/records?${params.toString()}`);
+      const recordList = data.records || [];
+      setRecords(recordList);
+      setSummary(summarizeRecords(recordList));
+      setMessage("");
+    } catch (error) {
+      setMessage(error.message);
+      setRecords([]);
+      setSummary(null);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadAccounts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminSession.username]);
+    loadMachines(selectedArea).catch((error) => setMessage(error.message));
+  }, [selectedArea]);
 
-  function requestCreateConfirmation(event) {
-    event.preventDefault();
-    setCreatePassword("");
-    setDialogError("");
-    setMessage(null);
-    setPendingCreation(true);
-  }
+  useEffect(() => {
+    if (selectedMachineId) loadDashboard(selectedMachineId, selectedDate);
+  }, [selectedMachineId, selectedDate]);
 
-  async function createAccount(event) {
-    event.preventDefault();
-    setBusy(true);
-    setDialogError("");
-    try {
-      const account = await api.createReviewerAccount({
-        ...form,
-        adminUsername: adminSession.username,
-        adminPassword: createPassword
-      });
-      setAccounts((current) => sortAccounts([...current, account]));
-      setForm({ username: "", password: "" });
-      setCreatePassword("");
-      setPendingCreation(false);
-      setMessage({ type: "success", text: `${account.username} can now sign in as a Reviewer.` });
-    } catch (createError) {
-      setDialogError(createError.message);
-    } finally {
-      setBusy(false);
+  const equipmentCategories = useMemo(
+    () => equipmentCategoriesForMachines(machines),
+    [machines]
+  );
+  const visibleMachines = useMemo(
+    () => machinesForEquipmentCategory(machines, selectedEquipmentCategory),
+    [machines, selectedEquipmentCategory]
+  );
+
+  useEffect(() => {
+    if (!visibleMachines.length) {
+      setSelectedMachineId("");
+      return;
+    }
+
+    const stillVisible = visibleMachines.some(
+      (machine) => String(machine.id) === String(selectedMachineId)
+    );
+    if (!stillVisible) setSelectedMachineId(String(visibleMachines[0].id));
+  }, [selectedEquipmentCategory, visibleMachines]);
+
+  function selectEquipmentCategory(category) {
+    setSelectedEquipmentCategory(category);
+    const categoryMachines = machinesForEquipmentCategory(machines, category);
+    const currentIsVisible = categoryMachines.some(
+      (machine) => String(machine.id) === String(selectedMachineId)
+    );
+    if (!currentIsVisible) {
+      setSelectedMachineId(categoryMachines[0] ? String(categoryMachines[0].id) : "");
     }
   }
 
-  async function removeAccount(event) {
-    event.preventDefault();
-    if (!pendingRemoval) return;
-    setBusy(true);
-    setDialogError("");
-    try {
-      await api.deleteReviewerAccount(pendingRemoval.id, {
-        adminUsername: adminSession.username,
-        adminPassword: removePassword
-      });
-      setAccounts((current) => current.filter((entry) => entry.id !== pendingRemoval.id));
-      setMessage({ type: "success", text: `${pendingRemoval.username}'s sign-in account was removed.` });
-      setPendingRemoval(null);
-      setRemovePassword("");
-    } catch (removeError) {
-      setDialogError(removeError.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const reviewerCount = accounts.filter((account) => account.role === "reviewer").length;
+  const selectedMachine = visibleMachines.find((machine) => String(machine.id) === String(selectedMachineId)) || visibleMachines[0];
+  const latest = records[0] || null;
+  const displayRecord = latest || {
+    machine_name: selectedMachine?.machine_name || "No Machine",
+    site_name: selectedMachine?.site_name || selectedArea,
+    operator_name: "No operator",
+  };
+  const fields = normalizeFields(selectedMachine?.fields);
+  const factoryCallouts = enhanceFactoryCallouts(selectedMachine?.callouts);
+  const metrics = factoryCallouts.map((callout) => (
+    buildFactoryMetric(callout, displayRecord, summary, selectedMachine, fields)
+  ));
+  const warningCount = metrics.filter((metric) => metric.status === "warning").length;
+  const latestRows = buildFactorySummaryRows({ latest, fields, summary });
+  const overviewLabels = new Set(["Latest Record:", "Operator:"]);
+  const overviewRows = latestRows.filter((row) => row.type === "row" && overviewLabels.has(row.label));
+  const parameterRows = latestRows.filter((row) => row.type === "row" && !overviewLabels.has(row.label));
+  const hasMachineImage = Boolean(selectedMachine?.image_data_url);
+  const machineImageMap = useFittedImageCanvas(selectedMachine?.image_data_url || "", pointMapFitPadding);
+  const visibleMetrics = hasMachineImage ? metrics : [];
 
   return (
-    <section className="admin-section accounts-admin">
-      <div className="section-head accounts-heading">
-        <div>
-          <p className="eyebrow">Admin only</p>
-          <h2>Accounts</h2>
-        </div>
-        <span className="quick-count"><strong>{accounts.length}</strong><small>accounts</small></span>
-      </div>
-      {message && <div className={cx("notice", message.type)}>{message.text}</div>}
+    <main className="factory-os-page factory-machine-page">
+      <FactoryTopNav activePage="machine" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} warningCount={warningCount} />
 
-      <div className="accounts-layout">
-        <form className="reviewer-account-form" onSubmit={requestCreateConfirmation}>
-          <div className="account-form-title">
-            <span className="account-title-icon"><UserPlus size={20} /></span>
-            <div>
-              <p className="eyebrow">New access</p>
-              <h3>Add Reviewer</h3>
-            </div>
-          </div>
-          <div className="account-fields">
-            <label>
-              Username
-              <input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} placeholder="Reviewer username" autoComplete="off" required />
-            </label>
-            <label>
-              Password
-              <input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="At least 4 characters" autoComplete="new-password" required />
-            </label>
-          </div>
-          <button className="primary-btn account-submit" disabled={busy}><UserPlus size={15} /> Add Reviewer account</button>
-        </form>
+      <section className="factory-workspace">
+        {message && <p className="message compact-message">{message}</p>}
 
-        <div className="reviewer-account-list">
-          <div className="account-list-title">
-            <div>
-              <span className="account-title-icon"><ShieldCheck size={18} /></span>
-              <div>
-                <p className="eyebrow">Access control</p>
-                <h3>Authorized accounts</h3>
-              </div>
+        <section className="factory-main-card">
+          <aside className="factory-summary-panel factory-summary-panel-compact">
+            <div className="factory-panel-head">
+              <h2>Machine Summary</h2>
             </div>
-            {!loading && <span>{reviewerCount} {reviewerCount === 1 ? "Reviewer" : "Reviewers"}</span>}
-          </div>
-          {loading ? (
-            <EmptyState icon={RefreshCw} title="Loading accounts..." message="Reading saved accounts." />
-          ) : accounts.length === 0 ? (
-            <EmptyState icon={UserCircle} title="No accounts" message="No accounts are available." />
-          ) : accounts.map((account) => (
-            <div className={cx("reviewer-account-row", account.role === "admin" && "protected-account")} key={account.id}>
-              <span className="reviewer-avatar">{account.username.slice(0, 1).toUpperCase()}</span>
-              <div>
-                <strong>{account.username}</strong>
-                <span>{account.role === "admin" ? "Admin • Protected account" : `Reviewer • Added ${formatDate(account.createdAt)}`}</span>
-              </div>
-              {account.role === "admin" ? (
-                <span className="protected-badge"><ShieldCheck size={13} /> Cannot remove</span>
-              ) : (
-                <button type="button" className="danger-btn tiny subtle" onClick={() => {
-                  setPendingRemoval(account);
-                  setRemovePassword("");
-                  setDialogError("");
-                  setMessage(null);
-                }} disabled={busy || reviewerCount <= 1}>
-                  <Trash2 size={14} /> Remove
+            <div className="factory-summary-list factory-summary-list-soft factory-summary-overview-list">
+              {overviewRows.map((row) => (
+                <div key={row.label} className={row.tone ? `tone-${row.tone}` : ""}>
+                  <span>{row.label}</span>
+                  <strong>{row.value}</strong>
+                </div>
+              ))}
+            </div>
+
+            {!!parameterRows.length && (
+              <section className="factory-summary-parameter-section">
+                <span className="factory-summary-section-label">Parameters</span>
+                <div className="factory-summary-list factory-summary-list-soft factory-summary-parameter-list">
+                  {parameterRows.map((row) => (
+                    <div key={row.label} className={row.tone ? `tone-${row.tone}` : ""}>
+                      <span>{row.label}</span>
+                      <strong>{row.value}</strong>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+            <div className="factory-alarm-box factory-alarm-box-compact">
+              <span>△</span>
+              <div><strong>Active Alarms</strong><small>Unacknowledged</small></div>
+              <b>{warningCount}</b>
+            </div>
+
+          </aside>
+
+          <section className="system-point-map-card">
+            <div className="system-point-map-head system-point-map-head-controls-only">
+              <div className="system-point-map-tools machine-map-tools">
+                <SiteToggleButton
+                  className="system-site-toggle"
+                  value={selectedArea}
+                  onChange={setSelectedArea}
+                />
+
+                <CategoryDropdown
+                  className="machine-category-dropdown"
+                  options={equipmentCategories}
+                  value={selectedEquipmentCategory}
+                  onChange={selectEquipmentCategory}
+                  placeholder="No categories"
+                />
+
+                <select
+                  className="system-map-select machine-equipment-select"
+                  value={selectedMachineId}
+                  onChange={(event) => setSelectedMachineId(event.target.value)}
+                  disabled={!visibleMachines.length}
+                  aria-label="Select machine"
+                >
+                  {!visibleMachines.length && <option value="">No machines</option>}
+                  {visibleMachines.map((machine) => (
+                    <option key={machine.id} value={machine.id}>{machine.machine_name}</option>
+                  ))}
+                </select>
+
+                <button
+                  className="system-map-action-button"
+                  type="button"
+                  onClick={() => loadDashboard(selectedMachineId, selectedDate)}
+                  disabled={loading || !selectedMachineId}
+                >
+                  Refresh
                 </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {pendingCreation && (
-        <div className="security-dialog-backdrop">
-          <form className="security-dialog" onSubmit={createAccount} role="dialog" aria-modal="true" aria-labelledby="create-account-title">
-            <div className="account-form-title">
-              <span className="account-title-icon secure"><KeyRound size={19} /></span>
-              <div>
-                <p className="eyebrow">Security check</p>
-                <h3 id="create-account-title">Confirm new Reviewer</h3>
-                <p>Type the Admin password to create <strong>{form.username}</strong>.</p>
               </div>
             </div>
-            {dialogError && <div className="notice error">{dialogError}</div>}
-            <label>
-              Admin password
-              <input type="password" value={createPassword} onChange={(event) => setCreatePassword(event.target.value)} placeholder="Enter Admin password" autoComplete="current-password" autoFocus required />
-            </label>
-            <div className="button-row dialog-actions">
-              <button type="button" className="ghost-btn" onClick={() => {
-                setPendingCreation(false);
-                setCreatePassword("");
-                setDialogError("");
-              }} disabled={busy}>Cancel</button>
-              <button className="primary-btn" disabled={busy}>{busy ? "Creating..." : "Confirm and create"}</button>
-            </div>
-          </form>
-        </div>
-      )}
 
-      {pendingRemoval && (
-        <div className="security-dialog-backdrop">
-          <form className="security-dialog" onSubmit={removeAccount} role="dialog" aria-modal="true" aria-labelledby="remove-account-title">
-            <div className="account-form-title">
-              <KeyRound size={20} />
-              <div>
-                <h3 id="remove-account-title">Remove {pendingRemoval.username}?</h3>
-                <p>Type the Admin password to confirm.</p>
+            <div
+              ref={machineImageMap.stageRef}
+              className={hasMachineImage ? "system-map-stage shared-point-map-stage" : "system-map-stage shared-point-map-stage system-map-stage-empty"}
+            >
+              <div
+                className={hasMachineImage ? "system-map-canvas shared-point-map-canvas" : "system-map-canvas shared-point-map-canvas system-map-canvas-empty"}
+                style={machineImageMap.canvasStyle}
+              >
+                {hasMachineImage && (
+                  <img
+                    src={selectedMachine.image_data_url}
+                    alt={selectedMachine.machine_name}
+                    draggable="false"
+                    onLoad={machineImageMap.handleImageLoad}
+                  />
+                )}
+
+                <svg className="factory-line-layer system-connector-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  {visibleMetrics.map((metric) => {
+                    const { point, card } = calloutLine(metric);
+                    return <line key={`factory-line-${metric.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
+                  })}
+                </svg>
+
+                {visibleMetrics.map((metric) => {
+                  const { point, card } = calloutLine(metric);
+                  return (
+                    <div key={metric.id}>
+                      <span
+                        className={
+                          metric.status === "warning"
+                            ? "factory-target-dot warning system-clickable-dot"
+                            : "factory-target-dot system-clickable-dot"
+                        }
+                        style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                      />
+
+                      <article
+                        className={
+                          metric.status === "warning"
+                            ? "factory-callout-card warning system-builder-callout-button"
+                            : "factory-callout-card system-builder-callout-button"
+                        }
+                        style={{ left: `${card.x}%`, top: `${card.y}%` }}
+                      >
+                        <div>
+                          <span>{metric.title}</span>
+                          <em>{metric.status === "warning" ? "♧" : "✓"}</em>
+                        </div>
+                        <strong>{metric.value}<small>{metric.unit}</small></strong>
+                        {metric.range && <p>{metric.range}</p>}
+                      </article>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-            {dialogError && <div className="notice error">{dialogError}</div>}
-            <label>
-              Admin password
-              <input type="password" value={removePassword} onChange={(event) => setRemovePassword(event.target.value)} placeholder="Admin password" autoComplete="current-password" autoFocus required />
-            </label>
-            <div className="button-row dialog-actions">
-              <button type="button" className="ghost-btn" onClick={() => {
-                setPendingRemoval(null);
-                setRemovePassword("");
-                setDialogError("");
-              }} disabled={busy}>Cancel</button>
-              <button className="danger-btn" disabled={busy}>{busy ? "Removing..." : "Remove account"}</button>
-            </div>
-          </form>
-        </div>
-      )}
-    </section>
+          </section>
+        </section>
+      </section>
+    </main>
   );
 }
 
-function CategoryManager({ categories, reload }) {
-  const cloneCategory = (category) => ({
-    id: category?.id || "",
-    name: category?.name || "",
-    detailFields: (category?.detailFields || []).map((field) => ({ ...field, options: [...(field.options || [])] })),
-    reviewQuestions: (category?.reviewQuestions || []).map((field) => ({ ...field, options: [...(field.options || [])] }))
-  });
-  const [editingId, setEditingId] = useState(categories[0]?.id || "");
-  const [builderMode, setBuilderMode] = useState("details");
-  const [draft, setDraft] = useState(() => cloneCategory(categories[0]));
-  const [activeField, setActiveField] = useState(0);
-  const [message, setMessage] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const collectionKey = builderMode === "details" ? "detailFields" : "reviewQuestions";
-  const fields = draft[collectionKey] || [];
-  const noun = builderMode === "details" ? "detail" : "question";
+function TrendsPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [machines, setMachines] = useState([]);
+  const [trendView, setTrendView] = useState("machine");
+  const [selectedArea, setSelectedArea] = useState(
+    siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury"
+  );
+  const [selectedEquipmentCategory, setSelectedEquipmentCategory] = useState("");
+  const [selectedDetail, setSelectedDetail] = useState("");
+  const [operatorRecords, setOperatorRecords] = useState([]);
+  const [selectedOperator, setSelectedOperator] = useState("");
+  const [selectedMachineIds, setSelectedMachineIds] = useState([]);
+  const [seriesTrendMap, setSeriesTrendMap] = useState({});
+  const [machineTrendMap, setMachineTrendMap] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("Choose an equipment category and parameter, then select equipment below.");
+  const trendLimit = "80";
+
+  const equipmentCategories = useMemo(
+    () => equipmentCategoriesForMachines(machines),
+    [machines]
+  );
+  const visibleMachines = useMemo(
+    () => machinesForEquipmentCategory(machines, selectedEquipmentCategory),
+    [machines, selectedEquipmentCategory]
+  );
+  const operatorOptions = useMemo(() => {
+    const names = new Map();
+
+    for (const record of operatorRecords) {
+      const operatorName = String(record.operator_name || "").trim();
+      const key = normalizedPersonName(operatorName);
+      if (key && !names.has(key)) names.set(key, operatorName);
+    }
+
+    return [...names.values()].sort((a, b) => a.localeCompare(b));
+  }, [operatorRecords]);
+  const detailOptions = useMemo(
+    () => trendOptionsForMachines(visibleMachines),
+    [visibleMachines]
+  );
+  const selectedDetailLabel = detailOptions.find((option) => option.value === selectedDetail)?.label || "Numeric detail";
+
+  async function loadMachines(site = selectedArea) {
+    const query = site ? `?site=${encodeURIComponent(site)}` : "";
+    const machineData = await fetchJson(`/api/machines${query}`);
+    const machineList = machineData.machines || [];
+    const categories = equipmentCategoriesForMachines(machineList);
+    const equipmentCategory = preferredEquipmentCategory(
+      categories,
+      selectedEquipmentCategory
+    );
+    const categoryMachines = machinesForEquipmentCategory(
+      machineList,
+      equipmentCategory
+    );
+    const validIds = new Set(categoryMachines.map((machine) => String(machine.id)));
+    const options = trendOptionsForMachines(categoryMachines);
+
+    setMachines(machineList);
+    setSelectedEquipmentCategory(equipmentCategory);
+    setSelectedMachineIds((current) => current.filter((id) => validIds.has(String(id))));
+    setSelectedDetail((current) => options.some((option) => option.value === current) ? current : options[0]?.value || "");
+
+    if (!machineList.length) {
+      setMessage(site ? `No machines configured for ${site}.` : "No machines configured yet.");
+      setSeriesTrendMap({});
+      setMachineTrendMap({});
+    } else if (!categoryMachines.length) {
+      setMessage(`No equipment configured under ${equipmentCategory || "this category"}.`);
+    } else if (!options.length) {
+      setMessage(`${equipmentCategory || "This equipment category"} does not have numeric details configured yet.`);
+    }
+
+    return {
+      machineList,
+      categoryMachines,
+      equipmentCategory,
+      options,
+    };
+  }
+
+  async function loadOperatorRecords(site = selectedArea) {
+    const data = await fetchJson("/api/records?limit=2000");
+    const records = (data.records || []).filter((record) => (
+      !site || String(record.site_name || "").trim().toLowerCase() === site.toLowerCase()
+    ));
+    setOperatorRecords(records);
+    return records;
+  }
+
+  async function loadTrendForMachine(machineId, limit = trendLimit, machineList = machines, detail = selectedDetail) {
+    if (!machineId) return { field: null, trends: [], warnings: [], stats: null };
+    const machine = machineList.find((item) => String(item.id) === String(machineId));
+    if (!machine) return { field: null, trends: [], warnings: [], stats: null };
+    const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machineId)}&limit=${encodeURIComponent(limit)}`);
+    return buildTrendDataFromRecords(machine, data.records || [], detail);
+  }
+
+  async function loadSelectedSeries(machineIds = selectedMachineIds, machineList = machines, detail = selectedDetail) {
+    if (!machineIds.length) {
+      setSeriesTrendMap({});
+      return {};
+    }
+
+    const entries = await Promise.all(machineIds.map(async (machineId) => {
+      try {
+        return [String(machineId), await loadTrendForMachine(machineId, trendLimit, machineList, detail)];
+      } catch {
+        return [String(machineId), { field: null, trends: [], warnings: [], stats: null }];
+      }
+    }));
+
+    const nextMap = Object.fromEntries(entries);
+    setSeriesTrendMap(nextMap);
+    return nextMap;
+  }
+
+  async function loadGridSummaries(machineList = machines, detail = selectedDetail) {
+    if (!machineList.length) {
+      setMachineTrendMap({});
+      return;
+    }
+
+    const entries = await Promise.all(machineList.map(async (machine) => {
+      try {
+        const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machine.id)}&limit=24`);
+        return [String(machine.id), buildTrendDataFromRecords(machine, data.records || [], detail)];
+      } catch {
+        return [String(machine.id), { field: null, trends: [], warnings: [], stats: null }];
+      }
+    }));
+
+    setMachineTrendMap(Object.fromEntries(entries));
+  }
+
+  async function refreshAll() {
+    try {
+      setLoading(true);
+      const {
+        machineList,
+        categoryMachines,
+        equipmentCategory,
+        options,
+      } = await loadMachines(selectedArea);
+      const detail = options.some((option) => option.value === selectedDetail) ? selectedDetail : options[0]?.value || "";
+      const visibleIds = new Set(categoryMachines.map((machine) => String(machine.id)));
+      const selectedIds = selectedMachineIds.filter((id) => visibleIds.has(String(id)));
+      if (trendView === "operator") {
+        await loadOperatorRecords(selectedArea);
+        setMessage(selectedOperator
+          ? `Showing submissions made by ${selectedOperator}.`
+          : `Choose an operator for ${selectedArea}.`);
+      } else {
+        await Promise.all([
+          loadGridSummaries(categoryMachines, detail),
+          loadSelectedSeries(selectedIds, machineList, detail),
+        ]);
+        setMessage(selectedIds.length
+          ? `Showing ${options.find((option) => option.value === detail)?.label || "numeric detail"} across the selected ${equipmentCategory} equipment.`
+          : `Choose ${equipmentCategory || "equipment"} from the cards below.`);
+      }
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleMachine(machineId) {
+    const id = String(machineId);
+    setSelectedMachineIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function selectTrendView(nextView) {
+    if (nextView === trendView) return;
+    setTrendView(nextView);
+    setSelectedMachineIds([]);
+    setSeriesTrendMap({});
+    setMachineTrendMap({});
+    setMessage(nextView === "operator"
+      ? "Choose an operator to see only the trends from that person's submissions."
+      : "Choose a category and parameter, then select machines below.");
+  }
+
+  function selectEquipmentCategory(category) {
+    const categoryMachines = machinesForEquipmentCategory(machines, category);
+    const options = trendOptionsForMachines(categoryMachines);
+    const visibleIds = new Set(
+      categoryMachines.map((machine) => String(machine.id))
+    );
+
+    setSelectedEquipmentCategory(category);
+    setSelectedDetail((current) => (
+      options.some((option) => option.value === current)
+        ? current
+        : options[0]?.value || ""
+    ));
+    setSelectedMachineIds((current) => (
+      current.filter((id) => visibleIds.has(String(id)))
+    ));
+    setSeriesTrendMap({});
+    setMachineTrendMap({});
+    setMessage(`Showing ${category || "equipment"}. Choose a parameter and equipment below.`);
+  }
+
+  function clearSelectedMachines() {
+    setSelectedMachineIds([]);
+    setSeriesTrendMap({});
+    setMessage("Selection cleared. Choose machines from the cards below.");
+  }
 
   useEffect(() => {
-    const selected = categories.find((category) => category.id === editingId) || categories[0];
-    if (!selected) return;
-    setEditingId(selected.id);
-    setDraft(cloneCategory(selected));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categories]);
+    Promise.all([
+      loadMachines(selectedArea),
+      loadOperatorRecords(selectedArea),
+    ]).catch((error) => setMessage(error.message));
+  }, [selectedArea]);
 
-  function selectCategory(category) {
-    setEditingId(category.id);
-    setDraft(cloneCategory(category));
-    setActiveField(0);
-    setMessage(null);
-  }
+  useEffect(() => {
+    setSelectedOperator((current) => (
+      operatorOptions.some((operator) => normalizedPersonName(operator) === normalizedPersonName(current))
+        ? current
+        : operatorOptions[0] || ""
+    ));
+  }, [operatorOptions]);
 
-  function setFields(updater) {
-    setDraft((current) => ({ ...current, [collectionKey]: updater(current[collectionKey] || []) }));
-  }
+  useEffect(() => {
+    const nextCategory = preferredEquipmentCategory(
+      equipmentCategories,
+      selectedEquipmentCategory
+    );
+    if (nextCategory !== selectedEquipmentCategory) {
+      setSelectedEquipmentCategory(nextCategory);
+    }
+  }, [equipmentCategories, selectedEquipmentCategory]);
 
-  function makeField() {
+  useEffect(() => {
+    setSelectedDetail((current) => (
+      detailOptions.some((option) => option.value === current)
+        ? current
+        : detailOptions[0]?.value || ""
+    ));
+
+    const visibleIds = new Set(
+      visibleMachines.map((machine) => String(machine.id))
+    );
+    setSelectedMachineIds((current) => (
+      current.filter((id) => visibleIds.has(String(id)))
+    ));
+  }, [selectedEquipmentCategory, detailOptions, visibleMachines]);
+
+  useEffect(() => {
+    if (trendView !== "machine" || !visibleMachines.length || !selectedDetail) {
+      setMachineTrendMap({});
+      return;
+    }
+    loadGridSummaries(visibleMachines, selectedDetail).catch((error) => setMessage(error.message));
+  }, [trendView, visibleMachines, selectedDetail]);
+
+  useEffect(() => {
+    if (trendView !== "machine" || !selectedMachineIds.length || !selectedDetail) {
+      setSeriesTrendMap({});
+      return;
+    }
+    loadSelectedSeries(selectedMachineIds, machines, selectedDetail).catch((error) => setMessage(error.message));
+  }, [trendView, selectedMachineIds, selectedDetail, machines]);
+
+  useEffect(() => {
+    if (trendView !== "operator") return;
+
+    const operatorKey = normalizedPersonName(selectedOperator);
+    const matchingIds = visibleMachines
+      .filter((machine) => operatorRecords.some((record) => (
+        normalizedPersonName(record.operator_name) === operatorKey
+        && recordMatchesMachine(record, machine)
+      )))
+      .map((machine) => String(machine.id));
+
+    setSelectedMachineIds(matchingIds);
+    setMessage(selectedOperator
+      ? `${selectedOperator} has submissions for ${matchingIds.length} ${selectedEquipmentCategory || "selected"} machine${matchingIds.length === 1 ? "" : "s"}.`
+      : `No operators found for ${selectedArea}.`);
+  }, [
+    trendView,
+    selectedOperator,
+    selectedEquipmentCategory,
+    selectedArea,
+    visibleMachines,
+    operatorRecords,
+  ]);
+
+  const machineSeriesItems = selectedMachineIds.map((machineId) => {
+    const machine = machines.find((item) => String(item.id) === String(machineId));
+    if (!machine) return null;
+    const data = seriesTrendMap[String(machineId)] || { field: null, trends: [], warnings: [], stats: null };
+    const latest = [...(data.trends || [])].reverse().find((item) => (
+      item.reading_value !== null
+      && item.reading_value !== undefined
+      && item.reading_value !== ""
+      && Number.isFinite(Number(item.reading_value))
+    )) || null;
+    const stats = data.stats || {};
+    const meta = data.field ? getMachineReadingMeta(machine, data.field) : { label: selectedDetailLabel, unit: "" };
     return {
-      id: `${builderMode === "details" ? "detail" : "question"}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      label: builderMode === "details" ? "Untitled detail" : "Untitled question",
-      type: builderMode === "details" ? "text" : "radio",
-      required: false,
-      placeholder: "",
-      options: builderMode === "details" ? [] : ["Option 1"]
+      id: String(machineId),
+      machine,
+      data,
+      latest,
+      stats,
+      meta,
+      latestValue: latest?.reading_value ?? stats.avg_reading,
     };
+  }).filter(Boolean);
+
+  const operatorMachineTrendMap = useMemo(() => {
+    if (trendView !== "operator" || !selectedOperator || !selectedDetail) return {};
+
+    const operatorKey = normalizedPersonName(selectedOperator);
+    return Object.fromEntries(visibleMachines.map((machine) => {
+      const records = operatorRecords.filter((record) => (
+        normalizedPersonName(record.operator_name) === operatorKey
+        && recordMatchesMachine(record, machine)
+      ));
+      return [String(machine.id), buildTrendDataFromRecords(machine, records, selectedDetail)];
+    }));
+  }, [
+    trendView,
+    selectedOperator,
+    selectedDetail,
+    visibleMachines,
+    operatorRecords,
+  ]);
+
+  const operatorSeriesItems = useMemo(() => {
+    if (trendView !== "operator" || !selectedOperator || !selectedDetail) return [];
+
+    return selectedMachineIds.map((machineId) => {
+      const machine = machines.find((item) => String(item.id) === String(machineId));
+      if (!machine) return null;
+
+      const data = operatorMachineTrendMap[String(machineId)]
+        || { field: null, trends: [], warnings: [], stats: null };
+      const latest = [...(data.trends || [])].reverse().find((item) => (
+        item.reading_value !== null
+        && item.reading_value !== undefined
+        && item.reading_value !== ""
+        && Number.isFinite(Number(item.reading_value))
+      )) || null;
+      const stats = data.stats || {};
+      const meta = data.field
+        ? getMachineReadingMeta(machine, data.field)
+        : { label: selectedDetailLabel, unit: "" };
+
+      return {
+        id: String(machineId),
+        machine,
+        data,
+        latest,
+        stats,
+        meta,
+        latestValue: latest?.reading_value ?? stats.avg_reading,
+      };
+    }).filter((item) => item && item.data?.trends?.some((row) => (
+      row.reading_value !== null
+      && row.reading_value !== undefined
+      && row.reading_value !== ""
+      && Number.isFinite(Number(row.reading_value))
+    )));
+  }, [
+    trendView,
+    selectedOperator,
+    selectedDetail,
+    selectedMachineIds,
+    machines,
+    operatorMachineTrendMap,
+    selectedDetailLabel,
+  ]);
+
+  const seriesItems = trendView === "operator" ? operatorSeriesItems : machineSeriesItems;
+  const gridTrendMap = trendView === "operator" ? operatorMachineTrendMap : machineTrendMap;
+  const gridMachines = trendView === "operator"
+    ? visibleMachines.filter((machine) => operatorRecords.some((record) => (
+      normalizedPersonName(record.operator_name) === normalizedPersonName(selectedOperator)
+      && recordMatchesMachine(record, machine)
+    )))
+    : visibleMachines;
+  const totalWarnings = seriesItems.reduce((sum, item) => sum + Number(item.stats?.warning_count || 0), 0);
+
+  return (
+    <main className="factory-os-page factory-trends-page">
+      <FactoryTopNav activePage="trends" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} warningCount={totalWarnings} />
+
+      <section className="factory-trends-workspace">
+        <section className="factory-trends-overview-card">
+          <div className="factory-trends-chart-panel">
+            <div className="factory-trends-card-head">
+              <div className="factory-trends-title">
+                <p className="eyebrow">Trend Comparison</p>
+              </div>
+              <div className={`factory-trends-actions trend-view-${trendView}`}>
+                <div className="trend-view-switch" role="group" aria-label="Trend view">
+                  <button
+                    type="button"
+                    className={trendView === "operator" ? "active" : ""}
+                    aria-pressed={trendView === "operator"}
+                    onClick={() => selectTrendView("operator")}
+                  >
+                    Operator
+                  </button>
+                  <button
+                    type="button"
+                    className={trendView === "machine" ? "active" : ""}
+                    aria-pressed={trendView === "machine"}
+                    onClick={() => selectTrendView("machine")}
+                  >
+                    Machine
+                  </button>
+                </div>
+                {trendView === "operator" && (
+                  <label className="trend-filter-control operator-filter-control">
+                    <span>Operator</span>
+                    <select
+                      value={selectedOperator}
+                      onChange={(event) => setSelectedOperator(event.target.value)}
+                      disabled={loading || !operatorOptions.length}
+                      aria-label="Select operator"
+                    >
+                      {!operatorOptions.length && <option value="">No operators</option>}
+                      {operatorOptions.map((operator) => (
+                        <option key={operator} value={operator}>{operator}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {trendView === "machine" && (
+                  <>
+                    <div className="trend-filter-control area-filter-control">
+                      <span>Area</span>
+                      <SiteToggleButton
+                        className="trend-site-toggle"
+                        value={selectedArea}
+                        onChange={setSelectedArea}
+                      />
+                    </div>
+                    <div className="trend-filter-control equipment-filter-control">
+                      <span>Category</span>
+                      <CategoryDropdown
+                        value={selectedEquipmentCategory}
+                        options={equipmentCategories}
+                        onChange={selectEquipmentCategory}
+                        placeholder="No categories"
+                        className="trend-category-dropdown"
+                      />
+                    </div>
+                    <label className="trend-filter-control detail-filter-control">
+                      <span>Parameter</span>
+                      <select value={selectedDetail} onChange={(event) => setSelectedDetail(event.target.value)} disabled={loading || !detailOptions.length} aria-label="Select detail">
+                        {!detailOptions.length && <option value="">No numeric parameters</option>}
+                        {detailOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                  </>
+                )}
+                <button className="trend-refresh-button" type="button" onClick={refreshAll} disabled={loading}>{loading ? "Loading" : "Refresh"}</button>
+              </div>
+            </div>
+            <TrendMultiMachineChart
+              seriesItems={seriesItems}
+              emptyMessage={trendView === "operator"
+                ? "Choose an operator with at least 2 submissions for the selected parameter."
+                : "Select equipment with at least 2 submissions."}
+            />
+          </div>
+
+          <aside className="factory-trends-stats-panel trends-compare-stats-panel">
+            <div className="trend-side-header-row">
+              <div>
+                <span className="trend-side-label">
+                  {trendView === "operator" ? "Operator machines" : "Selected machines"}
+                </span>
+                <strong>{seriesItems.length}</strong>
+              </div>
+              <button className="ghost-button small" type="button" onClick={clearSelectedMachines} disabled={!seriesItems.length}>Clear</button>
+            </div>
+
+            <div className="trend-compare-series-list">
+              {!seriesItems.length ? (
+                <p className="empty-state">
+                  {trendView === "operator"
+                    ? `Choose an operator, then select that person's machines below. The graph will use ${selectedDetailLabel}.`
+                    : `Select machine cards below. The graph will use ${selectedDetailLabel}.`}
+                </p>
+              ) : seriesItems.map((item, index) => (
+                <article key={item.id} className="trend-compare-series-card">
+                  <div className="trend-compare-series-head">
+                    <span className={`trend-series-swatch series-${index % 8}`} />
+                    <div>
+                      <strong>{item.machine.machine_name}</strong>
+                      <small>
+                        {trendView === "operator" ? `${selectedOperator} • ` : ""}
+                        {item.machine.site_name || "—"} • {item.meta.label || selectedDetailLabel}
+                      </small>
+                    </div>
+                    <button className="ghost-button small" type="button" onClick={() => toggleMachine(item.id)}>×</button>
+                  </div>
+                  <div className="trend-compare-current-grid">
+                    <article><span>Latest</span><strong>{formatNumber(item.latestValue)}</strong></article>
+                    <article><span>Average</span><strong>{formatNumber(item.stats.avg_reading)}</strong></article>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </aside>
+        </section>
+
+        <section className="factory-trends-machine-grid" aria-label={trendView === "operator" ? "Operator machines" : "Configured machines"}>
+          {!gridMachines.length ? (
+            <div className="empty-state">
+              {trendView === "operator"
+                ? `${selectedOperator || "This operator"} has no ${selectedEquipmentCategory || "equipment"} submissions for ${selectedArea}.`
+                : `No ${selectedEquipmentCategory || "equipment"} configured for ${selectedArea || "All"}.`}
+            </div>
+          ) : (
+            gridMachines.map((machine) => (
+              <TrendMachineTile
+                key={machine.id}
+                machine={machine}
+                miniData={gridTrendMap[String(machine.id)] || { trends: [], stats: null }}
+                isSelected={selectedMachineIds.includes(String(machine.id))}
+                onSelect={() => toggleMachine(String(machine.id))}
+              />
+            ))
+          )}
+        </section>
+
+        <div className="factory-trends-footer">
+          {message} {gridMachines.length
+            ? `• ${trendView === "operator" ? selectedOperator : selectedEquipmentCategory} • ${gridMachines.length} equipment • Parameter: ${selectedDetailLabel}`
+            : ""}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function LogsPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [records, setRecords] = useState([]);
+  const [machines, setMachines] = useState([]);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState({ search: "", machine: "", site: "", date: "" });
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 8;
+
+  function updateFilter(field, value) {
+    setFilters((current) => ({ ...current, [field]: value }));
+    setCurrentPage(1);
+  }
+
+  function clearFilters() {
+    setFilters({ search: "", machine: "", site: "", date: "" });
+    setCurrentPage(1);
+  }
+
+  async function loadLogs() {
+    try {
+      setLoading(true);
+      setMessage("");
+      const [recordsData, machineData] = await Promise.all([
+        fetchJson("/api/records?limit=300"),
+        fetchJson("/api/machines").catch(() => ({ machines: [] })),
+      ]);
+      setRecords(recordsData.records || []);
+      setMachines(machineData.machines || []);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const machineOptions = useMemo(() => {
+    const options = [];
+    const seen = new Set();
+    for (const machine of machines) {
+      const label = machine.machine_name || `Machine ${machine.id}`;
+      const value = `id:${machine.id}`;
+      options.push({ value, label, id: String(machine.id), name: label });
+      seen.add(value);
+      seen.add(`name:${label.trim().toLowerCase()}`);
+    }
+    for (const record of records) {
+      const name = String(record.machine_name || "").trim();
+      if (!name) continue;
+      const key = `name:${name.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      const value = record.machine_config_id ? `id:${record.machine_config_id}` : `name:${name}`;
+      if (seen.has(value)) continue;
+      options.push({ value, label: name, id: record.machine_config_id ? String(record.machine_config_id) : "", name });
+      seen.add(value);
+      seen.add(key);
+    }
+    return options.sort((a, b) => a.label.localeCompare(b.label));
+  }, [machines, records]);
+
+  const selectedMachineOption = useMemo(() => machineOptions.find((machine) => machine.value === filters.machine), [machineOptions, filters.machine]);
+
+  function machineForRecord(record) {
+    const recordMachineId = record.machine_config_id === null || record.machine_config_id === undefined ? "" : String(record.machine_config_id);
+    const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
+    return machines.find((machine) => String(machine.id) === recordMachineId) || machines.find((machine) => String(machine.machine_name || "").trim().toLowerCase() === recordMachineName) || null;
+  }
+
+  function fieldsForRecord(record) {
+    const machine = machineForRecord(record);
+    return machine ? normalizeFields(machine.fields) : [];
+  }
+
+  function logFieldInfo(record, column) {
+    const field = fieldsForRecord(record).find(
+      (item) => slugText(visibleVariableName(item, record.machine_name)) === column.key
+    );
+
+    if (field) {
+      return {
+        field,
+        value: valueFromRecordField(record, field),
+        proof: field.type === "image" ? proofForField(record, field.id) : null,
+      };
+    }
+
+    const responseFields = record.response_fields && typeof record.response_fields === "object" ? record.response_fields : {};
+    const directKey = Object.keys(responseFields).find((keyName) => slugText(keyName) === column.key);
+
+    return {
+      field: null,
+      value: directKey ? responseFields[directKey] : "",
+      proof: null,
+    };
+  }
+
+  function valueForLogField(record, column) {
+    const { value } = logFieldInfo(record, column);
+    return value === null || value === undefined || value === "" ? "—" : String(value);
+  }
+
+  function renderLogField(record, column) {
+    const { value, proof } = logFieldInfo(record, column);
+    return <ProofValue value={value} proof={proof} />;
+  }
+
+  const logColumns = useMemo(() => {
+    const columns = [];
+    const seen = new Set();
+    for (const machine of machines) {
+      for (const field of normalizeFields(machine.fields)) {
+        const label = visibleVariableName(field, machine.machine_name);
+        const key = slugText(label);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        columns.push({ key, label, type: field.type });
+      }
+    }
+    if (!columns.length) {
+      for (const record of records) {
+        const fields = record.response_fields && typeof record.response_fields === "object" ? Object.keys(record.response_fields) : [];
+        for (const keyName of fields) {
+          const key = slugText(keyName);
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          columns.push({ key, label: keyName, type: "text" });
+        }
+      }
+    }
+    return columns;
+  }, [machines, records]);
+
+  const filteredRecords = useMemo(() => {
+    const search = filters.search.trim().toLowerCase();
+    return records.filter((record) => {
+      const siteMatch = !filters.site || record.site_name === filters.site;
+      const dateMatch = !filters.date || recordDateKey(record.record_timestamp) === filters.date;
+      const machineMatch = !filters.machine || (() => {
+        if (!selectedMachineOption) return true;
+        const recordMachineId = record.machine_config_id === null || record.machine_config_id === undefined ? "" : String(record.machine_config_id);
+        const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
+        return ((selectedMachineOption.id && recordMachineId === selectedMachineOption.id) || (selectedMachineOption.name && recordMachineName === selectedMachineOption.name.trim().toLowerCase()));
+      })();
+      const dynamicValues = logColumns.map((column) => valueForLogField(record, column));
+      const haystack = [record.operator_name, record.site_name, record.machine_name, record.reading_value, JSON.stringify(record.response_fields || {}), ...dynamicValues].join(" ").toLowerCase();
+      return machineMatch && siteMatch && dateMatch && (!search || haystack.includes(search));
+    });
+  }, [records, filters, selectedMachineOption, machines, logColumns]);
+
+  const hasFilters = Object.values(filters).some(Boolean);
+  const bellCount = 0;
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const paginatedRecords = filteredRecords.slice(pageStart, pageStart + pageSize);
+  const pageEnd = Math.min(filteredRecords.length, pageStart + pageSize);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  useEffect(() => { loadLogs(); }, []);
+
+  function initials(name = "User") {
+    return String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "U";
+  }
+
+  function pageNumbers() {
+    const pages = [];
+    for (let page = 1; page <= totalPages; page += 1) {
+      if (page === 1 || page === totalPages || Math.abs(page - safePage) <= 1) pages.push(page);
+      else if (pages[pages.length - 1] !== "…") pages.push("…");
+    }
+    return pages;
+  }
+
+  function Icon({ name }) {
+    if (name === "list") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h10M8 12h10M8 17h10M4 7h.01M4 12h.01M4 17h.01" /></svg>;
+    if (name === "bowl") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14a7 7 0 0 1-14 0Zm5-5c0 1 .5 1.5 1.5 2.5M14 6c0 1 .5 1.5 1.5 2.5" /></svg>;
+    if (name === "bottle") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h4m-3 0v3l-3 4v7a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-7l-3-4V4" /></svg>;
+    if (name === "clipboard") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l1 2h2v14H6V6h2l1-2Zm0 5h6M9 13h6M9 17h4" /></svg>;
+    return null;
+  }
+
+  return (
+    <main className="factory-logs-page">
+      <FactoryTopNav activePage="logs" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} warningCount={bellCount} />
+
+      <section className="logs-dashboard-shell compact-logs-layout">
+        <section className="logs-main-panel">
+          <section className="logs-records-card">
+            <div className="logs-records-head">
+              <div><h1><Icon name="clipboard" />Submission Records</h1></div>
+              <div className="logs-records-actions">
+                <button className="logs-clear-all" type="button" onClick={clearFilters} disabled={!hasFilters}>Clear All</button>
+                <button className="logs-refresh-button" type="button" onClick={loadLogs} disabled={loading}>{loading ? "Loading..." : "Refresh"}</button>
+              </div>
+            </div>
+
+            <div className="logs-filters-grid">
+              <label className="logs-search-input">
+                <input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search operator or values..." />
+                <span className="logs-search-icon">⌕</span>
+              </label>
+              <div className="logs-site-control">
+                <span className="logs-filter-label">Site</span>
+                <div className="logs-site-segment" role="group" aria-label="Filter submissions by site">
+                  {[
+                    { label: "All", value: "" },
+                    { label: "Dressings", value: "Dressings" },
+                    { label: "Savoury", value: "Savoury" },
+                  ].map((site) => (
+                    <button
+                      key={site.label}
+                      type="button"
+                      className={filters.site === site.value ? "active" : ""}
+                      aria-pressed={filters.site === site.value}
+                      onClick={() => updateFilter("site", site.value)}
+                    >
+                      {site.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="logs-machine-control">
+                <span>Machine</span>
+                <select value={filters.machine} onChange={(event) => updateFilter("machine", event.target.value)}>
+                  <option value="">All Machines</option>
+                  {machineOptions.map((machine) => <option key={machine.value} value={machine.value}>{machine.label}</option>)}
+                </select>
+              </label>
+              <label className="logs-date-control">
+                <span>Date</span>
+                <input type="date" value={filters.date} onChange={(event) => updateFilter("date", event.target.value)} />
+              </label>
+            </div>
+
+            {message && <p className="message">{message}</p>}
+
+            <div className="logs-table-wrap">
+              <table className="logs-table">
+                <thead>
+                  <tr>
+                    <th>When</th><th>Operator</th><th>Site</th><th>Machine</th>
+                    {logColumns.map((column) => <th key={column.key} className={`logs-variable-head ${variableToneClass(column.label)}`}>{column.label}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {!paginatedRecords.length ? (
+                    <tr><td colSpan={4 + logColumns.length} className="logs-empty-cell">No submissions found for the current filters.</td></tr>
+                  ) : paginatedRecords.map((record) => (
+                    <tr key={record.id}>
+                      <td><div className="logs-when-cell"><span className="logs-cell-icon small">◷</span><span>{formatDateTime(record.record_timestamp)}</span></div></td>
+                      <td><div className="logs-operator-cell"><span className="logs-avatar">{initials(record.operator_name)}</span><span>{record.operator_name || "—"}</span></div></td>
+                      <td>{record.site_name || "—"}</td>
+                      <td>{record.machine_name || "—"}</td>
+                      {logColumns.map((column) => (
+                        <td key={`${record.id}-${column.key}`}>
+                          <span className={`logs-variable-value ${variableToneClass(column.label)}`}>
+                            {renderLogField(record, column)}
+                          </span>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="logs-table-footer">
+              <span>Showing {filteredRecords.length ? pageStart + 1 : 0} to {pageEnd} of {filteredRecords.length.toLocaleString("en-US")} records</span>
+              <div className="logs-pagination">
+                <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safePage <= 1}>‹</button>
+                {pageNumbers().map((item, index) => item === "…" ? <span key={`ellipsis-${index}`} className="ellipsis">…</span> : <button key={item} type="button" className={item === safePage ? "active" : ""} onClick={() => setCurrentPage(item)}>{item}</button>)}
+                <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={safePage >= totalPages}>›</button>
+                <span className="logs-page-size">{pageSize} / page</span>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [userForm, setUserForm] = useState({ ...emptyUserForm, roleName: "operator" });
+  const [imageDataUrl, setImageDataUrl] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [deleteMode, setDeleteMode] = useState(false);
+
+  function updateUserField(field, value) { setUserForm((current) => ({ ...current, [field]: value })); }
+  async function loadUsers() { const usersData = await fetchJson("/api/admin/users"); setUsers(usersData.users || []); }
+
+  async function handleCreateUser(event) {
+    event.preventDefault();
+    setMessage("");
+    try {
+      setSaving(true);
+      const data = await fetchJson("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, imageDataUrl, registeredBy: userDisplayName(adminUser || user) }) });
+      setMessage(`Saved ${data.profile.operator_name} as ${data.profile.role_name}.`);
+      setUserForm({ ...emptyUserForm, roleName: "operator" });
+      setImageDataUrl("");
+      await loadUsers();
+    } catch (error) { setMessage(error.message); } finally { setSaving(false); }
+  }
+
+  async function handleDeleteUser(user) {
+    if (!window.confirm(`Delete ${user?.operator_name || "this person"}? Old submissions stay in logs.`)) return;
+    try { setDeletingId(user.id); setMessage(""); await fetchJson(`/api/admin/users/${user.id}`, { method: "DELETE" }); await loadUsers(); }
+    catch (error) { setMessage(error.message); }
+    finally { setDeletingId(null); }
+  }
+
+  useEffect(() => { loadUsers().catch((error) => setMessage(error.message)); }, []);
+
+  return (
+    <>
+      <FactoryTopNav activePage="register" user={adminUser || user} setPage={setPage} onLogout={onLogout} standalone={standalone} />
+      <main className="admin-page app-gradient page-pad compact-mobile-page">
+      <section className="admin-grid register-grid">
+        <form className="input-form glass-card compact-form" onSubmit={handleCreateUser}>
+          <p className="eyebrow">Admin Register</p><h1>Register Anyone</h1>
+          <div className="field-grid two only-basic-register">
+            <label>{requiredLabel("Name")}<input value={userForm.operatorName} onChange={(event) => updateUserField("operatorName", event.target.value)} placeholder="Person name" required /></label>
+            <label>{requiredLabel("Role")}<select value={userForm.roleName} onChange={(event) => updateUserField("roleName", event.target.value)}>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
+            <label>{requiredLabel("Site")}<select value={userForm.siteName} onChange={(event) => updateUserField("siteName", event.target.value)}>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
+          </div>
+          <div className="face-capture-row compact-face-row"><strong>Face Login Link</strong><button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button></div>
+          <button type="submit" disabled={saving}>{saving ? "Saving..." : "Register"}</button>{message && <p className="message">{message}</p>}
+        </form>
+        <section className="glass-card dashboard-summary">
+          <p className="eyebrow">Accounts</p><div className="registered-header-row"><h2>Registered People</h2><button className={deleteMode ? "delete-user-button active-delete" : "delete-user-button"} type="button" onClick={() => setDeleteMode((current) => !current)}>{deleteMode ? "Done" : "Delete"}</button></div>
+          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div className="registered-person-main"><strong>{user.operator_name}</strong><span>{user.site_name}</span>{deletingId === user.id && <small>Deleting...</small>}</div></article>)}</div>
+        </section>
+      </section>
+      {cameraOpen && <FaceCaptureModal title="Register Face" description="Use the front camera or choose a clear face photo for future login." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
+      </main>
+    </>
+  );
+}
+
+function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, standalone = false }) {
+  const [machines, setMachines] = useState([]);
+  const [selectedSite, setSelectedSite] = useState(
+    siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury"
+  );
+  const [form, setForm] = useState(emptyMachineForm);
+  const [selectedCalloutId, setSelectedCalloutId] = useState("");
+  const [markMode, setMarkMode] = useState(null);
+  const [manageMode, setManageMode] = useState(null);
+  const [selectedVariableId, setSelectedVariableId] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState("Autosave ready");
+  const autosaveTimerRef = useRef(null);
+  const skipAutosaveRef = useRef(true);
+  const systemImageMap = useFittedImageCanvas(form.image_data_url, pointMapFitPadding);
+
+  function normalizeMachineForm(machine) {
+    const fields = normalizeFields(machine?.fields).map((field) => ({
+      ...field,
+      label: stripMachinePrefixLabel(field.label, machine?.machine_name),
+    }));
+    const callouts = normalizeCallouts(machine?.callouts).map((callout) => {
+      const field = fields.find((item) => String(item.id) === String(callout.valueKey));
+      return field ? { ...callout, title: field.label } : callout;
+    });
+
+    return {
+      ...emptyMachineForm,
+      ...machine,
+      details: machine ? equipmentCategoryForMachine(machine) : "",
+      fields,
+      callouts,
+      threshold_min: machine?.threshold_min ?? "",
+      threshold_max: machine?.threshold_max ?? "",
+    };
+  }
+
+  function applyFormWithoutAutosave(next) {
+    skipAutosaveRef.current = true;
+    setForm(next);
+  }
+
+  function resetForm(siteName = selectedSite) {
+    applyFormWithoutAutosave({
+      ...emptyMachineForm,
+      site_name: siteName,
+      fields: [],
+      callouts: [],
+    });
+    setSelectedCalloutId("");
+    setMarkMode(null);
+    setManageMode(null);
+    setSelectedVariableId("");
+    setMessage("New setup ready.");
+    setAutosaveStatus("Enter a machine name to autosave");
+  }
+
+  function updateForm(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
   }
 
   function updateField(index, key, value) {
-    setFields((current) => current.map((field, fieldIndex) => {
-      if (fieldIndex !== index) return field;
-      const next = { ...field, [key]: value };
-      if (key === "type" && OPTION_QUESTION_TYPES.has(value) && !(field.options || []).length) next.options = ["Option 1"];
-      return next;
+    setForm((current) => {
+      const oldField = current.fields[index];
+      if (!oldField) return current;
+
+      const nextFields = current.fields.map((field, i) => {
+        if (i !== index) return field;
+        if (key === "id") {
+          const nextId = normalizeVariableKey(value, oldField.id || `variable_${index + 1}`);
+          return { ...field, id: nextId };
+        }
+        return { ...field, [key]: value };
+      });
+
+      const nextField = nextFields[index];
+      const nextCallouts = current.callouts.map((callout) => {
+        if (String(callout.valueKey) !== String(oldField.id)) return callout;
+        if (key === "id") return { ...callout, id: `callout-${nextField.id}`, valueKey: nextField.id };
+        if (key === "label") return { ...callout, title: value || nextField.id };
+        return callout;
+      });
+
+      if (key === "id") setSelectedVariableId(nextField.id);
+      return { ...current, fields: nextFields, callouts: nextCallouts };
+    });
+  }
+
+  function updateFieldType(index, value) {
+    setForm((current) => ({
+      ...current,
+      fields: current.fields.map((field, i) => {
+        if (i !== index) return field;
+        const next = { ...field, type: value };
+        if (value === "option" && !splitFieldOptions(next.options ?? next.optionsText).length) {
+          next.options = ["Yes", "No"];
+          next.optionsText = "Yes\nNo";
+        }
+        if (value !== "number") next.thresholdEnabled = false;
+        return next;
+      }),
     }));
   }
 
-  function addField() {
-    setActiveField(fields.length);
-    setFields((current) => [...current, makeField()]);
+  function updateFieldOptions(index, value) {
+    setForm((current) => ({
+      ...current,
+      fields: current.fields.map((field, i) => (
+        i === index ? { ...field, optionsText: value, options: splitFieldOptions(value) } : field
+      )),
+    }));
   }
 
-  function removeField(index) {
-    setFields((current) => current.filter((_, fieldIndex) => fieldIndex !== index));
-    setActiveField((current) => Math.max(0, Math.min(current, Math.max(0, fields.length - 2))));
-  }
+  async function loadMachines(selectFirst = false) {
+    const data = await fetchJson("/api/admin/machines");
+    const machineList = data.machines || [];
+    setMachines(machineList);
 
-  function duplicateField(index) {
-    setFields((current) => {
-      const copy = {
-        ...current[index],
-        id: `${builderMode}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        options: [...(current[index].options || [])]
-      };
-      const next = [...current];
-      next.splice(index + 1, 0, copy);
-      return next;
-    });
-    setActiveField(index + 1);
-  }
+    if (selectFirst) {
+      const firstMachine =
+        machineList.find((machine) => machine.site_name === selectedSite) ||
+        machineList[0];
 
-  function moveField(index, direction) {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= fields.length) return;
-    setFields((current) => {
-      const next = [...current];
-      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-      return next;
-    });
-    setActiveField(nextIndex);
-  }
-
-  function updateOption(fieldIndex, optionIndex, value) {
-    setFields((current) => current.map((field, currentIndex) => currentIndex === fieldIndex
-      ? { ...field, options: (field.options || []).map((option, currentOption) => currentOption === optionIndex ? value : option) }
-      : field));
-  }
-
-  async function save(event) {
-    event.preventDefault();
-    setMessage(null);
-    for (const key of ["detailFields", "reviewQuestions"]) {
-      const blankIndex = (draft[key] || []).findIndex((field) => !field.label.trim());
-      if (blankIndex !== -1) {
-        setBuilderMode(key === "detailFields" ? "details" : "questions");
-        setActiveField(blankIndex);
-        setMessage({ type: "error", text: `${key === "detailFields" ? "Detail" : "Question"} ${blankIndex + 1} needs a title.` });
-        return;
-      }
-      const missingOptions = (draft[key] || []).findIndex((field) => OPTION_QUESTION_TYPES.has(field.type) && !(field.options || []).some((option) => option.trim()));
-      if (missingOptions !== -1) {
-        setBuilderMode(key === "detailFields" ? "details" : "questions");
-        setActiveField(missingOptions);
-        setMessage({ type: "error", text: `${key === "detailFields" ? "Detail" : "Question"} ${missingOptions + 1} needs an option.` });
-        return;
-      }
+      if (firstMachine) editMachine(firstMachine);
+      else resetForm(selectedSite);
     }
 
-    const payload = {
-      ...draft,
-      detailFields: draft.detailFields.map((field) => ({ ...field, options: (field.options || []).map((option) => option.trim()).filter(Boolean) })),
-      reviewQuestions: draft.reviewQuestions.map((field) => ({ ...field, options: (field.options || []).map((option) => option.trim()).filter(Boolean) }))
-    };
-    setSaving(true);
+    return machineList;
+  }
+
+  function editMachine(machine) {
+    const next = normalizeMachineForm(machine);
+    setSelectedSite(next.site_name || "Savoury");
+    applyFormWithoutAutosave(next);
+    setSelectedCalloutId(next.callouts[0]?.id || "");
+    setMarkMode(null);
+    setManageMode(null);
+    setSelectedVariableId(next.fields[0]?.id || "");
+    setMessage("");
+    setAutosaveStatus("Saved");
+  }
+
+  async function persistMachine(sourceForm = form, { silent = false } = {}) {
+    const cleanMachineName = String(sourceForm.machine_name || "").trim();
+    if (!cleanMachineName) {
+      if (!silent) setMessage("Machine name is required.");
+      setAutosaveStatus("Enter a machine name to autosave");
+      return null;
+    }
+
     try {
-      const saved = await api.updateCategory(editingId, payload);
-      setDraft(cloneCategory(saved));
-      setMessage({ type: "success", text: `${saved.name} builder saved.` });
-      await reload();
-    } catch (saveError) {
-      setMessage({ type: "error", text: saveError.message });
+      setSaving(true);
+      if (silent) setAutosaveStatus("Saving...");
+      const payload = {
+        ...sourceForm,
+        machine_name: cleanMachineName,
+        details: String(sourceForm.details || "").trim(),
+      };
+      const data = await fetchJson("/api/admin/machines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (data.machine) {
+        const next = normalizeMachineForm(data.machine);
+        setSelectedSite(next.site_name || selectedSite);
+        applyFormWithoutAutosave(next);
+        setSelectedCalloutId((current) => next.callouts.find((item) => item.id === current)?.id || next.callouts[0]?.id || "");
+        setMachines((current) => {
+          const exists = current.some((item) => String(item.id) === String(next.id));
+          if (exists) return current.map((item) => (String(item.id) === String(next.id) ? data.machine : item));
+          return [data.machine, ...current];
+        });
+      }
+
+      setAutosaveStatus("Saved");
+      if (!silent) setMessage("Machine setup saved.");
+      return data.machine || null;
+    } catch (error) {
+      setAutosaveStatus("Autosave failed");
+      setMessage(error.message);
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleImageUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setMessage("Preparing image and resizing it...");
+      const compactImage = await imageFileToCompactDataUrl(file);
+      updateForm("image_data_url", compactImage);
+      setMessage("Image ready. Autosaving...");
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function beginMarking(calloutId, mode) {
+    const callout = form.callouts.find((item) => item.id === calloutId);
+    const field = form.fields.find((item) => String(item.id) === String(callout?.valueKey));
+    setSelectedCalloutId(calloutId);
+    if (field) setSelectedVariableId(field.id);
+    setMarkMode(mode);
+    setManageMode("variable");
+    setMessage(mode === "card" ? `Place the ${field?.label || callout?.title || "variable"} card on the map.` : `Mark the machine point for ${field?.label || callout?.title || "this variable"}.`);
+  }
+
+  function handlePreviewClick(event) {
+    if (!selectedCalloutId || !markMode) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(3, Math.min(97, ((event.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(6, Math.min(94, ((event.clientY - rect.top) / rect.height) * 100));
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    const selectedName = form.callouts.find((callout) => callout.id === selectedCalloutId)?.title || "callout";
+    setForm((current) => ({
+      ...current,
+      callouts: current.callouts.map((callout) => {
+        if (callout.id !== selectedCalloutId) return callout;
+        if (markMode === "card") return { ...callout, cardX: roundedX, cardY: roundedY };
+        return { ...callout, pointX: roundedX, pointY: roundedY, x: roundedX, y: roundedY };
+      }),
+    }));
+    setMarkMode(null);
+    setMessage(`${markMode === "card" ? "Card" : "Point"} marked for ${selectedName}. Autosaving...`);
+  }
+
+  async function handleSave(event) {
+    event.preventDefault();
+    await persistMachine(form, { silent: false });
+  }
+
+  async function handleDelete(machine) {
+    if (!machine?.id) return;
+    if (!window.confirm(`Delete ${machine.machine_name}?`)) return;
+    try {
+      await fetchJson(`/api/admin/machines/${machine.id}`, { method: "DELETE" });
+      const machineList = await loadMachines();
+      const nextMachine =
+        machineList.find((item) => item.site_name === selectedSite) ||
+        machineList[0];
+
+      if (nextMachine) editMachine(nextMachine);
+      else resetForm(selectedSite);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function handleSiteSelect(siteName) {
+    setSelectedSite(siteName);
+
+    const firstMachine = machines.find(
+      (machine) => machine.site_name === siteName
+    );
+
+    if (firstMachine) editMachine(firstMachine);
+    else resetForm(siteName);
+  }
+
+  function handleMachineSelect(value) {
+    if (!value) return resetForm(selectedSite);
+    const machine = machines.find((item) => String(item.id) === String(value));
+    if (machine) editMachine(machine);
+  }
+
+  function getCalloutForField(field) {
+    if (!field || field.showOnPointMap === false) return null;
+    return form.callouts.find((callout) => String(callout.valueKey) === String(field.id)) || null;
+  }
+
+  function handleFieldLabelChange(index, value) {
+    setForm((current) => {
+      const oldField = current.fields[index];
+      if (!oldField) return current;
+      const nextId = makeAutoFieldId(value, current.fields, oldField.id);
+      const nextFields = current.fields.map((field, i) => i === index ? { ...field, label: value, id: nextId } : field);
+      const nextCallouts = current.callouts.map((callout) => {
+        if (String(callout.valueKey) !== String(oldField.id)) return callout;
+        return { ...callout, id: `callout-${nextId}`, valueKey: nextId, title: value || nextId };
+      });
+      setSelectedVariableId(nextId);
+      setSelectedCalloutId((currentId) => currentId === `callout-${oldField.id}` ? `callout-${nextId}` : currentId);
+      return { ...current, fields: nextFields, callouts: nextCallouts };
+    });
+  }
+
+  function toggleFieldPointMap(index, checked) {
+    setForm((current) => {
+      const field = current.fields[index];
+      if (!field) return current;
+      const nextFields = current.fields.map((item, i) => i === index ? { ...item, showOnPointMap: checked } : item);
+      const hasCallout = current.callouts.some((callout) => String(callout.valueKey) === String(field.id));
+      const nextCallouts = checked
+        ? (hasCallout ? current.callouts : [...current.callouts, makeCalloutForField(field, index)])
+        : current.callouts.filter((callout) => String(callout.valueKey) !== String(field.id));
+      if (!checked) {
+        setSelectedCalloutId("");
+        setMarkMode(null);
+      }
+      return { ...current, fields: nextFields, callouts: nextCallouts };
+    });
+  }
+
+  function openVariable(fieldId) {
+    const field = form.fields.find((item) => String(item.id) === String(fieldId));
+    if (!field) return;
+    setSelectedVariableId(field.id);
+    const existing = getCalloutForField(field);
+    if (existing) {
+      setSelectedCalloutId(existing.id);
+    } else if (field.showOnPointMap !== false) {
+      const next = makeCalloutForField(field, form.fields.findIndex((item) => item.id === field.id));
+      setForm((current) => ({ ...current, callouts: [...current.callouts, next] }));
+      setSelectedCalloutId(next.id);
+    } else {
+      setSelectedCalloutId("");
+    }
+    setManageMode("variable");
+    setMarkMode(null);
+  }
+
+  function addVariable() {
+    const label = `Variable ${form.fields.length + 1}`;
+    const id = makeFieldIdFromLabel(label, form.fields);
+    const field = { id, label, type: "text", options: [], optionsText: "", aiTarget: "", required: false, mapsTo: "custom", thresholdEnabled: false, threshold_min: "", threshold_max: "", showOnPointMap: true };
+    const callout = makeCalloutForField(field, form.fields.length);
+    setForm((current) => ({
+      ...current,
+      fields: [...current.fields, field],
+      callouts: [...current.callouts, callout],
+    }));
+    setSelectedVariableId(field.id);
+    setSelectedCalloutId(callout.id);
+    setManageMode("variable");
+    setMarkMode(null);
+  }
+
+  function ensureVariableCallout(field) {
+    if (!field || field.showOnPointMap === false) return null;
+    const existing = getCalloutForField(field);
+    if (existing) return existing;
+    const next = makeCalloutForField(field, form.fields.findIndex((item) => item.id === field.id));
+    updateForm("callouts", [...form.callouts, next]);
+    return next;
+  }
+
+  function removeVariable(fieldId) {
+    const field = form.fields.find((item) => String(item.id) === String(fieldId));
+    if (!field) return;
+    setForm((current) => ({
+      ...current,
+      fields: current.fields.filter((item) => String(item.id) !== String(fieldId)),
+      callouts: current.callouts.filter((callout) => String(callout.valueKey) !== String(fieldId)),
+    }));
+    setSelectedVariableId("");
+    setSelectedCalloutId("");
+    setMarkMode(null);
+    setManageMode(null);
+  }
+
+  function previewCardMeta(callout) {
+    const mappedField = form.fields.find((field) => String(field.id) === String(callout.valueKey));
+    const title = mappedField ? visibleVariableName(mappedField, form.machine_name) : (callout.title || "Value");
+    const isNumericField = mappedField?.type === "number";
+    const min = isNumericField && mappedField?.thresholdEnabled ? mappedField.threshold_min : "";
+    const max = isNumericField && mappedField?.thresholdEnabled ? mappedField.threshold_max : "";
+    const detail = isNumericField ? (min || max ? `Range: ${min || "—"} – ${max || "—"}` : "Range: — — —") : "";
+    return {
+      title,
+      value: "—",
+      unit: "",
+      detail,
+      tone: isNumericField && mappedField?.thresholdEnabled ? "warning" : "success",
+      icon: "",
+    };
+  }
+
+  function renderVariableEditor() {
+    const fieldIndex = form.fields.findIndex((field) => String(field.id) === String(selectedVariableId));
+    const field = form.fields[fieldIndex];
+    const callout = getCalloutForField(field);
+
+    if (!field) {
+      return (
+        <div className="system-inline-editor variable-editor-empty">
+          <div className="system-inline-editor-head">
+            <button className="ghost-button small" type="button" onClick={() => setManageMode(null)}>← Back</button>
+            <div><p className="eyebrow">Variable</p><h2>No variable selected</h2></div>
+            <button className="secondary-button small" type="button" onClick={addVariable}>Add Variable</button>
+          </div>
+          <div className="empty-state">Pick a variable from the list or add a new one.</div>
+        </div>
+      );
+    }
+
+    const activeCallout = callout || makeCalloutForField(field, fieldIndex);
+
+    function handlePlace(mode) {
+      const nextCallout = ensureVariableCallout(field) || activeCallout;
+      setSelectedCalloutId(nextCallout.id);
+      beginMarking(nextCallout.id, mode);
+    }
+
+    return (
+      <div className="system-inline-editor variable-editor-panel">
+        <div className="system-inline-editor-head">
+          <button className="ghost-button small" type="button" onClick={() => { setManageMode(null); setMarkMode(null); }}>← Back</button>
+          <div><p className="eyebrow">Variable Setup</p><h2>{field.label || field.id}</h2></div>
+          <button className="ghost-button danger small" type="button" onClick={() => removeVariable(field.id)}>Remove</button>
+        </div>
+
+        <div className="variable-editor-body">
+          <label>User label
+            <input value={field.label} onChange={(event) => handleFieldLabelChange(fieldIndex, event.target.value)} placeholder="Status" />
+          </label>
+
+          <label>Input type
+            <select value={field.type} onChange={(event) => updateFieldType(fieldIndex, event.target.value)}>
+              <option value="text">Text</option>
+              <option value="number">Number</option>
+              <option value="textarea">Paragraph</option>
+              <option value="option">Option</option>
+              <option value="image">Image</option>
+            </select>
+          </label>
+
+          <div className="variable-switch-row">
+            <label className="check-pill"><input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(fieldIndex, "required", event.target.checked)} /> Required</label>
+            {field.type === "number" && <label className="check-pill"><input type="checkbox" checked={Boolean(field.thresholdEnabled)} onChange={(event) => updateField(fieldIndex, "thresholdEnabled", event.target.checked)} /> Limit</label>}
+          </div>
+
+          {field.type === "option" && (
+            <label>Choices
+              <textarea rows="4" value={field.optionsText ?? optionsToText(field.options)} onChange={(event) => updateFieldOptions(fieldIndex, event.target.value)} placeholder={"On\nOff\nAuto\nManual"} />
+            </label>
+          )}
+
+          {field.type === "image" && (
+            <label>Target / Targets
+              <input value={field.aiTarget || ""} onChange={(event) => updateField(fieldIndex, "aiTarget", event.target.value)} placeholder="Target" />
+            </label>
+          )}
+
+          {field.type === "number" && (
+            <div className="variable-editor-two">
+              <label>Min
+                <input type="number" step="any" value={field.threshold_min ?? ""} onChange={(event) => updateField(fieldIndex, "threshold_min", event.target.value)} placeholder="Min" disabled={!field.thresholdEnabled} />
+              </label>
+              <label>Max
+                <input type="number" step="any" value={field.threshold_max ?? ""} onChange={(event) => updateField(fieldIndex, "threshold_max", event.target.value)} placeholder="Max" disabled={!field.thresholdEnabled} />
+              </label>
+            </div>
+          )}
+
+          <label className="check-pill wide"><input type="checkbox" checked={field.showOnPointMap !== false} onChange={(event) => toggleFieldPointMap(fieldIndex, event.target.checked)} /> Show on point map</label>
+
+          {field.showOnPointMap !== false && (
+            <div className="variable-map-tools">
+              <div>
+                <strong>Point map</strong>
+                <span>Place the value card anywhere, then mark the machine point.</span>
+              </div>
+              <div className="variable-map-buttons">
+                <button className="secondary-button small" type="button" onClick={() => handlePlace("card")}>Place Card</button>
+                <button className="secondary-button small" type="button" onClick={() => handlePlace("point")}>Mark Point</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    loadMachines(true).catch((error) => setMessage(error.message));
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (skipAutosaveRef.current) {
+      skipAutosaveRef.current = false;
+      return;
+    }
+
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+
+    if (!String(form.machine_name || "").trim()) {
+      setAutosaveStatus("Enter a machine name to autosave");
+      return;
+    }
+
+    setAutosaveStatus("Unsaved changes");
+    autosaveTimerRef.current = setTimeout(() => {
+      persistMachine(form, { silent: true });
+    }, 900);
+
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [form]);
+
+  const siteMachines = machines.filter(
+    (machine) => machine.site_name === selectedSite
+  );
+  const equipmentCategorySuggestions = equipmentCategoriesForMachines(machines);
+  const selectedMachineValue = siteMachines.some(
+    (machine) => String(machine.id) === String(form.id)
+  )
+    ? form.id || ""
+    : "";
+
+  return (
+    <>
+      <FactoryTopNav activePage="system" user={user} setPage={setPage} onLogout={onLogout} standalone={standalone} />
+      <main className="system-builder-page app-gradient">
+        <form className={manageMode ? "system-builder-shell system-builder-shell-editing" : "system-builder-shell"} onSubmit={handleSave}>
+          <section className={manageMode ? "system-builder-form-card system-builder-form-card-editing" : "system-builder-form-card"}>
+            {manageMode === "variable" ? renderVariableEditor() : (
+              <>
+                <div className="system-builder-card-head">
+                  <div><p className="eyebrow">Setup</p><h1>Machine Builder</h1></div>
+                  <button className={!form.id ? "system-new-button active" : "system-new-button"} type="button" onClick={resetForm}>+ New</button>
+                </div>
+
+                <div className="system-builder-fields">
+                  <label>{requiredLabel("Machine Name")}<input value={form.machine_name} onChange={(event) => updateForm("machine_name", event.target.value)} placeholder="SELO-3 Pouch Packer" required /></label>
+                  <div className="system-equipment-category-field">
+                    <span className="label-text">Category</span>
+                    <CategoryDropdown
+                      value={form.details}
+                      options={equipmentCategorySuggestions}
+                      onChange={(category) => updateForm("details", category)}
+                      allowAdd
+                      placeholder="Chiller"
+                    />
+                  </div>
+                  <div className="system-site-upload-row">
+                    <div className="system-compact-action-field">
+                      {requiredLabel("Site")}
+                      <SiteToggleButton
+                        className="system-form-site-toggle"
+                        value={form.site_name}
+                        onChange={(siteName) => {
+                          updateForm("site_name", siteName);
+                          setSelectedSite(siteName);
+                        }}
+                      />
+                    </div>
+                    <div className="system-compact-action-field">
+                      <span className="label-text">Image</span>
+                      <label className="system-upload-tile compact-upload-tile">
+                        <input type="file" accept="image/*" onChange={handleImageUpload} />
+                        <span className="system-upload-icon">⇧</span>
+                        <strong>{form.image_data_url ? "Change image" : "Upload image"}</strong>
+                        <small>PNG/JPG</small>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="system-variable-list-card">
+                  <div className="system-variable-list-head">
+                    <div>
+                      <p className="eyebrow">Variables</p>
+                      <strong>{form.fields.length} configured</strong>
+                    </div>
+                    <button className="secondary-button small" type="button" onClick={addVariable}>Add Variable</button>
+                  </div>
+                  <div className="system-variable-list">
+                    {!form.fields.length && <div className="empty-state">No variables yet. Add Status, Mode, Temperature, Pressure, or anything operators need to answer.</div>}
+                    {form.fields.map((field) => {
+                      const callout = getCalloutForField(field);
+                      return (
+                        <button
+                          type="button"
+                          key={field.id}
+                          className={String(selectedVariableId) === String(field.id) ? "system-variable-item active" : "system-variable-item"}
+                          onClick={() => openVariable(field.id)}
+                        >
+                          <span>
+                            <strong>{visibleVariableName(field, form.machine_name)}</strong>
+                            <small>{field.id}</small>
+                          </span>
+                          <em>{field.type}{callout ? " • mapped" : ""}</em>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="system-autosave-row">
+                  <span className={autosaveStatus === "Saved" ? "autosave-pill saved" : "autosave-pill"}>{saving ? "Saving..." : autosaveStatus}</span>
+                  <button className="system-save-button" type="submit" disabled={saving}>{saving ? "Saving" : "Save now"}</button>
+                </div>
+                {message && <p className="message compact-message">{message}</p>}
+              </>
+            )}
+          </section>
+
+          <section className="system-point-map-card">
+            <div className="system-point-map-head system-point-map-head-controls-only">
+              <div className="system-point-map-tools">
+                {markMode && <div className="system-mark-pill">{markMode === "card" ? "Place card" : "Mark point"}</div>}
+
+                <SiteToggleButton
+                  className="system-site-toggle"
+                  value={selectedSite}
+                  onChange={handleSiteSelect}
+                />
+
+                <select
+                  className="system-map-select"
+                  value={selectedMachineValue}
+                  onChange={(event) => handleMachineSelect(event.target.value)}
+                  aria-label="Select saved machine"
+                >
+                  <option value="" disabled>
+                    {siteMachines.length
+                      ? `Machines in ${selectedSite}`
+                      : `No machines in ${selectedSite}`}
+                  </option>
+                  {siteMachines.map((machine) => (
+                    <option key={machine.id} value={machine.id}>{machine.machine_name}</option>
+                  ))}
+                </select>
+
+                <button className="system-delete-button" type="button" disabled={!form.id} onClick={() => handleDelete(form)}>Delete</button>
+              </div>
+            </div>
+
+            <div ref={systemImageMap.stageRef} className={`${markMode ? "system-map-stage shared-point-map-stage locating" : "system-map-stage shared-point-map-stage"}${form.image_data_url ? "" : " system-map-stage-empty"}`}>
+              <div
+                className={form.image_data_url ? "system-map-canvas shared-point-map-canvas" : "system-map-canvas shared-point-map-canvas system-map-canvas-empty"}
+                style={systemImageMap.canvasStyle}
+                onClick={handlePreviewClick}
+              >
+                {form.image_data_url && (
+                  <img
+                    src={form.image_data_url}
+                    alt="Machine preview"
+                    draggable="false"
+                    onLoad={systemImageMap.handleImageLoad}
+                  />
+                )}
+                {markMode && <div className="preview-crosshair-hint">{markMode === "card" ? "Click card location" : "Click machine point"}</div>}
+                <svg className="factory-line-layer system-connector-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  {form.image_data_url && form.callouts.filter((callout) => form.fields.some((field) => field.showOnPointMap !== false && String(field.id) === String(callout.valueKey))).map((callout) => {
+                    const { point, card } = calloutLine(callout);
+                    return <line key={`line-${callout.id}`} x1={card.x} y1={card.y} x2={point.x} y2={point.y} />;
+                  })}
+                </svg>
+                {form.image_data_url && form.callouts.filter((callout) => form.fields.some((field) => field.showOnPointMap !== false && String(field.id) === String(callout.valueKey))).map((callout) => {
+                  const { point, card } = calloutLine(callout);
+                  const active = selectedCalloutId === callout.id;
+                  const meta = previewCardMeta(callout);
+                  const warning = meta.tone === "warning";
+                  return (
+                    <div key={callout.id}>
+                      <button
+                        type="button"
+                        className={warning ? "factory-target-dot warning system-clickable-dot" : "factory-target-dot system-clickable-dot"}
+                        style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                        onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "point"); }}
+                        title="Mark machine point"
+                      />
+                      <button
+                        type="button"
+                        className={warning ? `factory-callout-card warning system-builder-callout-button ${active ? "active" : ""}` : `factory-callout-card system-builder-callout-button ${active ? "active" : ""}`}
+                        style={{ left: `${card.x}%`, top: `${card.y}%` }}
+                        onClick={(event) => { event.stopPropagation(); beginMarking(callout.id, "card"); }}
+                        title="Place callout card"
+                      >
+                        <div><span>{meta.title}</span>{meta.icon && <em>{meta.icon}</em>}</div>
+                        <strong>{meta.value}<small>{meta.unit}</small></strong>
+                        {meta.detail && <p>{meta.detail}</p>}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        </form>
+      </main>
+    </>
+  );
+}
+
+
+function AuthPage({ onFaceLogin, onRegister, onMachineView, onAdmin, onDemoUser }) {
+  const [faceOpen, setFaceOpen] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function handleLoginCapture(imageDataUrl) {
+    setMessage("Checking face...");
+    const data = await fetchJson("/api/face/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageDataUrl }),
+    });
+    if (!data.matched || !data.profile) throw new Error(data.error || "No matching face found.");
+    setFaceOpen(false);
+    setMessage(`Welcome, ${data.profile.operator_name}.`);
+    onFaceLogin(data.profile);
+  }
+
+  return (
+    <main className="landing-page app-gradient">
+      <section className="login-card glass-card">
+        <div className="brand-mark">CT</div>
+        <p className="eyebrow">Confirmation Test</p>
+        <h1>Operator Confirmation</h1>
+        <p className="login-subtitle">Login, register, and monitor confirmation records in one clean app.</p>
+        <div className="login-actions">
+          <button type="button" onClick={() => setFaceOpen(true)}>Login</button>
+          <button className="secondary-button" type="button" onClick={onRegister}>Register</button>
+          <button className="secondary-button" type="button" onClick={onMachineView}>Machines</button>
+          <button className="secondary-button" type="button" onClick={onDemoUser}>Login as User</button>
+          <button className="secondary-button" type="button" onClick={onAdmin}>Admin</button>
+        </div>
+        {message && <p className="message centered center-message">{message}</p>}
+      </section>
+      {faceOpen && <FaceCaptureModal title="Face Login" description="Use the front camera or choose a clear face photo." onClose={() => setFaceOpen(false)} onCapture={handleLoginCapture} autoCapture />}
+    </main>
+  );
+}
+
+function OperatorRegisterPage({ onBack, onRegistered }) {
+  const [form, setForm] = useState(emptyUserForm);
+  const [imageDataUrl, setImageDataUrl] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function updateField(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setMessage("");
+    if (!imageDataUrl) return setMessage("Capture the face first.");
+    try {
+      setSaving(true);
+      const data = await fetchJson("/api/face/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, roleName: "operator", imageDataUrl }),
+      });
+      setMessage(`Registered ${data.profile.operator_name}.`);
+      onRegistered(data.profile);
+    } catch (error) {
+      setMessage(error.message);
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <section className="admin-section category-admin">
-      <div className="section-head">
-        <div>
-          <p className="eyebrow">Admin only</p>
-          <h2>Builder</h2>
-        </div>
-      </div>
-      {message && <div className={cx("notice", message.type)}>{message.text}</div>}
-
-      <div className="form-builder-shell">
-        <div className="form-type-tabs" role="tablist" aria-label="Tool type">
-          {categories.map((category) => (
-            <button type="button" role="tab" aria-selected={editingId === category.id} key={category.id} className={cx(editingId === category.id && "active")} onClick={() => selectCategory(category)}>
-              <span>{category.name}</span>
-              <small>{(category.detailFields || []).length} details • {(category.reviewQuestions || []).length} questions</small>
-            </button>
-          ))}
-        </div>
-
-        <div className="builder-system-tabs">
-          <button type="button" className={cx(builderMode === "details" && "active")} onClick={() => { setBuilderMode("details"); setActiveField(0); }}>
-            <ClipboardList size={16} /> User Details
-          </button>
-          <button type="button" className={cx(builderMode === "questions" && "active")} onClick={() => { setBuilderMode("questions"); setActiveField(0); }}>
-            <ListChecks size={16} /> Review Questions
-          </button>
-        </div>
-
-        <form className="google-form-editor" onSubmit={save}>
-          <div className="builder-context-line">
-            <strong>{builderMode === "details" ? "Details completed by the User" : "Questions completed by the Reviewer or Admin"}</strong>
-            <span>{fields.length} {fields.length === 1 ? noun : `${noun}s`}</span>
+    <main className="form-page app-gradient page-pad no-topbar-pad compact-mobile-page">
+      <section className="form-layout single">
+        <form className="input-form glass-card compact-form" onSubmit={handleSubmit}>
+          <div className="form-title-row">
+            <div>
+              <p className="eyebrow">New Operator</p>
+              <h1>Register Profile</h1>
+            </div>
+            <button className="ghost-button" type="button" onClick={onBack}>Back</button>
           </div>
-          <div className="google-question-list">
-            {fields.length === 0 && (
-              <button type="button" className="empty-form-card" onClick={addField}>
-                <Plus size={22} />
-                <strong>Add the first {noun}</strong>
-                <span>{builderMode === "details" ? "This tool type has no extra user details." : "This tool type has no review questions."}</span>
-              </button>
-            )}
-
-            {fields.map((field, index) => (
-              <article className={cx("google-question-card", activeField === index && "active")} key={field.id || `${noun}-${index}`} onClick={() => setActiveField(index)}>
-                <div className="question-grip" aria-hidden="true"><GripVertical size={18} /></div>
-                <div className="question-editor-row">
-                  <div className="question-number">{index + 1}</div>
-                  <input className="question-title-input" value={field.label} onFocus={() => setActiveField(index)} onChange={(event) => updateField(index, "label", event.target.value)} placeholder={builderMode === "details" ? "Detail label" : "Question"} />
-                  <select className="question-type-select" value={field.type} onChange={(event) => updateField(index, "type", event.target.value)}>
-                    {QUESTION_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-                  </select>
-                </div>
-
-                {OPTION_QUESTION_TYPES.has(field.type) && (
-                  <div className="google-options-editor">
-                    {(field.options || []).map((option, optionIndex) => (
-                      <div className="google-option-row" key={`${field.id}-${optionIndex}`}>
-                        <span className={field.type === "checkboxes" ? "option-shape square" : "option-shape"} />
-                        <input value={option} onChange={(event) => updateOption(index, optionIndex, event.target.value)} placeholder={`Option ${optionIndex + 1}`} />
-                        <button type="button" onClick={() => setFields((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, options: entry.options.filter((_, currentOption) => currentOption !== optionIndex) } : entry))} aria-label="Remove option"><XCircle size={17} /></button>
-                      </div>
-                    ))}
-                    <button type="button" className="add-option-button" onClick={() => setFields((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, options: [...(entry.options || []), ""] } : entry))}>
-                      <span className={field.type === "checkboxes" ? "option-shape square" : "option-shape"} /> Add option
-                    </button>
-                  </div>
-                )}
-
-                {field.type === "yesno" && <div className="question-preview-options"><span><i /> Yes</span><span><i /> No</span></div>}
-                {["text", "textarea", "number", "date"].includes(field.type) && (
-                  <div className={cx("answer-preview-line", field.type === "textarea" && "paragraph")}>
-                    {field.type === "date" ? "Month, day, year" : field.type === "number" ? "Number answer" : field.type === "textarea" ? "Long-answer text" : "Short-answer text"}
-                  </div>
-                )}
-                {field.type === "image" && <div className="image-answer-preview"><Camera size={18} /> Image upload</div>}
-
-                <div className="google-question-footer">
-                  <div className="question-move-actions">
-                    <button type="button" disabled={index === 0} onClick={() => moveField(index, -1)}><ArrowUp size={17} /></button>
-                    <button type="button" disabled={index === fields.length - 1} onClick={() => moveField(index, 1)}><ArrowDown size={17} /></button>
-                  </div>
-                  <div className="question-main-actions">
-                    <button type="button" onClick={() => duplicateField(index)} title={`Duplicate ${noun}`}><Copy size={17} /></button>
-                    <button type="button" onClick={() => removeField(index)} title={`Delete ${noun}`}><Trash2 size={17} /></button>
-                    <span className="footer-divider" />
-                    <label className="required-switch">
-                      <span>Required</span>
-                      <input type="checkbox" checked={Boolean(field.required)} onChange={(event) => updateField(index, "required", event.target.checked)} />
-                      <i />
-                    </label>
-                  </div>
-                </div>
-              </article>
-            ))}
+          <div className="field-grid two only-basic-register">
+            <label>{requiredLabel("Name")}<input value={form.operatorName} onChange={(event) => updateField("operatorName", event.target.value)} placeholder="Operator name" required /></label>
+            <label>{requiredLabel("Site")}<select value={form.siteName} onChange={(event) => updateField("siteName", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
           </div>
-          <div className="form-builder-actions">
-            <button type="button" className="secondary-btn" onClick={addField}><Plus size={16} /> Add {noun}</button>
-            <button className="primary-btn" disabled={!editingId || saving}>{saving ? "Saving..." : "Save builder"}</button>
+          <div className="face-capture-row compact-face-row">
+            <strong>Facial Recognition</strong>
+            <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake Face" : "Capture Face"}</button>
           </div>
+          <button type="submit" disabled={saving}>{saving ? "Registering..." : "Register"}</button>
+          {message && <p className="message">{message}</p>}
         </form>
-      </div>
-    </section>
-  );
-}
-
-function SearchBox({ value, onChange }) {
-  return (
-    <div className="admin-search-bar">
-      <label className="search-field">
-        <Search size={15} />
-        <input value={value} onChange={(event) => onChange(event.target.value)} placeholder="Search Name or QR" aria-label="Search Name or QR" />
-      </label>
-    </div>
-  );
-}
-
-function matchesSearch(record, search) {
-  const query = search.trim().toLowerCase();
-  if (!query) return true;
-  return [
-    record.itemName,
-    record.itemCode,
-    record.site,
-    record.qrId,
-    record.referenceId,
-    record.categoryName,
-    record.toolType
-  ].some((value) => String(value || "").toLowerCase().includes(query));
-}
-
-function RequestCard({ request, openRequest }) {
-  return (
-    <button type="button" className={cx("record-button", "request-record", request.archivedAt ? "archived" : request.status)} onClick={() => openRequest(request.id)}>
-      <span className="record-icon"><QrCode size={20} /></span>
-      <span className="record-main">
-        <small>{request.categoryName} • {request.site}</small>
-        <strong>{request.itemName}</strong>
-        <span>{request.referenceId}</span>
-      </span>
-      <StatusBadge status={request.archivedAt ? "archived" : request.status} />
-      <span className="record-date">{request.status === "pending" ? "Submitted" : "Reviewed"}<strong>{formatDate(request.status === "pending" ? request.submittedAt : request.reviewedAt)}</strong></span>
-      <span className="record-view"><Eye size={15} /> Open details</span>
-    </button>
-  );
-}
-
-function ItemCard({ item, openItem }) {
-  return (
-    <button type="button" className={cx("record-button", "item-record", item.validity?.status)} onClick={() => openItem(item.qrId)}>
-      <img src={item.qrImageDataUrl} alt="" className="qr-thumb" />
-      <span className="record-main">
-        <small>{item.toolType || item.categoryName} • {item.site}</small>
-        <strong>{item.itemName}</strong>
-        <span>QR: {item.qrId}</span>
-      </span>
-      <StatusBadge validity={item.validity} />
-      <span className="record-date">Next check<strong>{formatDate(item.expiresAt)}</strong></span>
-      <span className="record-view"><Eye size={15} /> Open details</span>
-    </button>
-  );
-}
-
-function RecordsPanel({ title, records, kind, openItem, openRequest, emptyMessage }) {
-  const [search, setSearch] = useState("");
-  const visible = records.filter((record) => matchesSearch(record, search));
-  return (
-    <section className="admin-section">
-      <div className="records-toolbar">
-        <div className="records-title">
-          <div><p className="eyebrow">Power Tool</p><h2>{title}</h2></div>
-          <span className="quick-count"><strong>{visible.length}</strong><small>entries</small></span>
-        </div>
-        <SearchBox value={search} onChange={setSearch} />
-      </div>
-      {visible.length === 0 ? (
-        <EmptyState icon={kind === "request" ? ClipboardList : QrCode} title={`No ${title.toLowerCase()}`} message={emptyMessage} />
-      ) : (
-        <div className={kind === "request" ? "request-list" : "asset-list"}>
-          {visible.map((record) => kind === "request"
-            ? <RequestCard key={record.id} request={record} openRequest={openRequest} />
-            : <ItemCard key={record.id} item={record} openItem={openItem} />)}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ArchivedPanel({ requests, items, openItem, openRequest }) {
-  const [search, setSearch] = useState("");
-  const archivedRequests = requests.filter((request) => request.archivedAt && matchesSearch(request, search));
-  const archivedItems = items.filter((item) => item.archivedAt && matchesSearch(item, search));
-  return (
-    <section className="admin-section">
-      <div className="records-toolbar">
-        <div className="records-title">
-          <div><p className="eyebrow">Power Tool</p><h2>Archived</h2></div>
-          <span className="quick-count"><strong>{archivedRequests.length + archivedItems.length}</strong><small>entries</small></span>
-        </div>
-        <SearchBox value={search} onChange={setSearch} />
-      </div>
-      {archivedRequests.length + archivedItems.length === 0 ? (
-        <EmptyState icon={Archive} title="No archived records" message="Archived Approved, Rejected, and Expired records appear here." />
-      ) : (
-        <div className="archive-groups">
-          {archivedItems.length > 0 && <div className="asset-list">{archivedItems.map((item) => <ItemCard key={item.id} item={item} openItem={openItem} />)}</div>}
-          {archivedRequests.length > 0 && <div className="request-list">{archivedRequests.map((request) => <RequestCard key={request.id} request={request} openRequest={openRequest} />)}</div>}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function StaffDashboard({ staffSession, categories, requests, allItems, reloadAll, openItem, openRequest }) {
-  const role = staffSession.role;
-  const allowedPanels = role === "admin"
-    ? ["builder", "accounts", "requests", "approved", "rejected", "expired", "archived"]
-    : ["requests", "approved", "rejected", "expired", "archived"];
-  const storageKey = `power-tool-${role}-panel`;
-  const [activePanel, setActivePanel] = useState(() => {
-    const saved = localStorage.getItem(storageKey);
-    return allowedPanels.includes(saved) ? saved : "requests";
-  });
-  const pending = requests.filter((request) => request.status === "pending" && !request.archivedAt);
-  const rejected = requests.filter((request) => request.status === "rejected" && !request.archivedAt);
-  const approved = allItems.filter((item) => !item.archivedAt && item.validity?.status === "valid");
-  const expired = allItems.filter((item) => !item.archivedAt && item.validity?.status === "expired");
-  const archivedCount = requests.filter((request) => request.archivedAt).length + allItems.filter((item) => item.archivedAt).length;
-
-  useEffect(() => {
-    localStorage.setItem(storageKey, activePanel);
-  }, [activePanel, storageKey]);
-
-  return (
-    <main className="admin-page compact-admin staff-dashboard">
-      <div className={cx("stats-grid", "admin-nav-grid", role === "reviewer" && "reviewer-nav-grid")}>
-        {role === "admin" && <StatCard icon={Plus} label="Builder" value="Details + Questions" active={activePanel === "builder"} onClick={() => setActivePanel("builder")} />}
-        {role === "admin" && <StatCard icon={UserPlus} label="Accounts" value="Reviewers" active={activePanel === "accounts"} onClick={() => setActivePanel("accounts")} />}
-        <StatCard icon={Bell} label="Requests" value={pending.length} tone="warn" active={activePanel === "requests"} onClick={() => setActivePanel("requests")} badge={pending.length} />
-        <StatCard icon={CheckCircle2} label="Approved" value={approved.length} tone="ok" active={activePanel === "approved"} onClick={() => setActivePanel("approved")} />
-        <StatCard icon={XCircle} label="Rejected" value={rejected.length} tone="danger" active={activePanel === "rejected"} onClick={() => setActivePanel("rejected")} />
-        <StatCard icon={CalendarDays} label="Expired" value={expired.length} tone="danger" active={activePanel === "expired"} onClick={() => setActivePanel("expired")} />
-        <StatCard icon={Archive} label="Archived" value={archivedCount} active={activePanel === "archived"} onClick={() => setActivePanel("archived")} />
-      </div>
-
-      <div className="admin-panel-slot">
-        {activePanel === "builder" && role === "admin" && <CategoryManager categories={categories} reload={reloadAll} />}
-        {activePanel === "accounts" && role === "admin" && <ReviewerAccounts adminSession={staffSession} />}
-        {activePanel === "requests" && <RecordsPanel title="Requests" records={pending} kind="request" openRequest={openRequest} emptyMessage="New User submissions appear here." />}
-        {activePanel === "approved" && <RecordsPanel title="Approved" records={approved} kind="item" openItem={openItem} emptyMessage="Approved tools with a good QR appear here." />}
-        {activePanel === "rejected" && <RecordsPanel title="Rejected" records={rejected} kind="request" openRequest={openRequest} emptyMessage="Rejected requests appear here." />}
-        {activePanel === "expired" && <RecordsPanel title="Expired" records={expired} kind="item" openItem={openItem} emptyMessage="Expired QR records appear here." />}
-        {activePanel === "archived" && <ArchivedPanel requests={requests} items={allItems} openItem={openItem} openRequest={openRequest} />}
-      </div>
+      </section>
+      {cameraOpen && <FaceCaptureModal title="Register Face" description="Use the front camera or choose a clear front-facing image." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
     </main>
   );
 }
 
-export default function App() {
-  const routeRecord = useMemo(() => {
-    const parts = window.location.pathname.split("/").filter(Boolean);
-    if (parts[0] === "item" && parts[1]) return { kind: "item", id: decodeURIComponent(parts[1]) };
-    if (parts[0] === "request" && parts[1]) return { kind: "request", id: decodeURIComponent(parts[1]) };
-    return { kind: "", id: "" };
-  }, []);
+function RecordInputPage({ user, setPage, onLogout }) {
+  const [machines, setMachines] = useState([]);
+  const [selectedArea, setSelectedArea] = useState(siteOptions.includes(userSite(user)) ? userSite(user) : "Savoury");
+  const [valuesByMachine, setValuesByMachine] = useState({});
+  const [proofsByMachine, setProofsByMachine] = useState({});
+  const [records, setRecords] = useState([]);
+  const [savingAll, setSavingAll] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [machineMessages, setMachineMessages] = useState({});
+  const [scanTarget, setScanTarget] = useState(null);
+  const [mobileView, setMobileView] = useState("answer");
 
-  const storedMainTab = localStorage.getItem("qr-active-tab") || "user";
-  const savedMainTab = storedMainTab === "admin"
-    ? "reviewer"
-    : (["user", "reviewer"].includes(storedMainTab) ? storedMainTab : "user");
-  const [tab, setTab] = useState(routeRecord.id ? "details" : savedMainTab);
-  const [detailsReturn, setDetailsReturn] = useState({ tab: savedMainTab, userMode: "followup" });
-  const [userMode, setUserMode] = useState("home");
-  const [selectedRecord, setSelectedRecord] = useState(routeRecord);
-  const [categories, setCategories] = useState([]);
-  const [requests, setRequests] = useState([]);
-  const [allItems, setAllItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-  const [theme, setTheme] = useState(() => localStorage.getItem("qr-theme") || "light");
-  const [staffSession, setStaffSession] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STAFF_SESSION_KEY) || "null");
-      return saved?.role === "reviewer" ? saved : null;
-    } catch {
-      return null;
-    }
-  });
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("qr-theme", theme);
-  }, [theme]);
-
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STAFF_SESSION_KEY) || "null");
-      if (saved?.role === "admin") localStorage.removeItem(STAFF_SESSION_KEY);
-    } catch {
-      localStorage.removeItem(STAFF_SESSION_KEY);
-    }
-  }, []);
-
-  async function loadCategories() {
-    const data = await api.categories();
-    setCategories(data);
+  function updateValue(machineId, fieldId, value) {
+    setValuesByMachine((current) => ({
+      ...current,
+      [machineId]: {
+        ...(current[machineId] || {}),
+        [fieldId]: value,
+      },
+    }));
   }
 
-  async function loadRequests() {
-    const data = await api.requests();
-    setRequests(data);
+  function updateProof(machineId, fieldId, proof) {
+    setProofsByMachine((current) => ({
+      ...current,
+      [machineId]: {
+        ...(current[machineId] || {}),
+        [fieldId]: proof,
+      },
+    }));
   }
 
-  async function loadItems() {
-    setAllItems(await api.items({ sort: "expiry", includeArchived: true }));
+  function getLatestRecord(machine, latestRecords) {
+    return latestRecords.find((record) => String(record.machine_config_id) === String(machine.id)) || latestRecords.find(
+      (record) => String(record.machine_name || "").trim().toLowerCase() === String(machine.machine_name || "").trim().toLowerCase()
+    ) || null;
   }
 
-  async function reloadAll({ silent = false } = {}) {
-    if (!silent) setLoadError("");
+  function prefillMachineValues(machine, latestRecord) {
+    return Object.fromEntries(normalizeFields(machine.fields).map((field) => {
+      if (field.type === "image") return [field.id, ""];
+      const value = valueFromRecordField(latestRecord, field);
+      return [field.id, value === null || value === undefined ? "" : value];
+    }));
+  }
+
+  function latestQuery(site, operatorScoped = false) {
+    const params = new URLSearchParams({ site });
+    if (operatorScoped && user?.id) params.set("operator_id", String(user.id));
+    return params.toString();
+  }
+
+  async function loadArea(site = selectedArea) {
     try {
-      await Promise.all([loadCategories(), loadRequests(), loadItems()]);
+      setLoading(true);
+      setMessage("");
+      const [machineData, prefillData, latestData] = await Promise.all([
+        fetchJson(`/api/machines?site=${encodeURIComponent(site)}`),
+        fetchJson(`/api/records/latest-by-machine?${latestQuery(site)}`),
+        fetchJson(`/api/records/latest-by-machine?${latestQuery(site, true)}`),
+      ]);
+
+      const machineList = machineData.machines || [];
+      const prefillRecords = prefillData.records || [];
+      const nextValues = {};
+
+      for (const machine of machineList) {
+        nextValues[machine.id] = prefillMachineValues(machine, getLatestRecord(machine, prefillRecords));
+      }
+
+      setMachines(machineList);
+      setValuesByMachine(nextValues);
+      setProofsByMachine({});
+      setMachineMessages({});
+      setRecords(latestData.records || []);
+      setMobileView("answer");
+
+      if (!machineList.length) setMessage(`No machines are configured for ${site}.`);
     } catch (error) {
-      if (!silent) setLoadError(error.message);
+      setMachines([]);
+      setValuesByMachine({});
+      setProofsByMachine({});
+      setRecords([]);
+      setMessage(error.message);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    api.trackVisit({
-      sessionId: getVisitSessionId(),
-      path: window.location.pathname
-    }).catch(() => null);
-  }, []);
-
-  useEffect(() => {
-    reloadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function openItem(qrId, keepReturn = false) {
-    const finalQrId = parseQrText(qrId);
-    if (!keepReturn) {
-      setDetailsReturn({ tab: tab === "reviewer" ? "reviewer" : "user", userMode: userMode || "followup" });
-    }
-    setSelectedRecord({ kind: "item", id: finalQrId });
-    setTab("details");
-    if (window.location.pathname !== `/item/${finalQrId}`) {
-      window.history.pushState({}, "", `/item/${finalQrId}`);
+  async function refreshLatestResponses() {
+    try {
+      setLoading(true);
+      const data = await fetchJson(`/api/records/latest-by-machine?${latestQuery(selectedArea, true)}`);
+      setRecords(data.records || []);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
     }
   }
 
-  function openRequest(requestId) {
-    setDetailsReturn({ tab: staffSession ? "reviewer" : "user", userMode: userMode || "followup" });
-    setSelectedRecord({ kind: "request", id: requestId });
-    setTab("details");
-    if (window.location.pathname !== `/request/${requestId}`) {
-      window.history.pushState({}, "", `/request/${requestId}`);
+  function standardValues(machine, machineValues) {
+    const output = { reading_value: "", product: "", batch_number: "", remarks: "" };
+    for (const field of normalizeFields(machine.fields)) {
+      if (["reading_value", "product", "batch_number", "remarks"].includes(field.mapsTo)) {
+        output[field.mapsTo] = machineValues[field.id] ?? "";
+      }
     }
+    return output;
   }
 
-  function setMainTab(nextTab) {
-    const finalTab = nextTab === "admin" ? "reviewer" : nextTab;
-    if (finalTab !== "reviewer" && staffSession?.role === "admin") logoutStaff();
-    setTab(finalTab);
-    localStorage.setItem("qr-active-tab", finalTab);
-    if (finalTab === "user") setUserMode("home");
-    if (finalTab !== "details" && (window.location.pathname.startsWith("/item/") || window.location.pathname.startsWith("/request/"))) {
-      window.history.pushState({}, "", "/");
+  function validateMachine(machine, machineValues, machineProofs) {
+    for (const field of normalizeFields(machine.fields)) {
+      const value = String(machineValues[field.id] ?? "").trim();
+      if (field.required && !value) return `${field.label} is required.`;
+      if (field.type === "image") {
+        const proof = machineProofs[field.id];
+        if (value && !proof?.imageDataUrl) return `Capture a new proof image for ${field.label}.`;
+        if (field.required && !proof?.imageDataUrl) return `${field.label} needs a new proof image.`;
+      }
     }
+    return "";
   }
 
-  function backFromDetails() {
-    if (window.location.pathname.startsWith("/item/") || window.location.pathname.startsWith("/request/")) {
-      window.history.pushState({}, "", "/");
+  function machineProgress(machine) {
+    const fields = normalizeFields(machine.fields);
+    const machineValues = valuesByMachine[machine.id] || {};
+    const machineProofs = proofsByMachine[machine.id] || {};
+    const completed = fields.filter((field) => {
+      if (field.type === "image") return Boolean(machineProofs[field.id]?.imageDataUrl);
+      return String(machineValues[field.id] ?? "").trim() !== "";
+    }).length;
+
+    return {
+      completed,
+      total: fields.length,
+      ready: !validateMachine(machine, machineValues, machineProofs),
+    };
+  }
+
+  function buildPayload(machine) {
+    const machineValues = valuesByMachine[machine.id] || {};
+    const machineProofs = proofsByMachine[machine.id] || {};
+    const fields = normalizeFields(machine.fields);
+    const proofs = fields
+      .filter((field) => field.type === "image" && machineProofs[field.id]?.imageDataUrl)
+      .map((field) => ({
+        field_id: field.id,
+        field_label: field.label,
+        recognized_value: String(machineValues[field.id] ?? ""),
+        image_data_url: machineProofs[field.id].imageDataUrl,
+        mime_type: machineProofs[field.id].mimeType || "image/jpeg",
+      }));
+
+    return {
+      ...standardValues(machine, machineValues),
+      response_fields: machineValues,
+      proofs,
+      machine_config_id: machine.id,
+      machine_name: machine.machine_name,
+      operator_id: user?.id || null,
+      operator_name: userDisplayName(user),
+      site_name: selectedArea,
+    };
+  }
+
+  async function submitAllMachines() {
+    const errors = {};
+
+    for (const machine of machines) {
+      const error = validateMachine(machine, valuesByMachine[machine.id] || {}, proofsByMachine[machine.id] || {});
+      if (error) errors[machine.id] = error;
     }
-    if (detailsReturn.tab === "reviewer") {
-      setTab("reviewer");
-      localStorage.setItem("qr-active-tab", "reviewer");
+
+    setMachineMessages(errors);
+
+    if (Object.keys(errors).length) {
+      const firstMachineId = Object.keys(errors)[0];
+      setMobileView("answer");
+      setMessage(`Review ${Object.keys(errors).length} machine${Object.keys(errors).length === 1 ? "" : "s"} before submitting.`);
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-machine-id="${firstMachineId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
       return;
     }
-    setUserMode(detailsReturn.userMode || "followup");
-    setTab("user");
-    localStorage.setItem("qr-active-tab", "user");
-  }
 
-  const activeMainTab = tab === "details"
-    ? (detailsReturn.tab === "admin" ? "reviewer" : detailsReturn.tab)
-    : tab;
-  const pendingRequestCount = requests.filter((entry) => entry.status === "pending" && !entry.archivedAt).length;
+    try {
+      setSavingAll(true);
+      setMessage("");
+      const data = await fetchJson("/api/records/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records: machines.map(buildPayload) }),
+      });
 
-  function loginStaff(session) {
-    if (session.role === "reviewer") {
-      localStorage.setItem(STAFF_SESSION_KEY, JSON.stringify(session));
-    } else {
-      localStorage.removeItem(STAFF_SESSION_KEY);
+      setValuesByMachine((current) => Object.fromEntries(machines.map((machine) => [
+        machine.id,
+        Object.fromEntries(normalizeFields(machine.fields).map((field) => [
+          field.id,
+          field.type === "image" ? "" : current[machine.id]?.[field.id] ?? "",
+        ])),
+      ])));
+      setProofsByMachine({});
+      setMachineMessages({});
+
+      const savedRecords = Array.isArray(data.records)
+        ? [...data.records].sort(
+            (a, b) => new Date(b.record_timestamp).getTime() - new Date(a.record_timestamp).getTime()
+              || Number(b.id || 0) - Number(a.id || 0)
+          )
+        : [];
+
+      if (savedRecords.length) {
+        setRecords(savedRecords);
+      } else {
+        const latestData = await fetchJson(`/api/records/latest-by-machine?${latestQuery(selectedArea, true)}`);
+        setRecords(latestData.records || []);
+      }
+      setMessage(`Saved ${data.records?.length || machines.length} machine${machines.length === 1 ? "" : "s"}.`);
+      setMobileView("latest");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setSavingAll(false);
     }
-    setStaffSession(session);
   }
 
-  function logoutStaff() {
-    localStorage.removeItem(STAFF_SESSION_KEY);
-    setStaffSession(null);
-  }
+  useEffect(() => {
+    loadArea(selectedArea);
+  }, [selectedArea, user?.id]);
+
+  const readyCount = machines.filter((machine) => machineProgress(machine).ready).length;
 
   return (
-    <div className="app-shell" data-developer-credit={DEVELOPER_CREDIT}>
-      <header className="topbar">
-        <button className="brand" onClick={() => setMainTab("user")}>
-          <span><ShieldCheck size={20} /></span>
-          <strong>Power Tool</strong>
-        </button>
+    <main className="form-page app-gradient page-pad record-page-mobile">
+      <FactoryTopNav activePage="record" user={user} setPage={setPage} onLogout={onLogout} />
 
-        <div className="topbar-actions">
-          <nav>
-            <button className={cx(activeMainTab === "user" && "active")} onClick={() => setMainTab("user")}><UserCircle size={16} /> User</button>
-            <button className={cx(activeMainTab === "reviewer" && "active", "nav-with-badge")} onClick={() => setMainTab("reviewer")}>
-              <ListChecks size={16} /> Reviewer
-              {staffSession && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
+      <section className="record-workspace">
+        <header className="record-command-bar glass-card">
+          <div className="record-command-copy">
+            <p className="eyebrow">Area Confirmation</p>
+            <h1>{selectedArea} Checks</h1>
+            <p>Complete every machine below. Previous answers are prefilled; proof photos always start empty.</p>
+          </div>
+
+          <div className="record-command-actions">
+            <label className="record-area-control">
+              <span>Area</span>
+              <select value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)} disabled={savingAll}>
+                {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
+              </select>
+            </label>
+            <div className="record-ready-summary" aria-label={`${readyCount} of ${machines.length} machines ready`}>
+              <strong>{readyCount}/{machines.length}</strong>
+              <span>Ready</span>
+            </div>
+            <button className="record-submit-all-button" type="button" onClick={submitAllMachines} disabled={savingAll || loading || !machines.length}>
+              {savingAll ? "Saving..." : "Submit All"}
             </button>
-          </nav>
-          {staffSession && (
-            <div className="topbar-session">
-              <span className={cx("topbar-session-icon", staffSession.role)}>
-                {staffSession.role === "admin" ? <ShieldCheck size={15} /> : <ListChecks size={15} />}
-              </span>
-              <span className="topbar-session-copy">
-                <strong>{staffSession.username}</strong>
-                <small>{staffSession.role === "admin" ? "Admin" : "Reviewer"}</small>
-              </span>
-              <button type="button" onClick={logoutStaff} aria-label="Sign out" title="Sign out">
-                <LogOut size={15} />
+          </div>
+        </header>
+
+        {message && <p className="message record-global-message">{message}</p>}
+
+        <div className="record-mobile-view-switch" role="tablist" aria-label="Record view">
+          <button type="button" className={mobileView === "answer" ? "active" : ""} onClick={() => setMobileView("answer")}>Answer</button>
+          <button type="button" className={mobileView === "latest" ? "active" : ""} onClick={() => setMobileView("latest")}>Latest</button>
+        </div>
+
+        <div className={`record-main-layout mobile-view-${mobileView}`}>
+          <section className="record-machines-panel glass-card">
+            <div className="record-section-heading record-machines-heading">
+              <div>
+                <span>Machine Checks</span>
+                <strong>{machines.length} machines in {selectedArea}</strong>
+              </div>
+              <small>One submission saves everything</small>
+            </div>
+
+            <div className="record-machine-grid">
+              {loading && !machines.length ? (
+                <p className="empty-state">Loading machines...</p>
+              ) : !machines.length ? (
+                <p className="empty-state">No machine is available for this area.</p>
+              ) : machines.map((machine, index) => {
+                const fields = normalizeFields(machine.fields);
+                const machineValues = valuesByMachine[machine.id] || {};
+                const machineProofs = proofsByMachine[machine.id] || {};
+                const progress = machineProgress(machine);
+
+                return (
+                  <article
+                    className={`record-machine-card tone-${index % 4} ${progress.ready ? "ready" : "needs-input"} ${machineMessages[machine.id] ? "has-error" : ""}`}
+                    data-machine-id={machine.id}
+                    key={machine.id}
+                  >
+                    <header className="record-machine-card-head">
+                      <div className="record-machine-title-row">
+                        <span className="record-machine-number">{index + 1}</span>
+                        <div>
+                          <small>{selectedArea}</small>
+                          <h2>{machine.machine_name}</h2>
+                          {machine.details && <p>{machine.details}</p>}
+                        </div>
+                      </div>
+                      <div className={progress.ready ? "record-machine-state ready" : "record-machine-state"}>
+                        {progress.ready ? "Ready" : `${progress.completed}/${progress.total}`}
+                      </div>
+                    </header>
+
+                    <div className="record-machine-fields field-grid two dynamic-field-grid">
+                      {fields.map((field) => {
+                        const value = machineValues[field.id] ?? "";
+                        const proof = machineProofs[field.id];
+                        const optionValues = field.type === "option"
+                          ? splitFieldOptions(field.options ?? field.optionsText)
+                          : [];
+                        const isBinaryOption = optionValues.length === 2;
+                        const fieldClassName = [
+                          field.type === "textarea" || field.type === "image" ? "wide-field" : "",
+                          isBinaryOption ? "binary-option-field" : "",
+                        ].filter(Boolean).join(" ");
+
+                        return (
+                          <label key={field.id} className={fieldClassName}>
+                            {field.required ? requiredLabel(field.label) : field.label}
+
+                            {field.type === "textarea" ? (
+                              <textarea rows="3" value={value} onChange={(event) => updateValue(machine.id, field.id, event.target.value)} placeholder={field.label} required={field.required} disabled={savingAll} />
+                            ) : field.type === "image" ? (
+                              <div className="image-answer-block">
+                                <div className="image-answer-row">
+                                  <input
+                                    type="text"
+                                    value={value}
+                                    onChange={(event) => updateValue(machine.id, field.id, event.target.value)}
+                                    placeholder={`Recognized ${field.aiTarget || field.label || "value"}`}
+                                    required={field.required}
+                                    disabled={savingAll}
+                                  />
+                                  <button className="secondary-button image-scan-button" type="button" onClick={() => setScanTarget({ machine, field })} disabled={savingAll}>
+                                    {proof ? "Retake" : "Capture"}
+                                  </button>
+                                </div>
+                                {proof?.imageDataUrl && (
+                                  <div className="new-proof-preview">
+                                    <img src={proof.imageDataUrl} alt={`New proof for ${field.label}`} />
+                                    <span>Proof ready</span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : field.type === "option" ? (
+                              isBinaryOption ? (
+                                <div className="binary-option-control" role="group" aria-label={field.label}>
+                                  {optionValues.map((option) => (
+                                    <button
+                                      key={option}
+                                      type="button"
+                                      className={`binary-option-button ${value === option ? "active" : ""}`}
+                                      aria-pressed={value === option}
+                                      onClick={() => updateValue(machine.id, field.id, option)}
+                                      disabled={savingAll}
+                                    >
+                                      {option}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <select className="option-answer-select" value={value} onChange={(event) => updateValue(machine.id, field.id, event.target.value)} required={field.required} disabled={savingAll}>
+                                  <option value="">Select {field.label}</option>
+                                  {optionValues.map((option) => <option key={option} value={option}>{option}</option>)}
+                                </select>
+                              )
+                            ) : (
+                              <input
+                                type={field.type === "number" ? "number" : "text"}
+                                step="any"
+                                value={value}
+                                onChange={(event) => updateValue(machine.id, field.id, event.target.value)}
+                                placeholder={field.label}
+                                required={field.required}
+                                disabled={savingAll}
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    {machineMessages[machine.id] && <p className="message machine-error-message">{machineMessages[machine.id]}</p>}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <aside className="record-recent-panel glass-card">
+            <div className="record-section-heading latest-heading">
+              <div>
+                <span>Latest Answers</span>
+                <strong>Your newest value per machine</strong>
+              </div>
+              <button className="secondary-button small" type="button" onClick={refreshLatestResponses} disabled={loading || savingAll}>
+                {loading ? "Loading" : "Refresh"}
               </button>
             </div>
-          )}
-          <button className="top-action icon-only" onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")} aria-label="Toggle light and dark mode">
-            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
+            <LatestMachineResponseList records={records} machines={machines} />
+          </aside>
         </div>
-      </header>
+      </section>
 
-      {loadError && <div className="global-error">{loadError}</div>}
-      {loading && <div className="loading-strip"><RefreshCw size={15} /> Loading Power Tool...</div>}
-
-      <div className="view-area">
-        {tab === "user" && userMode === "home" && <UserHome onPick={setUserMode} />}
-        {tab === "user" && userMode === "register" && <UserRegister categories={categories} onCreated={reloadAll} onBack={() => setUserMode("home")} />}
-        {tab === "user" && userMode === "followup" && <ScanPage onOpenItem={openItem} onBack={() => setUserMode("home")} />}
-        {tab === "reviewer" && !staffSession && <StaffLogin onLogin={loginStaff} />}
-        {tab === "reviewer" && staffSession && <StaffDashboard staffSession={staffSession} categories={categories} requests={requests} allItems={allItems} reloadAll={reloadAll} openItem={openItem} openRequest={openRequest} />}
-        {tab === "details" && selectedRecord.kind === "item" && (
-          <ItemDetails qrId={selectedRecord.id} onBack={backFromDetails} staffSession={staffSession} reload={reloadAll} />
-        )}
-        {tab === "details" && selectedRecord.kind === "request" && (
-          <RequestDetails
-            requestId={selectedRecord.id}
-            onBack={backFromDetails}
-            onApproved={(qrId) => openItem(qrId, true)}
-            staffSession={staffSession}
-            reload={reloadAll}
-          />
-        )}
-      </div>
-    </div>
+      {scanTarget && (
+        <ImageScanModal
+          field={scanTarget.field}
+          machine={scanTarget.machine}
+          onClose={() => setScanTarget(null)}
+          onScan={(scan) => {
+            updateValue(scanTarget.machine.id, scanTarget.field.id, scan.value);
+            updateProof(scanTarget.machine.id, scanTarget.field.id, scan);
+          }}
+        />
+      )}
+    </main>
   );
 }
+
+function App() {
+  const [page, setPage] = useState("auth");
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    console.log(
+      "%cMade by Riemar R. Seruelas Jr - Data Digital Intern",
+      "color: #006bff; font-weight: 800; font-family: monospace;"
+    );
+  }, []);
+
+  function handleAdminSkip() {
+    setUser({ id: null, operator_name: "Temporary Admin", site_name: "Admin", role_name: "admin" });
+    setPage("machine");
+  }
+
+  function handleDemoUser() {
+    setUser({ id: null, operator_name: "Temporary User", site_name: "Savoury", role_name: "operator" });
+    setPage("record");
+  }
+
+  function handleLogout() {
+    setUser(null);
+    setPage("auth");
+  }
+
+  function renderRecordPage() {
+    return <RecordInputPage user={user} setPage={setPage} onLogout={handleLogout} />;
+  }
+
+  if (page === "auth") {
+    return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(isAdminUser(profile) ? "machine" : "record"); }} onRegister={() => setPage("register")} onMachineView={() => setPage("machine")} onAdmin={handleAdminSkip} onDemoUser={handleDemoUser} />;
+  }
+
+  if (page === "register") {
+    return <OperatorRegisterPage onBack={() => setPage("auth")} onRegistered={(profile) => { setUser(profile); setPage("record"); }} />;
+  }
+
+  if (user && !canAccessPage(user, page)) {
+    return renderRecordPage();
+  }
+
+  if (page === "machine") {
+    return <MachinesPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  if (page === "trends") {
+    return <TrendsPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  if (page === "logs") {
+    if (!isAdminUser(user)) return renderRecordPage();
+    return <LogsPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  if (page === "adminRegister") {
+    if (!isAdminUser(user)) return renderRecordPage();
+    return <RegisterAdminPage adminUser={user} user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  if (page === "system") {
+    if (!isAdminUser(user)) return renderRecordPage();
+    return <SystemRegistrationPage user={user} setPage={setPage} onLogout={handleLogout} standalone={!user} />;
+  }
+
+  return renderRecordPage();
+}
+
+export default App;

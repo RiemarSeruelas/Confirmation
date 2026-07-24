@@ -1,15 +1,48 @@
 services:
-  power-tool:
-    build: .
-    container_name: power-tool-system
+  confirmation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: confirmation-app:latest
+    container_name: confirmation-app
     restart: unless-stopped
-    ports:
-      - "5057:5057"
+    env_file:
+      - .env
     environment:
-      PORT: 5057
-      QR_PAYLOAD_MODE: url
-    volumes:
-      - power_tool_data:/app/server/data
+      NODE_ENV: production
+      PORT: 5178
+      TZ: Asia/Manila
+    expose:
+      - "5178"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:5178/api/health').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
-volumes:
-  power_tool_data:
+  nginx:
+    image: nginx:1.30.4-alpine
+    container_name: confirmation-nginx
+    restart: unless-stopped
+    depends_on:
+      confirmation:
+        condition: service_healthy
+    ports:
+      - "${PUBLIC_PORT:-5057}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1/health >/dev/null || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

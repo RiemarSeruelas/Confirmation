@@ -1,95 +1,76 @@
-# Power Tool
+# Confirmation / Utilities — Full Project
 
-React + Express QR registration and review system for **ELC** and **Portable Tools**.
+This is the complete current project, including the frontend, Express backend,
+PostgreSQL setup, Docker build, and Nginx reverse proxy.
 
-## Roles
+## Important: keep your existing data
 
-- **User** — no login. Registers an equipment name, site, submitter, tool type, image, and the configured User Details.
-- **Reviewer** — reviews requests, answers the configured Review Questions, approves or rejects, renews expired records, and manages Approved, Rejected, Expired, and Archived records.
-- **Admin** — has the Reviewer workflow plus the Builder and Reviewer account management.
+The ZIP does not contain your real `.env` or database data.
 
-Default JSON accounts:
+1. Keep the `.env` from your currently working project.
+2. Do not delete your PostgreSQL database.
+3. Do not run Docker commands that remove volumes.
 
-| Role | Username | Password |
-| --- | --- | --- |
-| Reviewer | `reviewer` | `1234` |
-| Admin | `admin` | `1234` |
+Replacing these project files does not erase readings, machine configurations,
+map markings, categories, proof images, or registered face identities. On
+startup, `setup-db` only creates missing tables/columns/indexes.
 
-Change the passwords under `staffAccounts` in `server/data/db.json` before production use.
+If you no longer have an `.env`, copy `.env.example` to `.env`, then enter the
+correct database password and verify the AI service addresses/model.
 
-## Builder
+## Rebuild with Docker
 
-The Admin Builder has two independent systems for each tool type:
+Extract this ZIP into a new folder. Do not merge it into a folder that contains
+an unfinished Git merge. Copy only your existing `.env` into the newly
+extracted folder, then open PowerShell there.
 
-- **User Details** — fields completed during registration.
-- **Review Questions** — Google Forms-style questions completed only by a Reviewer or Admin.
+Before building, you can verify that no Git conflict markers exist:
 
-Both support add, duplicate, reorder, delete, required/optional, answer types, and addable options. ELC starts with:
-
-- Module Type
-- Search Type
-- From Date
-- To Date
-- Machine
-- Power Supply (N/A if none)
-- Vendor
-
-All seven are adjustable. Portable Tools starts without extra details and can be configured in the same Builder.
-
-## Review records
-
-- Requests, Approved, Rejected, Expired, and Archived are separate views.
-- Approved and Expired records include the permanent downloadable QR.
-- Every row is a compact detail button with equipment name, site, QR/reference, status, and next check where applicable.
-- Review answers show their complete configured question text with neutral answer styling.
-- Reviewer feedback and the approving/renewing account are recorded with each decision.
-- Expired records can be renewed after a new review, feedback, and next-check date are supplied.
-- Approved, Rejected, and Expired records can be archived and restored.
-- Search matches name, generated ID, site, reference, and QR while the field is labeled `Search Name or QR`.
-
-## Run locally
-
-```bash
-npm ci
-npm run dev
+```powershell
+Get-ChildItem -Recurse -File | Select-String '^(<<<<<<<|=======|>>>>>>>)'
 ```
 
-- Frontend: `http://localhost:5173`
-- Backend: `http://localhost:5057`
+The command should return no results. Then rebuild:
 
-Always use `npm run dev`, not `npm run client`, so the React and Express processes run together.
-
-## Run with Docker
-
-```bash
+```powershell
 docker compose down
-docker compose build --no-cache
-docker compose up -d
+docker compose up -d --build --force-recreate
+docker compose ps
 ```
 
-Open `http://SERVER-IP:5057`.
+With `PUBLIC_PORT=5058`, open:
 
-The JSON database uses the `power_tool_data` volume. Do not run `docker compose down -v` if you want to preserve records.
-
-## Existing database behavior
-
-Database version 9 migrates previous Power Tool databases without deleting existing requests, QR items, Builder fields, review questions, accounts, images, or usage totals. Databases older than version 7 also receive a one-time repair of the two original staff logins so the credentials match the login screen:
-
-- Reviewer: `reviewer` / `1234`
-- Admin: `admin` / `1234`
-
-After that migration, later username or password edits in `server/data/db.json` are preserved.
-
-Database writes are serialized and committed through an atomic file replacement. If an older database contains trailing bytes after one complete JSON document, the valid document is recovered and rewritten cleanly.
-
-## Usage console log
-
-Usage is not rendered in the interface. Visits, QR opens, checklist views, unique IP counts, and totals are logged by the backend. In Docker:
-
-```bash
-docker compose logs -f power-tool
+```text
+http://YOUR-PC-IP:5058
 ```
 
-## Mobile QR camera
+To check the image-reading service:
 
-Browsers normally require HTTPS for live camera access from another device. QR image upload and manual reference lookup remain available without camera permission.
+```powershell
+docker compose logs -f confirmation
+```
+
+## Included latest fixes
+
+- Bottom-anchored compact Logs table and Nginx traffic handling
+- Correct Asia/Manila submission timestamps with API caching disabled
+- Equipment categories and entry-based Trends
+- Operator/Machine Trends mode
+- Shared Machines/System map sizing and coordinates
+- Qwen image parsing from `response`, `thinking`, direct values, and plain text
+- One safe AI retry when the first image result is empty
+- PostgreSQL proof-image storage and existing face-recognition integration
+
+## Main files
+
+```text
+src/App.jsx
+src/styles.css
+src/mobile.css
+server.js
+schema.sql
+confirmationproof.sql
+Dockerfile
+docker-compose.yml
+nginx.conf
+```

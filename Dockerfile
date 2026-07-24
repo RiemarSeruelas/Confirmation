@@ -1,18 +1,23 @@
-FROM node:22-alpine AS build
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+FROM node:22.23.1-bookworm-slim
 
-FROM node:22-alpine
-WORKDIR /app
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
 ENV NODE_ENV=production
-COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-COPY --from=build /app/dist ./dist
-COPY server ./server
-EXPOSE 5057
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:5057/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
-CMD ["npm", "start"]
+ENV PORT=5178
+
+WORKDIR /app
+
+RUN corepack enable \
+    && corepack prepare pnpm@9.15.9 --activate
+
+COPY package.json package-lock.json* ./
+
+RUN pnpm install --no-frozen-lockfile
+
+COPY . .
+
+RUN pnpm run build
+
+EXPOSE 5178
+
+CMD ["sh", "-c", "pnpm run setup-db && pnpm run start"]
