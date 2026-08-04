@@ -1,0 +1,60 @@
+services:
+  confirmation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: confirmation-app:latest
+    container_name: confirmation-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 5178
+      TZ: Asia/Manila
+      USAGE_LOG_ENABLED: "true"
+    expose:
+      - "5178"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:5178/api/live').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    networks:
+      confirmation-network:
+        aliases:
+          - confirmation
+          - confirmation-app
+
+  nginx:
+    image: nginx:1.30.4-alpine
+    container_name: confirmation-nginx
+    restart: unless-stopped
+    depends_on:
+      confirmation:
+        condition: service_healthy
+    ports:
+      - "${PUBLIC_PORT:-5058}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - confirmation-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- http://127.0.0.1/health >/dev/null || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  confirmation-network:
+    driver: bridge
