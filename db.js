@@ -17,7 +17,7 @@ const config = process.env.DATABASE_URL
   : {
       host: process.env.PGHOST || "localhost",
       port: Number(process.env.PGPORT || 5432),
-      database: process.env.PGDATABASE || "confirmation_test_db",
+      database: process.env.PGDATABASE || "confirmation_powertool_machine",
       user: process.env.PGUSER,
       password: process.env.PGPASSWORD,
       ...poolOptions,

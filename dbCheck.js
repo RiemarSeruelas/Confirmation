@@ -5,7 +5,7 @@ import pg from "pg";
 dotenv.config();
 
 const { Pool } = pg;
-const DEFAULT_DATABASE = "confirmation_test_db";
+const DEFAULT_DATABASE = "confirmation_powertool_machine";
 
 function sslConfig() {
   return String(process.env.PGSSL || "false").toLowerCase() === "true"

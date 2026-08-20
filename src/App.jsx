@@ -2707,9 +2707,14 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
   }
 
   function resetForm(siteName = selectedSite) {
+    const safeSiteName =
+      typeof siteName === "string" && siteOptions.includes(siteName)
+        ? siteName
+        : selectedSite;
+
     applyFormWithoutAutosave({
       ...emptyMachineForm,
-      site_name: siteName,
+      site_name: safeSiteName,
       fields: [],
       callouts: [],
     });
@@ -3217,7 +3222,7 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
               <>
                 <div className="system-builder-card-head">
                   <div><p className="eyebrow">Setup</p><h1>Machine Builder</h1></div>
-                  <button className={!form.id ? "system-new-button active" : "system-new-button"} type="button" onClick={resetForm}>+ New</button>
+                  <button className={!form.id ? "system-new-button active" : "system-new-button"} type="button" onClick={() => resetForm(selectedSite)}>+ New</button>
                 </div>
 
                 <div className="system-builder-fields">

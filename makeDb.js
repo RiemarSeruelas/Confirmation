@@ -7,7 +7,7 @@ import { pool, testDbConnection } from "./db.js";
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_DATABASE = "confirmation_test_db";
+const DEFAULT_DATABASE = "confirmation_powertool_machine";
 
 function targetDatabaseName() {
   if (!process.env.DATABASE_URL) return process.env.PGDATABASE || DEFAULT_DATABASE;
