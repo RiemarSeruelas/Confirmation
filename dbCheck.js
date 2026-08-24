@@ -91,6 +91,22 @@ async function main() {
         ? 'Usage logs: app."Confirmation-logs" is ready'
         : 'Usage logs: app."Confirmation-logs" is missing; run npm run setup-db'
     );
+
+    const pinColumns = await pool.query(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'app'
+          AND table_name = 'face_identities'
+          AND column_name IN ('auth_method', 'pin_hash')
+      `
+    );
+    const pinReady = new Set(pinColumns.rows.map((row) => row.column_name));
+    console.log(
+      pinReady.has("auth_method") && pinReady.has("pin_hash")
+        ? "PIN authentication: ready"
+        : "PIN authentication: missing; run npm run setup-db"
+    );
   } finally {
     await pool.end();
   }

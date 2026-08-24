@@ -34,13 +34,30 @@ const AI_IMAGE_TIMEOUT_MS = Number(process.env.AI_IMAGE_TIMEOUT_MS || 60000);
 const MAX_PROOF_IMAGE_BYTES = Number(process.env.MAX_PROOF_IMAGE_BYTES || 6 * 1024 * 1024);
 const SCHEMA_RETRY_MS = Number(process.env.SCHEMA_RETRY_MS || 30000);
 const TEMP_ACCESS_PASSWORD = cleanEnv(process.env.TEMP_ACCESS_PASSWORD);
+const PIN_PEPPER = cleanEnv(process.env.PIN_PEPPER);
+const configuredPinMaxAttempts = Number(process.env.PIN_MAX_ATTEMPTS || 5);
+const configuredPinLockoutMinutes = Number(process.env.PIN_LOCKOUT_MINUTES || 15);
+const PIN_MAX_ATTEMPTS = Number.isFinite(configuredPinMaxAttempts) && configuredPinMaxAttempts > 0
+  ? Math.floor(configuredPinMaxAttempts)
+  : 5;
+const PIN_LOCKOUT_MS = (
+  Number.isFinite(configuredPinLockoutMinutes) && configuredPinLockoutMinutes > 0
+    ? configuredPinLockoutMinutes
+    : 15
+) * 60 * 1000;
+const PIN_UNAVAILABLE_MESSAGE = "This PIN cannot be used.";
 
 if (!TEMP_ACCESS_PASSWORD) {
   throw new Error("TEMP_ACCESS_PASSWORD is required in .env");
 }
 
+if (PIN_PEPPER.length < 32) {
+  throw new Error("PIN_PEPPER must be set in .env and contain at least 32 characters");
+}
+
 let schemaReadyPromise = null;
 let schemaRetryTimer = null;
+const pinAttemptStore = new Map();
 
 app.set("trust proxy", 1);
 app.use(cors());
@@ -68,6 +85,51 @@ function secretMatches(value, expected) {
   const expectedBuffer = Buffer.from(String(expected || ""), "utf8");
   return providedBuffer.length === expectedBuffer.length
     && crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
+function normalizeAuthMethod(value) {
+  return cleanText(value).toLowerCase() === "pin" ? "pin" : "face";
+}
+
+function normalizePin(value) {
+  return cleanText(value);
+}
+
+function isValidPin(pin) {
+  return /^\d{6}$/.test(normalizePin(pin));
+}
+
+function pinLookupHash(pin) {
+  return crypto
+    .createHmac("sha256", PIN_PEPPER)
+    .update(`confirmation-pin-v1:${normalizePin(pin)}`)
+    .digest("hex");
+}
+
+function consumePinAttempt(clientIp) {
+  const key = cleanText(clientIp, "unknown") || "unknown";
+  const now = Date.now();
+  const current = pinAttemptStore.get(key);
+
+  if (!current || now >= current.resetAt) {
+    pinAttemptStore.set(key, { count: 1, resetAt: now + PIN_LOCKOUT_MS });
+    return true;
+  }
+
+  if (current.count >= PIN_MAX_ATTEMPTS) return false;
+  current.count += 1;
+  return true;
+}
+
+function clearPinAttempts(clientIp) {
+  pinAttemptStore.delete(cleanText(clientIp, "unknown") || "unknown");
+}
+
+function pinRegistrationError(error) {
+  if (error?.code === "23505" && String(error?.constraint || "").includes("pin_hash")) {
+    return PIN_UNAVAILABLE_MESSAGE;
+  }
+  return null;
 }
 
 function usageText(value, maximumLength = 180) {
@@ -189,7 +251,7 @@ function getFriendlyDbError(error) {
 async function ensureSchemaReady() {
   if (!schemaReadyPromise) {
     schemaReadyPromise = (async () => {
-      for (const filename of ["schema.sql", "confirmationproof.sql"]) {
+      for (const filename of ["schema.sql", "confirmationproof.sql", "pin-auth.sql"]) {
         const sql = await fs.readFile(path.join(__dirname, filename), "utf8");
         await pool.query(sql);
       }
@@ -498,6 +560,7 @@ function identityRowToProfile(row) {
     shift_name: row.shift_name || "",
     department: row.department || "",
     role_name: row.role_name || "operator",
+    auth_method: row.auth_method === "pin" ? "pin" : "face",
     email: row.email || "",
     ai_face_key: row.ai_face_key || "",
     registered_by: row.registered_by || "",
@@ -531,7 +594,16 @@ async function findFaceIdentityByIdentifiers(identifiers) {
   return result.rows[0] || null;
 }
 
-async function saveIdentity({ profile, aiFaceKey, identifiers = [], registerPayload = {}, matchPayload = {}, registeredBy = "" }) {
+async function saveIdentity({
+  profile,
+  aiFaceKey,
+  identifiers = [],
+  registerPayload = {},
+  matchPayload = {},
+  registeredBy = "",
+  authMethod = "face",
+  pinHash = null,
+}) {
   const operatorName = cleanText(profile.operatorName || profile.operator_name || profile.name);
   if (!operatorName) throw new Error("Name is required.");
 
@@ -541,17 +613,19 @@ async function saveIdentity({ profile, aiFaceKey, identifiers = [], registerPayl
   const employeeId = cleanText(profile.employeeId || profile.employee_id);
   const department = cleanText(profile.department);
   const email = cleanText(profile.email);
+  const finalAuthMethod = normalizeAuthMethod(authMethod);
+  const finalPinHash = finalAuthMethod === "pin" ? cleanText(pinHash) : null;
   const cleanIdentifiers = uniqueValues([aiFaceKey, ...identifiers]);
-  const finalAiFaceKey = aiFaceKey || cleanIdentifiers[0] || makeLocalKey(operatorName, siteName, roleName, Date.now());
+  const finalAiFaceKey = aiFaceKey || cleanIdentifiers[0] || makeLocalKey(operatorName, siteName, roleName, crypto.randomUUID());
 
   const result = await pool.query(
     `
       INSERT INTO app.face_identities (
         operator_name, employee_id, site_name, shift_name, department, role_name, email,
         ai_face_key, ai_identifiers, ai_register_payload, ai_last_match_payload,
-        registered_by, last_seen_at
+        registered_by, auth_method, pin_hash, last_seen_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13, $14, NOW())
       ON CONFLICT (ai_face_key)
       DO UPDATE SET
         operator_name = EXCLUDED.operator_name,
@@ -565,6 +639,8 @@ async function saveIdentity({ profile, aiFaceKey, identifiers = [], registerPayl
         ai_register_payload = EXCLUDED.ai_register_payload,
         ai_last_match_payload = EXCLUDED.ai_last_match_payload,
         registered_by = EXCLUDED.registered_by,
+        auth_method = EXCLUDED.auth_method,
+        pin_hash = EXCLUDED.pin_hash,
         active = TRUE,
         last_seen_at = NOW()
       RETURNING *
@@ -582,6 +658,8 @@ async function saveIdentity({ profile, aiFaceKey, identifiers = [], registerPayl
       JSON.stringify(compactJsonValue(registerPayload)),
       JSON.stringify(compactJsonValue(matchPayload)),
       registeredBy,
+      finalAuthMethod,
+      finalPinHash,
     ]
   );
 
@@ -922,6 +1000,41 @@ app.post("/api/auth/temporary-access", (req, res) => {
   });
 });
 
+app.post("/api/auth/pin", async (req, res) => {
+  const clientIp = normalizedClientIp(req);
+
+  if (!consumePinAttempt(clientIp) || !isValidPin(req.body?.pin)) {
+    return res.status(401).json({ ok: false, error: PIN_UNAVAILABLE_MESSAGE });
+  }
+
+  try {
+    await ensureSchemaReady();
+    const result = await pool.query(
+      `
+        SELECT *
+        FROM app.face_identities
+        WHERE active = TRUE
+          AND auth_method = 'pin'
+          AND pin_hash = $1
+        LIMIT 1
+      `,
+      [pinLookupHash(req.body.pin)]
+    );
+
+    const identity = result.rows[0];
+    if (!identity) {
+      return res.status(401).json({ ok: false, error: PIN_UNAVAILABLE_MESSAGE });
+    }
+
+    clearPinAttempts(clientIp);
+    const updated = await updateIdentitySeen(identity.id, { auth_method: "pin" });
+    return res.json({ ok: true, profile: identityRowToProfile(updated || identity) });
+  } catch (error) {
+    console.error("PIN login failed:", error);
+    return res.status(500).json({ ok: false, error: "PIN login is temporarily unavailable." });
+  }
+});
+
 app.post("/api/usage/visit", async (req, res) => {
   try {
     await ensureSchemaReady();
@@ -1113,6 +1226,7 @@ app.post("/api/face/search", async (req, res) => {
 app.post("/api/face/register", async (req, res) => {
   try {
     await ensureSchemaReady();
+    const authMethod = normalizeAuthMethod(req.body?.authMethod);
 
     const profile = {
       operatorName: cleanText(req.body?.operatorName || req.body?.name),
@@ -1125,6 +1239,24 @@ app.post("/api/face/register", async (req, res) => {
     };
 
     if (!profile.operatorName) return res.status(400).json({ ok: false, error: "Name is required." });
+    if (authMethod === "pin") {
+      if (!isValidPin(req.body?.pin)) {
+        return res.status(400).json({ ok: false, error: PIN_UNAVAILABLE_MESSAGE });
+      }
+
+      const identity = await saveIdentity({
+        profile,
+        aiFaceKey: "",
+        identifiers: [],
+        registerPayload: { method: "pin" },
+        registeredBy: cleanText(req.body?.registeredBy),
+        authMethod: "pin",
+        pinHash: pinLookupHash(req.body.pin),
+      });
+
+      return res.status(201).json({ ok: true, profile: identityRowToProfile(identity) });
+    }
+
     if (!req.body?.imageDataUrl) return res.status(400).json({ ok: false, error: "Face capture is required." });
 
     const registerResult = await postFaceJson({
@@ -1148,6 +1280,7 @@ app.post("/api/face/register", async (req, res) => {
       registerPayload: registerResult.raw,
       matchPayload: searchResult?.raw || {},
       registeredBy: cleanText(req.body?.registeredBy),
+      authMethod: "face",
     });
 
     res.json({
@@ -1157,6 +1290,12 @@ app.post("/api/face/register", async (req, res) => {
       aiIdentifiers: identifiers.identifiers || [],
     });
   } catch (error) {
+    const safePinMessage = normalizeAuthMethod(req.body?.authMethod) === "pin"
+      ? pinRegistrationError(error)
+      : null;
+    if (safePinMessage) {
+      return res.status(400).json({ ok: false, error: safePinMessage });
+    }
     res.status(500).json({ ok: false, error: error.message || "Face registration failed." });
   }
 });
@@ -1164,6 +1303,7 @@ app.post("/api/face/register", async (req, res) => {
 app.post("/api/admin/users", async (req, res) => {
   try {
     await ensureSchemaReady();
+    const authMethod = normalizeAuthMethod(req.body?.authMethod);
     const profile = {
       operatorName: cleanText(req.body?.operatorName || req.body?.name),
       employeeId: cleanText(req.body?.employeeId),
@@ -1174,11 +1314,17 @@ app.post("/api/admin/users", async (req, res) => {
       email: cleanText(req.body?.email),
     };
     if (!profile.operatorName) return res.status(400).json({ ok: false, error: "Name is required." });
+    if (authMethod === "pin" && !isValidPin(req.body?.pin)) {
+      return res.status(400).json({ ok: false, error: PIN_UNAVAILABLE_MESSAGE });
+    }
+    if (authMethod === "face" && !req.body?.imageDataUrl) {
+      return res.status(400).json({ ok: false, error: "Face capture is required." });
+    }
 
-    let registerPayload = {};
+    let registerPayload = authMethod === "pin" ? { method: "pin" } : {};
     let identifiers = { aiFaceKey: "", identifiers: [] };
 
-    if (req.body?.imageDataUrl) {
+    if (authMethod === "face") {
       const registerResult = await postFaceJson({
         endpointType: "register",
         imageDataUrl: req.body.imageDataUrl,
@@ -1199,10 +1345,18 @@ app.post("/api/admin/users", async (req, res) => {
       identifiers: identifiers.identifiers || [],
       registerPayload,
       registeredBy: cleanText(req.body?.registeredBy || "Admin"),
+      authMethod,
+      pinHash: authMethod === "pin" ? pinLookupHash(req.body.pin) : null,
     });
 
     res.status(201).json({ ok: true, profile: identityRowToProfile(identity) });
   } catch (error) {
+    const safePinMessage = normalizeAuthMethod(req.body?.authMethod) === "pin"
+      ? pinRegistrationError(error)
+      : null;
+    if (safePinMessage) {
+      return res.status(400).json({ ok: false, error: safePinMessage });
+    }
     res.status(500).json({ ok: false, error: error.message || "Failed to save user." });
   }
 });

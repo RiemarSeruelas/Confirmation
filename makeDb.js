@@ -47,8 +47,9 @@ async function main() {
 
     await runSqlFile("schema.sql");
     await runSqlFile("confirmationproof.sql");
+    await runSqlFile("pin-auth.sql");
 
-    console.log('Tables ready: app.confirmation_test_records, app.face_identities, app.machine_configs, app.confirmationproof, app."Confirmation-logs"');
+    console.log('Tables ready: app.confirmation_test_records, app.face_identities (Face + PIN), app.machine_configs, app.confirmationproof, app."Confirmation-logs"');
   } catch (error) {
     console.error(setupError(error));
     process.exitCode = 1;

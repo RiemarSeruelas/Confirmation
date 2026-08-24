@@ -5,6 +5,7 @@ import "./mobile.css";
 const siteOptions = ["Savoury", "Dressings"];
 const roleOptions = ["operator", "admin"];
 const APP_TIME_ZONE = "Asia/Manila";
+const PIN_UNAVAILABLE_MESSAGE = "This PIN cannot be used.";
 const shiftOptions = [
   { value: "1st Shift", label: "1st Shift || 6:00 AM - 2:00 PM" },
   { value: "2nd Shift", label: "2nd Shift || 2:00 PM - 10:00 PM" },
@@ -72,6 +73,14 @@ function machinesForEquipmentCategory(machines = [], category = "") {
 
 function uid(prefix = "id") {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function pinDigits(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 6);
+}
+
+function hasCompletePin(value) {
+  return /^\d{6}$/.test(String(value || ""));
 }
 
 function imageFileToCompactDataUrl(file, maxWidth = 1000, maxHeight = 650, quality = 0.78) {
@@ -191,6 +200,29 @@ function useFittedImageCanvas(imageDataUrl, padding = 12) {
 
 function requiredLabel(text) {
   return <span className="label-text">{text}<em>*</em></span>;
+}
+
+function AuthMethodPicker({ value, onChange }) {
+  return (
+    <div className="auth-method-picker" role="group" aria-label="Recognition method">
+      <button
+        className={value === "face" ? "active" : ""}
+        type="button"
+        onClick={() => onChange("face")}
+        aria-pressed={value === "face"}
+      >
+        Face Recognition
+      </button>
+      <button
+        className={value === "pin" ? "active" : ""}
+        type="button"
+        onClick={() => onChange("pin")}
+        aria-pressed={value === "pin"}
+      >
+        6-Digit PIN
+      </button>
+    </div>
+  );
 }
 
 function SiteToggleButton({ value, onChange, className = "" }) {
@@ -2603,6 +2635,8 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
 
 function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLogout = null, standalone = false }) {
   const [userForm, setUserForm] = useState({ ...emptyUserForm, roleName: "operator" });
+  const [authMethod, setAuthMethod] = useState("face");
+  const [pin, setPin] = useState("");
   const [imageDataUrl, setImageDataUrl] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [users, setUsers] = useState([]);
@@ -2612,16 +2646,36 @@ function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLo
   const [deleteMode, setDeleteMode] = useState(false);
 
   function updateUserField(field, value) { setUserForm((current) => ({ ...current, [field]: value })); }
+  function chooseAuthMethod(method) {
+    setAuthMethod(method);
+    setPin("");
+    setImageDataUrl("");
+    setMessage("");
+  }
   async function loadUsers() { const usersData = await fetchJson("/api/admin/users"); setUsers(usersData.users || []); }
 
   async function handleCreateUser(event) {
     event.preventDefault();
     setMessage("");
+    if (authMethod === "pin" && !hasCompletePin(pin)) return setMessage(PIN_UNAVAILABLE_MESSAGE);
+    if (authMethod === "face" && !imageDataUrl) return setMessage("Capture the face first.");
     try {
       setSaving(true);
-      const data = await fetchJson("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...userForm, imageDataUrl, registeredBy: userDisplayName(adminUser || user) }) });
+      const data = await fetchJson("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...userForm,
+          authMethod,
+          pin: authMethod === "pin" ? pin : "",
+          imageDataUrl: authMethod === "face" ? imageDataUrl : "",
+          registeredBy: userDisplayName(adminUser || user),
+        }),
+      });
       setMessage(`Saved ${data.profile.operator_name} as ${data.profile.role_name}.`);
       setUserForm({ ...emptyUserForm, roleName: "operator" });
+      setAuthMethod("face");
+      setPin("");
       setImageDataUrl("");
       await loadUsers();
     } catch (error) { setMessage(error.message); } finally { setSaving(false); }
@@ -2648,15 +2702,20 @@ function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLo
             <label>{requiredLabel("Role")}<select value={userForm.roleName} onChange={(event) => updateUserField("roleName", event.target.value)}>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
             <label>{requiredLabel("Site")}<select value={userForm.siteName} onChange={(event) => updateUserField("siteName", event.target.value)}>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
           </div>
-          <div className="face-capture-row compact-face-row"><strong>Face Login Link</strong><button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button></div>
+          <AuthMethodPicker value={authMethod} onChange={chooseAuthMethod} />
+          {authMethod === "face" ? (
+            <div className="face-capture-row compact-face-row"><strong>Face Login Link</strong><button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake" : "Capture"}</button></div>
+          ) : (
+            <label className="pin-field">{requiredLabel("6-Digit PIN")}<input type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} value={pin} onChange={(event) => setPin(pinDigits(event.target.value))} required /></label>
+          )}
           <button type="submit" disabled={saving}>{saving ? "Saving..." : "Register"}</button>{message && <p className="message">{message}</p>}
         </form>
         <section className="glass-card dashboard-summary">
           <p className="eyebrow">Accounts</p><div className="registered-header-row"><h2>Registered People</h2><button className={deleteMode ? "delete-user-button active-delete" : "delete-user-button"} type="button" onClick={() => setDeleteMode((current) => !current)}>{deleteMode ? "Done" : "Delete"}</button></div>
-          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div className="registered-person-main"><strong>{user.operator_name}</strong><span>{user.site_name}</span>{deletingId === user.id && <small>Deleting...</small>}</div></article>)}</div>
+          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div className="registered-person-main"><strong>{user.operator_name}</strong><span>{user.site_name} · {user.auth_method === "pin" ? "PIN" : "Face"}</span>{deletingId === user.id && <small>Deleting...</small>}</div></article>)}</div>
         </section>
       </section>
-      {cameraOpen && <FaceCaptureModal title="Register Face" description="Use the front camera or choose a clear face photo for future login." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
+      {authMethod === "face" && cameraOpen && <FaceCaptureModal title="Register Face" description="Use the front camera or choose a clear face photo for future login." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
       </main>
     </>
   );
@@ -3399,8 +3458,12 @@ function SystemRegistrationPage({ user = null, setPage = null, onLogout = null, 
 }
 
 
-function AuthPage({ onFaceLogin, onRegister, onTemporaryAccess }) {
+function AuthPage({ onAuthenticated, onRegister, onTemporaryAccess }) {
   const [faceOpen, setFaceOpen] = useState(false);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinMessage, setPinMessage] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [accessRole, setAccessRole] = useState("");
   const [accessPassword, setAccessPassword] = useState("");
@@ -3419,6 +3482,43 @@ function AuthPage({ onFaceLogin, onRegister, onTemporaryAccess }) {
     setAccessRole("");
     setAccessPassword("");
     setAccessMessage("");
+  }
+
+  function openPinLogin() {
+    setMessage("");
+    setPin("");
+    setPinMessage("");
+    setPinOpen(true);
+  }
+
+  function closePinLogin() {
+    if (pinBusy) return;
+    setPinOpen(false);
+    setPin("");
+    setPinMessage("");
+  }
+
+  async function submitPinLogin(event) {
+    event.preventDefault();
+    setPinMessage("");
+    if (!hasCompletePin(pin)) return setPinMessage(PIN_UNAVAILABLE_MESSAGE);
+
+    try {
+      setPinBusy(true);
+      const data = await fetchJson("/api/auth/pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      setPinOpen(false);
+      setPin("");
+      setMessage(`Welcome, ${data.profile.operator_name}.`);
+      onAuthenticated(data.profile);
+    } catch (error) {
+      setPinMessage(error.message || PIN_UNAVAILABLE_MESSAGE);
+    } finally {
+      setPinBusy(false);
+    }
   }
 
   async function submitTemporaryAccess(event) {
@@ -3453,7 +3553,7 @@ function AuthPage({ onFaceLogin, onRegister, onTemporaryAccess }) {
     if (!data.matched || !data.profile) throw new Error(data.error || "No matching face found.");
     setFaceOpen(false);
     setMessage(`Welcome, ${data.profile.operator_name}.`);
-    onFaceLogin(data.profile);
+    onAuthenticated(data.profile);
   }
 
   return (
@@ -3464,14 +3564,34 @@ function AuthPage({ onFaceLogin, onRegister, onTemporaryAccess }) {
         <h1>Operator Confirmation</h1>
         <p className="login-subtitle">Login, register, and monitor confirmation records in one clean app.</p>
         <div className="login-actions">
-          <button type="button" onClick={() => setFaceOpen(true)}>Login</button>
-          <button className="secondary-button" type="button" onClick={onRegister}>Register</button>
+          <button className="login-method-button" type="button" onClick={() => setFaceOpen(true)}>Face Recognition</button>
+          <button className="secondary-button login-method-button" type="button" onClick={openPinLogin}>6-Digit PIN</button>
+          <button className="secondary-button register-action-button" type="button" onClick={onRegister}>Register</button>
           <button className="secondary-button" type="button" onClick={() => openTemporaryAccess("operator")}>Temporary User</button>
           <button className="secondary-button" type="button" onClick={() => openTemporaryAccess("admin")}>Admin</button>
         </div>
         {message && <p className="message centered center-message">{message}</p>}
       </section>
       {faceOpen && <FaceCaptureModal title="Face Login" description="Use the front camera or choose a clear face photo." onClose={() => setFaceOpen(false)} onCapture={handleLoginCapture} autoCapture />}
+      {pinOpen && (
+        <div
+          className="modal-backdrop temporary-access-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePinLogin();
+          }}
+        >
+          <form className="temporary-access-card pin-access-card glass-card" onSubmit={submitPinLogin} role="dialog" aria-modal="true" aria-labelledby="pin-login-title">
+            <div className="temporary-access-head">
+              <div><p className="eyebrow">Identity Login</p><h2 id="pin-login-title">Enter 6-Digit PIN</h2></div>
+              <button className="icon-button" type="button" onClick={closePinLogin} disabled={pinBusy} aria-label="Close PIN login">×</button>
+            </div>
+            <label className="pin-field">6-Digit PIN<input type="password" inputMode="numeric" autoComplete="current-password" pattern="[0-9]{6}" maxLength={6} value={pin} onChange={(event) => setPin(pinDigits(event.target.value))} autoFocus required /></label>
+            {pinMessage && <p className="message centered" role="alert">{pinMessage}</p>}
+            <button type="submit" disabled={pinBusy || !hasCompletePin(pin)}>{pinBusy ? "Checking..." : "Continue"}</button>
+          </form>
+        </div>
+      )}
       {accessRole && (
         <div
           className="modal-backdrop temporary-access-backdrop"
@@ -3519,6 +3639,8 @@ function AuthPage({ onFaceLogin, onRegister, onTemporaryAccess }) {
 
 function OperatorRegisterPage({ onBack, onRegistered }) {
   const [form, setForm] = useState(emptyUserForm);
+  const [authMethod, setAuthMethod] = useState("face");
+  const [pin, setPin] = useState("");
   const [imageDataUrl, setImageDataUrl] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -3528,16 +3650,30 @@ function OperatorRegisterPage({ onBack, onRegistered }) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  function chooseAuthMethod(method) {
+    setAuthMethod(method);
+    setPin("");
+    setImageDataUrl("");
+    setMessage("");
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setMessage("");
-    if (!imageDataUrl) return setMessage("Capture the face first.");
+    if (authMethod === "face" && !imageDataUrl) return setMessage("Capture the face first.");
+    if (authMethod === "pin" && !hasCompletePin(pin)) return setMessage(PIN_UNAVAILABLE_MESSAGE);
     try {
       setSaving(true);
       const data = await fetchJson("/api/face/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, roleName: "operator", imageDataUrl }),
+        body: JSON.stringify({
+          ...form,
+          roleName: "operator",
+          authMethod,
+          pin: authMethod === "pin" ? pin : "",
+          imageDataUrl: authMethod === "face" ? imageDataUrl : "",
+        }),
       });
       setMessage(`Registered ${data.profile.operator_name}.`);
       onRegistered(data.profile);
@@ -3563,15 +3699,20 @@ function OperatorRegisterPage({ onBack, onRegistered }) {
             <label>{requiredLabel("Name")}<input value={form.operatorName} onChange={(event) => updateField("operatorName", event.target.value)} placeholder="" required /></label>
             <label>{requiredLabel("Site")}<select value={form.siteName} onChange={(event) => updateField("siteName", event.target.value)} required>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select></label>
           </div>
-          <div className="face-capture-row compact-face-row">
-            <strong>Facial Recognition</strong>
-            <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake Face" : "Capture Face"}</button>
-          </div>
+          <AuthMethodPicker value={authMethod} onChange={chooseAuthMethod} />
+          {authMethod === "face" ? (
+            <div className="face-capture-row compact-face-row">
+              <strong>Facial Recognition</strong>
+              <button className="secondary-button" type="button" onClick={() => setCameraOpen(true)}>{imageDataUrl ? "Retake Face" : "Capture Face"}</button>
+            </div>
+          ) : (
+            <label className="pin-field">{requiredLabel("6-Digit PIN")}<input type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} value={pin} onChange={(event) => setPin(pinDigits(event.target.value))} required /></label>
+          )}
           <button type="submit" disabled={saving}>{saving ? "Registering..." : "Register"}</button>
           {message && <p className="message">{message}</p>}
         </form>
       </section>
-      {cameraOpen && <FaceCaptureModal title="Register Face" description="Use the front camera or choose a clear front-facing image." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
+      {authMethod === "face" && cameraOpen && <FaceCaptureModal title="Register Face" description="Use the front camera or choose a clear front-facing image." onClose={() => setCameraOpen(false)} onCapture={async (image) => { setImageDataUrl(image); setCameraOpen(false); }} />}
     </main>
   );
 }
@@ -4052,7 +4193,7 @@ function App() {
   }
 
   if (page === "auth") {
-    return <AuthPage onFaceLogin={(profile) => { setUser(profile); setPage(isAdminUser(profile) ? "machine" : "record"); }} onRegister={() => setPage("register")} onTemporaryAccess={(profile) => { setUser(profile); setPage(isAdminUser(profile) ? "machine" : "record"); }} />;
+    return <AuthPage onAuthenticated={(profile) => { setUser(profile); setPage(isAdminUser(profile) ? "machine" : "record"); }} onRegister={() => setPage("register")} onTemporaryAccess={(profile) => { setUser(profile); setPage(isAdminUser(profile) ? "machine" : "record"); }} />;
   }
 
   if (page === "register") {
