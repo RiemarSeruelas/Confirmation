@@ -2,11 +2,8 @@
 -- Run after schema.sql so app.face_identities already exists.
 
 ALTER TABLE app.face_identities
-  ADD COLUMN IF NOT EXISTS auth_method TEXT NOT NULL DEFAULT 'face',
+  ADD COLUMN IF NOT EXISTS auth_method TEXT,
   ADD COLUMN IF NOT EXISTS pin_hash TEXT;
-
-ALTER TABLE app.face_identities
-  ALTER COLUMN auth_method SET DEFAULT 'face';
 
 UPDATE app.face_identities
 SET auth_method = CASE
@@ -17,6 +14,7 @@ WHERE auth_method IS NULL
    OR auth_method NOT IN ('face', 'pin');
 
 ALTER TABLE app.face_identities
+  ALTER COLUMN auth_method SET DEFAULT 'pin',
   ALTER COLUMN auth_method SET NOT NULL;
 
 DO $$

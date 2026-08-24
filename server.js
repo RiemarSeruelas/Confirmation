@@ -17,23 +17,13 @@ const PORT = Number(cleanEnv(process.env.PORT) || 5178);
 const isProduction = process.env.NODE_ENV === "production";
 const USAGE_LOG_ENABLED = process.env.USAGE_LOG_ENABLED !== "false";
 
-const AI_FACE_BASE_URL = cleanEnv(process.env.AI_FACE_BASE_URL);
-const AI_FACE_REGISTER_PATH = process.env.AI_FACE_REGISTER_PATH || "/register";
-const AI_FACE_SEARCH_PATH = process.env.AI_FACE_SEARCH_PATH || "/search";
-const AI_FACE_TIMEOUT_MS = Number(process.env.AI_FACE_TIMEOUT_MS || 30000);
-const AI_FACE_MODEL_NAME = process.env.AI_FACE_MODEL_NAME || "SFace";
-const AI_FACE_DETECTOR_BACKEND = process.env.AI_FACE_DETECTOR_BACKEND || "yunet";
-const AI_FACE_ALIGN = process.env.AI_FACE_ALIGN !== "false";
-const AI_FACE_L2_NORMALIZE = process.env.AI_FACE_L2_NORMALIZE !== "false";
-const AI_FACE_DISTANCE_METRIC = process.env.AI_FACE_DISTANCE_METRIC || "cosine";
-const AI_FACE_SEARCH_METHOD = process.env.AI_FACE_SEARCH_METHOD || "exact";
 const AI_IMAGE_BASE_URL = cleanEnv(process.env.AI_IMAGE_BASE_URL);
 const AI_IMAGE_PATH = process.env.AI_IMAGE_PATH || "/api/generate";
 const AI_IMAGE_MODEL = process.env.AI_IMAGE_MODEL || "llama3.2-vision:11b";
 const AI_IMAGE_TIMEOUT_MS = Number(process.env.AI_IMAGE_TIMEOUT_MS || 60000);
 const MAX_PROOF_IMAGE_BYTES = Number(process.env.MAX_PROOF_IMAGE_BYTES || 6 * 1024 * 1024);
 const SCHEMA_RETRY_MS = Number(process.env.SCHEMA_RETRY_MS || 30000);
-const TEMP_ACCESS_PASSWORD = cleanEnv(process.env.TEMP_ACCESS_PASSWORD);
+const ADMIN_PIN = cleanEnv(process.env.ADMIN_PIN);
 const PIN_PEPPER = cleanEnv(process.env.PIN_PEPPER);
 const configuredPinMaxAttempts = Number(process.env.PIN_MAX_ATTEMPTS || 5);
 const configuredPinLockoutMinutes = Number(process.env.PIN_LOCKOUT_MINUTES || 15);
@@ -45,10 +35,10 @@ const PIN_LOCKOUT_MS = (
     ? configuredPinLockoutMinutes
     : 15
 ) * 60 * 1000;
-const PIN_UNAVAILABLE_MESSAGE = "This PIN cannot be used.";
+const PIN_UNAVAILABLE_MESSAGE = "Pin cannot be used";
 
-if (!TEMP_ACCESS_PASSWORD) {
-  throw new Error("TEMP_ACCESS_PASSWORD is required in .env");
+if (!/^\d{6}$/.test(ADMIN_PIN)) {
+  throw new Error("ADMIN_PIN must be set in .env as exactly 6 digits");
 }
 
 if (PIN_PEPPER.length < 32) {
@@ -87,8 +77,8 @@ function secretMatches(value, expected) {
     && crypto.timingSafeEqual(providedBuffer, expectedBuffer);
 }
 
-function normalizeAuthMethod(value) {
-  return cleanText(value).toLowerCase() === "pin" ? "pin" : "face";
+function normalizeAuthMethod() {
+  return "pin";
 }
 
 function normalizePin(value) {
@@ -97,6 +87,11 @@ function normalizePin(value) {
 
 function isValidPin(pin) {
   return /^\d{6}$/.test(normalizePin(pin));
+}
+
+function isAdminPin(pin) {
+  const normalized = normalizePin(pin);
+  return isValidPin(normalized) && secretMatches(normalized, ADMIN_PIN);
 }
 
 function pinLookupHash(pin) {
@@ -281,10 +276,6 @@ function buildServiceUrl(baseUrl, endpointPath) {
   return new URL(cleanPath, base).toString();
 }
 
-function buildAiUrl(endpointPath) {
-  return buildServiceUrl(AI_FACE_BASE_URL, endpointPath);
-}
-
 function parseImageDataUrl(imageDataUrl) {
   const input = cleanText(imageDataUrl);
   if (!input) throw new Error("No image was received.");
@@ -303,27 +294,6 @@ function parseImageDataUrl(imageDataUrl) {
     sizeBytes: buffer.length,
     sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
   };
-}
-
-function deepFaceBody({ imageDataUrl, operatorName = "", isRegister = false }) {
-  const image = parseImageDataUrl(imageDataUrl);
-  const body = {
-    model_name: AI_FACE_MODEL_NAME,
-    detector_backend: AI_FACE_DETECTOR_BACKEND,
-    align: AI_FACE_ALIGN,
-    l2_normalize: AI_FACE_L2_NORMALIZE,
-    distance_metric: AI_FACE_DISTANCE_METRIC,
-    search_method: AI_FACE_SEARCH_METHOD,
-    img: image.dataUrl,
-  };
-
-  if (isRegister) {
-    body.name = operatorName;
-    body.identity = operatorName;
-    body.person_id = operatorName;
-  }
-
-  return body;
 }
 
 async function readAiPayload(response) {
@@ -425,112 +395,6 @@ function imageAiPayloadSummary(payload) {
   };
 }
 
-async function postFaceJson({ endpointType, imageDataUrl, operatorName = "" }) {
-  const isRegister = endpointType === "register";
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), AI_FACE_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(buildAiUrl(isRegister ? AI_FACE_REGISTER_PATH : AI_FACE_SEARCH_PATH), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(deepFaceBody({ imageDataUrl, operatorName, isRegister })),
-      signal: controller.signal,
-    });
-    const payload = await readAiPayload(response);
-
-    if (!response.ok) {
-      const message = typeof payload === "string" ? payload : JSON.stringify(payload);
-      throw new Error(`Face AI returned HTTP ${response.status}. ${message || "Check the Face AI endpoint."}`);
-    }
-
-    return normalizeFaceResult(payload);
-  } catch (error) {
-    if (error.name === "AbortError") throw new Error("Face AI request timed out.");
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function walkObjects(value, output = [], depth = 0) {
-  if (depth > 7 || value === null || value === undefined) return output;
-  if (Array.isArray(value)) {
-    for (const item of value.slice(0, 50)) walkObjects(item, output, depth + 1);
-    return output;
-  }
-  if (typeof value === "object") {
-    output.push(value);
-    for (const nested of Object.values(value)) {
-      if (nested && typeof nested === "object") walkObjects(nested, output, depth + 1);
-    }
-  }
-  return output;
-}
-
-function normalizeIdentifierValue(value) {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "object") {
-    if (value.$oid) return cleanText(value.$oid);
-    if (value.oid) return cleanText(value.oid);
-    return "";
-  }
-  return cleanText(value);
-}
-
-function extractFaceIdentifiers(rawResult) {
-  const preferredFields = ["embedding_hash", "face_hash", "img_name", "image_name", "face_id", "_id", "id", "sequence"];
-  const identifiers = [];
-  const fields = {};
-
-  for (const object of walkObjects(rawResult)) {
-    for (const field of preferredFields) {
-      if (!Object.prototype.hasOwnProperty.call(object, field)) continue;
-      const value = normalizeIdentifierValue(object[field]);
-      if (!value) continue;
-      if (!fields[field]) fields[field] = value;
-      identifiers.push(`${field}:${value}`);
-      identifiers.push(value);
-    }
-  }
-
-  const uniqueIdentifiers = uniqueValues(identifiers).slice(0, 80);
-  const primaryField = preferredFields.find((field) => fields[field]);
-
-  return {
-    aiFaceKey: primaryField ? `${primaryField}:${fields[primaryField]}` : uniqueIdentifiers[0] || "",
-    identifiers: uniqueIdentifiers,
-    fields,
-  };
-}
-
-function normalizeFaceResult(rawResult) {
-  const identifiers = extractFaceIdentifiers(rawResult);
-  const objects = walkObjects(rawResult);
-  const firstObject = objects[0] || {};
-
-  const possibleName = cleanText(
-    firstObject.name ||
-      firstObject.identity ||
-      firstObject.person ||
-      firstObject.operator_name ||
-      firstObject.person_name ||
-      ""
-  );
-
-  const text = typeof rawResult === "string" ? cleanText(rawResult) : "";
-  const lowerText = text.toLowerCase();
-  const explicitNoMatch = lowerText.includes("no matching") || lowerText.includes("not found") || lowerText.includes("unknown");
-  const matched = Boolean(identifiers.aiFaceKey || possibleName || (text && !explicitNoMatch));
-
-  return {
-    matched,
-    name: possibleName || (explicitNoMatch ? "" : text),
-    identifiers,
-    raw: rawResult,
-  };
-}
-
 function compactJsonValue(value, maxLength = 7000) {
   try {
     const text = JSON.stringify(value, (key, val) => {
@@ -572,28 +436,6 @@ function identityRowToProfile(row) {
   };
 }
 
-async function findFaceIdentityByIdentifiers(identifiers) {
-  const cleanIdentifiers = uniqueValues(identifiers);
-  if (!cleanIdentifiers.length) return null;
-
-  const result = await pool.query(
-    `
-      SELECT *
-      FROM app.face_identities
-      WHERE active = TRUE
-        AND (
-          ai_face_key = ANY($1::text[])
-          OR ai_identifiers ?| $1::text[]
-        )
-      ORDER BY last_seen_at DESC NULLS LAST, id DESC
-      LIMIT 1
-    `,
-    [cleanIdentifiers]
-  );
-
-  return result.rows[0] || null;
-}
-
 async function saveIdentity({
   profile,
   aiFaceKey,
@@ -601,7 +443,7 @@ async function saveIdentity({
   registerPayload = {},
   matchPayload = {},
   registeredBy = "",
-  authMethod = "face",
+  authMethod = "pin",
   pinHash = null,
 }) {
   const operatorName = cleanText(profile.operatorName || profile.operator_name || profile.name);
@@ -977,34 +819,25 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-app.post("/api/auth/temporary-access", (req, res) => {
-  const role = cleanText(req.body?.role).toLowerCase();
-
-  if (!["admin", "operator"].includes(role)) {
-    return res.status(400).json({ ok: false, error: "Choose Admin or Temporary User." });
-  }
-
-  if (!secretMatches(req.body?.password, TEMP_ACCESS_PASSWORD)) {
-    return res.status(401).json({ ok: false, error: "Incorrect password." });
-  }
-
-  const isAdmin = role === "admin";
-  return res.json({
-    ok: true,
-    profile: {
-      id: null,
-      operator_name: isAdmin ? "Temporary Admin" : "Temporary User",
-      site_name: isAdmin ? "Admin" : "Savoury",
-      role_name: role,
-    },
-  });
-});
-
 app.post("/api/auth/pin", async (req, res) => {
   const clientIp = normalizedClientIp(req);
 
   if (!consumePinAttempt(clientIp) || !isValidPin(req.body?.pin)) {
     return res.status(401).json({ ok: false, error: PIN_UNAVAILABLE_MESSAGE });
+  }
+
+  if (isAdminPin(req.body.pin)) {
+    clearPinAttempts(clientIp);
+    return res.json({
+      ok: true,
+      profile: {
+        id: null,
+        operator_name: "Admin",
+        site_name: "Admin",
+        role_name: "admin",
+        auth_method: "pin",
+      },
+    });
   }
 
   try {
@@ -1181,179 +1014,66 @@ app.post("/api/ai/image-field", async (req, res) => {
   }
 });
 
-app.get("/api/face/config", (_req, res) => {
-  res.json({
-    ok: true,
-    baseUrl: AI_FACE_BASE_URL,
-    registerPath: AI_FACE_REGISTER_PATH,
-    searchPath: AI_FACE_SEARCH_PATH,
-    modelName: AI_FACE_MODEL_NAME,
-    detectorBackend: AI_FACE_DETECTOR_BACKEND,
-  });
-});
-
-app.post("/api/face/search", async (req, res) => {
+app.post("/api/auth/register", async (req, res) => {
   try {
-    await ensureSchemaReady();
-    const aiResult = await postFaceJson({ endpointType: "search", imageDataUrl: req.body?.imageDataUrl });
-
-    if (!aiResult.matched) {
-      return res.json({ ok: true, matched: false, error: "No matching face found.", ai: aiResult });
-    }
-
-    const identity = await findFaceIdentityByIdentifiers([
-      aiResult.identifiers.aiFaceKey,
-      ...(aiResult.identifiers.identifiers || []),
-    ]);
-
-    if (!identity) {
-      return res.status(404).json({
-        ok: false,
-        matched: true,
-        error: "Face AI recognized this face, but this app has no local profile linked yet. Register this person in the app first.",
-        aiFaceKey: aiResult.identifiers.aiFaceKey,
-        aiIdentifiers: aiResult.identifiers.identifiers || [],
-      });
-    }
-
-    const updated = await updateIdentitySeen(identity.id, aiResult.raw);
-    res.json({ ok: true, matched: true, profile: identityRowToProfile(updated || identity), ai: aiResult });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || "Face login failed." });
-  }
-});
-
-app.post("/api/face/register", async (req, res) => {
-  try {
-    await ensureSchemaReady();
-    const authMethod = normalizeAuthMethod(req.body?.authMethod);
-
     const profile = {
       operatorName: cleanText(req.body?.operatorName || req.body?.name),
-      employeeId: cleanText(req.body?.employeeId),
       siteName: normalizeSite(req.body?.siteName),
-      shiftName: "",
-      department: cleanText(req.body?.department),
-      roleName: normalizeRole(req.body?.roleName || "operator"),
-      email: cleanText(req.body?.email),
+      roleName: "operator",
     };
 
     if (!profile.operatorName) return res.status(400).json({ ok: false, error: "Name is required." });
-    if (authMethod === "pin") {
-      if (!isValidPin(req.body?.pin)) {
-        return res.status(400).json({ ok: false, error: PIN_UNAVAILABLE_MESSAGE });
-      }
-
-      const identity = await saveIdentity({
-        profile,
-        aiFaceKey: "",
-        identifiers: [],
-        registerPayload: { method: "pin" },
-        registeredBy: cleanText(req.body?.registeredBy),
-        authMethod: "pin",
-        pinHash: pinLookupHash(req.body.pin),
-      });
-
-      return res.status(201).json({ ok: true, profile: identityRowToProfile(identity) });
+    if (!isValidPin(req.body?.pin) || isAdminPin(req.body?.pin)) {
+      return res.status(400).json({ ok: false, error: PIN_UNAVAILABLE_MESSAGE });
     }
-
-    if (!req.body?.imageDataUrl) return res.status(400).json({ ok: false, error: "Face capture is required." });
-
-    const registerResult = await postFaceJson({
-      endpointType: "register",
-      imageDataUrl: req.body.imageDataUrl,
-      operatorName: profile.operatorName,
-    });
-
-    let identifiers = registerResult.identifiers;
-    let searchResult = null;
-
-    if (!identifiers.aiFaceKey) {
-      searchResult = await postFaceJson({ endpointType: "search", imageDataUrl: req.body.imageDataUrl });
-      identifiers = searchResult.identifiers;
-    }
+    await ensureSchemaReady();
 
     const identity = await saveIdentity({
       profile,
-      aiFaceKey: identifiers.aiFaceKey,
-      identifiers: identifiers.identifiers || [],
-      registerPayload: registerResult.raw,
-      matchPayload: searchResult?.raw || {},
+      aiFaceKey: "",
+      identifiers: [],
+      registerPayload: { method: "pin" },
       registeredBy: cleanText(req.body?.registeredBy),
-      authMethod: "face",
+      authMethod: "pin",
+      pinHash: pinLookupHash(req.body.pin),
     });
 
-    res.json({
-      ok: true,
-      profile: identityRowToProfile(identity),
-      aiFaceKey: identifiers.aiFaceKey,
-      aiIdentifiers: identifiers.identifiers || [],
-    });
+    return res.status(201).json({ ok: true, profile: identityRowToProfile(identity) });
   } catch (error) {
-    const safePinMessage = normalizeAuthMethod(req.body?.authMethod) === "pin"
-      ? pinRegistrationError(error)
-      : null;
+    const safePinMessage = pinRegistrationError(error);
     if (safePinMessage) {
       return res.status(400).json({ ok: false, error: safePinMessage });
     }
-    res.status(500).json({ ok: false, error: error.message || "Face registration failed." });
+    res.status(500).json({ ok: false, error: "Registration is temporarily unavailable." });
   }
 });
 
 app.post("/api/admin/users", async (req, res) => {
   try {
-    await ensureSchemaReady();
-    const authMethod = normalizeAuthMethod(req.body?.authMethod);
     const profile = {
       operatorName: cleanText(req.body?.operatorName || req.body?.name),
-      employeeId: cleanText(req.body?.employeeId),
       siteName: normalizeSite(req.body?.siteName),
-      shiftName: "",
-      department: cleanText(req.body?.department),
-      roleName: normalizeRole(req.body?.roleName),
-      email: cleanText(req.body?.email),
+      roleName: "operator",
     };
     if (!profile.operatorName) return res.status(400).json({ ok: false, error: "Name is required." });
-    if (authMethod === "pin" && !isValidPin(req.body?.pin)) {
+    if (!isValidPin(req.body?.pin) || isAdminPin(req.body?.pin)) {
       return res.status(400).json({ ok: false, error: PIN_UNAVAILABLE_MESSAGE });
     }
-    if (authMethod === "face" && !req.body?.imageDataUrl) {
-      return res.status(400).json({ ok: false, error: "Face capture is required." });
-    }
-
-    let registerPayload = authMethod === "pin" ? { method: "pin" } : {};
-    let identifiers = { aiFaceKey: "", identifiers: [] };
-
-    if (authMethod === "face") {
-      const registerResult = await postFaceJson({
-        endpointType: "register",
-        imageDataUrl: req.body.imageDataUrl,
-        operatorName: profile.operatorName,
-      });
-      registerPayload = registerResult.raw;
-      identifiers = registerResult.identifiers;
-
-      if (!identifiers.aiFaceKey) {
-        const searchResult = await postFaceJson({ endpointType: "search", imageDataUrl: req.body.imageDataUrl });
-        identifiers = searchResult.identifiers;
-      }
-    }
+    await ensureSchemaReady();
 
     const identity = await saveIdentity({
       profile,
-      aiFaceKey: identifiers.aiFaceKey,
-      identifiers: identifiers.identifiers || [],
-      registerPayload,
+      aiFaceKey: "",
+      identifiers: [],
+      registerPayload: { method: "pin" },
       registeredBy: cleanText(req.body?.registeredBy || "Admin"),
-      authMethod,
-      pinHash: authMethod === "pin" ? pinLookupHash(req.body.pin) : null,
+      authMethod: "pin",
+      pinHash: pinLookupHash(req.body.pin),
     });
 
     res.status(201).json({ ok: true, profile: identityRowToProfile(identity) });
   } catch (error) {
-    const safePinMessage = normalizeAuthMethod(req.body?.authMethod) === "pin"
-      ? pinRegistrationError(error)
-      : null;
+    const safePinMessage = pinRegistrationError(error);
     if (safePinMessage) {
       return res.status(400).json({ ok: false, error: safePinMessage });
     }

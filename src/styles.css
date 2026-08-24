@@ -28,6 +28,7 @@
 }
 
 * { box-sizing: border-box; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 html, body, #root { width: 100%; height: 100%; min-height: 100%; overflow: hidden; }
 body { margin: 0; min-width: 320px; overflow: hidden; background: linear-gradient(135deg, var(--bg-a), var(--bg-b) 45%, var(--bg-c)); font-size: 13px; }
 button, input, select, textarea { font: inherit; }
@@ -945,10 +946,6 @@ button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 24
 .register-grid .input-form input,
 .register-grid .input-form select { min-height: 30px; padding: .32rem .48rem; font-size: .72rem; }
 .register-grid .input-form > button[type="submit"] { width: 108px; min-height: 30px; align-self: flex-end; }
-.register-grid .face-capture-row { min-height: 36px; padding: .34rem .48rem; }
-.register-grid .face-capture-row button { min-height: 28px; padding: .28rem .52rem; }
-.register-grid .auth-method-picker { padding: .2rem; gap: .28rem; }
-.register-grid .auth-method-picker button { min-height: 28px; padding: .26rem .4rem; font-size: .65rem; }
 .register-grid .pin-field input { min-height: 32px; }
 .register-grid .user-list { gap: .3rem; margin-top: .12rem; }
 .register-grid .user-list article { padding: .4rem .5rem; }
@@ -956,31 +953,6 @@ button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 24
 .field-grid.two { grid-template-columns: repeat(2, minmax(0,1fr)); }
 .only-basic-register { align-items: end; }
 .only-basic-register label:nth-child(3) { max-width: 100%; }
-.face-capture-row { display: flex; align-items: center; justify-content: space-between; gap: .65rem; padding: .65rem .75rem; border-radius: 11px; background: rgba(246,249,255,.82); border: 1px solid var(--line-soft); }
-.auth-method-picker {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: .4rem;
-  padding: .28rem;
-  border: 1px solid var(--line-soft);
-  border-radius: 11px;
-  background: rgba(246,249,255,.82);
-}
-.auth-method-picker button {
-  min-height: 32px;
-  padding: .34rem .55rem;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--muted);
-  background: transparent;
-  box-shadow: none;
-  font-size: .70rem;
-}
-.auth-method-picker button.active {
-  color: #fff;
-  background: linear-gradient(135deg, var(--purple), var(--blue));
-  box-shadow: 0 7px 16px rgba(15,107,255,.16);
-}
 .pin-field { display: grid; gap: .3rem; text-align: left; }
 .pin-field input {
   width: 100%;
@@ -1150,11 +1122,6 @@ button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 24
   min-height: 32px;
   padding: .36rem .5rem;
 }
-.operator-register-page .face-capture-row {
-  min-height: 38px;
-  padding: .38rem .5rem;
-}
-.operator-register-page .auth-method-picker { margin-top: .08rem; }
 .operator-register-page .pin-field input { min-height: 38px; }
 .operator-register-page .input-form > button[type="submit"] {
   width: 112px;
@@ -1593,27 +1560,26 @@ th { background: #fbfdff; color: #4d5d7a; font-weight: 950; }
 .login-card { width: min(410px, 100%); display: grid; gap: .62rem; padding: 1.25rem; text-align: center; }
 .brand-mark { width: 54px; height: 54px; margin: 0 auto; display: grid; place-items: center; border-radius: 16px; background: linear-gradient(135deg, var(--purple), var(--blue)); color: #fff; font-weight: 950; }
 .login-subtitle { color: var(--muted); line-height: 1.45; }
-.login-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: .65rem; }
-.login-actions .register-action-button { grid-column: 1 / -1; }
-.center-message { margin-top: .2rem; }
-.temporary-access-backdrop { align-items: center; }
-.temporary-access-card {
-  width: min(380px, calc(100vw - 32px));
-  display: grid;
-  gap: .85rem;
-  padding: 1.1rem;
-  border-radius: 18px;
-  text-align: left;
+.pin-only-login { display: grid; gap: .45rem; margin-top: .2rem; }
+.pin-login-field input {
+  min-height: 54px;
+  border-radius: 12px;
+  border-color: rgba(15,107,255,.28);
+  background: rgba(255,255,255,.95);
+  font-size: 1.15rem;
+  letter-spacing: .58em;
+  padding-left: calc(.72rem + .58em);
 }
-.temporary-access-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
+.registration-link { color: var(--muted); font-size: .76rem; font-weight: 800; }
+.text-link-button {
+  min-height: auto;
+  padding: 0;
+  border-radius: 0;
+  color: var(--blue);
+  background: transparent;
+  box-shadow: none;
 }
-.temporary-access-head h2 { margin-top: .2rem; }
-.temporary-access-card > button[type="submit"] { width: 100%; }
-.pin-access-card .pin-field input { min-height: 44px; font-size: 1rem; }
+.text-link-button:hover:not(:disabled) { transform: none; box-shadow: none; text-decoration: underline; }
 
 .left { left: 0; } .right { right: 0; }
 .high { color: var(--orange); } .low { color: var(--blue); } .warning { color: var(--orange); }

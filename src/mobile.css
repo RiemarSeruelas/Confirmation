@@ -1465,45 +1465,14 @@
     font-size: 11px;
   }
 
-  .login-actions {
-    gap: 6px;
-  }
-
-  .login-actions button {
-    min-height: 34px;
-    font-size: 11px;
-  }
-
-  .auth-method-picker {
-    gap: 4px;
-    padding: 3px;
-    border-radius: 9px;
-  }
-
-  .auth-method-picker button {
-    min-height: 30px;
-    padding: 4px 6px;
-    border-radius: 7px;
-    font-size: 10px;
-  }
-
   .pin-field input {
     min-height: 34px;
     font-size: 12px;
     letter-spacing: .34em;
   }
 
-  .temporary-access-backdrop {
-    align-items: center;
-    padding: max(12px, env(safe-area-inset-top)) var(--mobile-edge) max(12px, env(safe-area-inset-bottom));
-  }
-
-  .temporary-access-card {
-    width: min(360px, 100%);
-    align-self: center;
-    padding: 14px;
-    border-radius: 12px;
-  }
+  .pin-login-field input { min-height: 48px; font-size: 15px; letter-spacing: .5em; }
+  .registration-link { font-size: 10px; }
 
   .system-builder-shell,
   .system-builder-shell-editing {
@@ -1719,31 +1688,12 @@
     font-size: 9px;
   }
 
-  .register-grid .face-capture-row {
-    min-height: 34px;
-    padding: 4px 6px;
-    font-size: 9px;
-  }
-
-  .register-grid .auth-method-picker {
-    gap: 3px;
-    padding: 2px;
-  }
-
-  .register-grid .auth-method-picker button {
-    min-height: 28px;
-    height: 28px;
-    padding: 3px 5px;
-    font-size: 9px;
-  }
-
   .register-grid .pin-field input {
     min-height: 30px;
     height: 30px;
     font-size: 10px;
   }
 
-  .register-grid .face-capture-row button,
   .register-grid .input-form > button[type="submit"],
   .register-grid .delete-user-button {
     min-height: 28px;
