@@ -1201,6 +1201,52 @@
     background: #fff;
   }
 
+  .factory-trends-page .trend-point-detail {
+    gap: 4px;
+    padding: 5px;
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
+  .factory-trends-page .trend-point-detail.empty {
+    min-height: 60px;
+  }
+
+  .factory-trends-page .trend-point-detail-head small,
+  .factory-trends-page .trend-point-detail-meta small {
+    font-size: 7px;
+  }
+
+  .factory-trends-page .trend-point-detail-head strong,
+  .factory-trends-page .trend-point-detail-head b {
+    font-size: 10px;
+  }
+
+  .factory-trends-page .trend-point-detail-meta {
+    gap: 3px;
+  }
+
+  .factory-trends-page .trend-point-detail-meta > span {
+    padding: 3px 4px;
+    border-radius: 5px;
+  }
+
+  .factory-trends-page .trend-point-detail-meta strong,
+  .factory-trends-page .trend-point-detail-values span,
+  .factory-trends-page .trend-point-detail-values strong {
+    font-size: 8px;
+  }
+
+  .factory-trends-page .trend-point-detail-values {
+    max-height: 94px;
+    gap: 3px;
+  }
+
+  .factory-trends-page .trend-point-detail-values > div {
+    padding: 3px 4px;
+    border-radius: 5px;
+  }
+
   .factory-trends-page .trend-side-label {
     font-size: 8px;
   }
@@ -1881,6 +1927,77 @@
     padding: 2px 4px;
     border-radius: 6px;
     font-size: 8px;
+  }
+
+  .logs-submission-list {
+    gap: 4px;
+    padding: 0;
+    overflow: visible;
+  }
+
+  .logs-submission-card {
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
+  .logs-submission-summary {
+    min-height: 72px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, .8fr) 38px;
+    grid-template-areas:
+      "time time count"
+      "person site chevron"
+      "machines machines chevron";
+    gap: 3px 6px;
+    padding: 5px;
+  }
+
+  .logs-submission-time { grid-area: time; gap: 5px; }
+  .logs-submission-time i { width: 22px; height: 22px; font-size: 9px; }
+  .logs-submission-person { grid-area: person; }
+  .logs-submission-site { grid-area: site; }
+  .logs-submission-machines { grid-area: machines; gap: 3px; }
+  .logs-submission-count { grid-area: count; }
+  .logs-submission-chevron { grid-area: chevron; align-self: center; }
+  .logs-submission-summary strong { font-size: 9px; }
+  .logs-submission-summary small { font-size: 6.5px; }
+  .logs-submission-machines i { max-width: 92px; padding: 2px 4px; font-size: 7px; }
+  .logs-submission-count strong { font-size: 11px; }
+
+  .logs-submission-details {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding: 5px;
+  }
+
+  .logs-entry-machine {
+    padding: 5px;
+    border-radius: 7px;
+  }
+
+  .logs-entry-machine > header {
+    padding-bottom: 3px;
+  }
+
+  .logs-entry-machine > header small,
+  .logs-entry-machine > header > span,
+  .logs-entry-values > div > span,
+  .logs-entry-values > div > strong {
+    font-size: 7px;
+  }
+
+  .logs-entry-machine > header strong {
+    font-size: 9px;
+  }
+
+  .logs-entry-values {
+    gap: 3px;
+    padding-top: 3px;
+  }
+
+  .logs-entry-values > div {
+    gap: 3px;
+    padding: 3px;
+    border-radius: 5px;
   }
 
   /* Native camera remains full-screen and touch friendly. */
