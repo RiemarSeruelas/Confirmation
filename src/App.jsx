@@ -544,6 +544,17 @@ function userDisplayName(user) {
   return user?.operator_name || user?.name || "Operator";
 }
 
+function personInitials(name) {
+  return String(name || "Operator")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "OP";
+}
+
 function userSite(user) {
   return user?.site_name || "Savoury";
 }
@@ -705,7 +716,9 @@ function trendOptionsForMachines(machines = []) {
 }
 
 function buildTrendDataFromRecords(machine, records = [], selectedDetail = "") {
-  const sorted = [...records].sort((a, b) => new Date(a.record_timestamp).getTime() - new Date(b.record_timestamp).getTime() || Number(a.id || 0) - Number(b.id || 0));
+  const sorted = [...records]
+    .sort((a, b) => new Date(a.record_timestamp).getTime() - new Date(b.record_timestamp).getTime() || Number(a.id || 0) - Number(b.id || 0))
+    .slice(-20);
   const configuredFields = normalizeFields(machine?.fields).filter((item) => item.type === "number");
   const numericFields = numericTrendFieldsForMachine(machine, sorted);
   const field = selectedDetail
@@ -930,6 +943,101 @@ function ProofValue({ value, proof }) {
       </a>
     </span>
   );
+}
+
+function recordDetailItems(record, machine) {
+  if (!record) return [];
+
+  const items = [];
+  const seenFieldIds = new Set();
+  const seenMappedKeys = new Set();
+  const responseFields = record.response_fields && typeof record.response_fields === "object"
+    ? record.response_fields
+    : {};
+
+  for (const field of normalizeFields(machine?.fields)) {
+    const fieldId = String(field.id || "");
+    const mappedKey = field.mapsTo && field.mapsTo !== "custom" ? String(field.mapsTo) : "";
+    if (fieldId) seenFieldIds.add(fieldId);
+    if (mappedKey) seenMappedKeys.add(mappedKey);
+    items.push({
+      id: fieldId || `detail-${items.length + 1}`,
+      label: visibleVariableName(field, machine?.machine_name || record.machine_name),
+      value: valueFromRecordField(record, field),
+      proof: field.type === "image" ? proofForField(record, field.id) : null,
+      type: field.type,
+    });
+  }
+
+  const configuredFields = normalizeFields(machine?.fields);
+  const hasConfiguredNumericReading = configuredFields.some((field) => {
+    if (field.type !== "number") return false;
+    const configuredValue = valueFromRecordField(record, field);
+    return configuredValue !== null
+      && configuredValue !== undefined
+      && configuredValue !== ""
+      && Number(configuredValue) === Number(record.reading_value);
+  });
+  const fallbackFields = [
+    { id: "reading_value", label: "Reading", value: record.reading_value },
+    { id: "product", label: "Product", value: record.product },
+    { id: "batch_number", label: "Batch Number", value: record.batch_number },
+    { id: "remarks", label: "Remarks", value: record.remarks },
+  ];
+
+  for (const item of fallbackFields) {
+    if (item.id === "reading_value" && hasConfiguredNumericReading) continue;
+    if (seenMappedKeys.has(item.id)) continue;
+    if (item.value === null || item.value === undefined || item.value === "") continue;
+    items.push({ ...item, proof: null, type: "text" });
+    seenMappedKeys.add(item.id);
+  }
+
+  for (const [key, value] of Object.entries(responseFields)) {
+    if (seenFieldIds.has(String(key))) continue;
+    items.push({
+      id: `response-${key}`,
+      label: String(key).replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      value,
+      proof: null,
+      type: "text",
+    });
+  }
+
+  return items;
+}
+
+function submissionGroupKey(record) {
+  const rawTimestamp = record?.record_timestamp || record?.created_at || "";
+  const parsedTimestamp = new Date(rawTimestamp);
+  const timestamp = Number.isNaN(parsedTimestamp.getTime()) ? String(rawTimestamp) : parsedTimestamp.toISOString();
+  const operator = record?.operator_id || normalizedPersonName(record?.operator_name) || "unknown";
+  const site = String(record?.site_name || "").trim().toLowerCase();
+  return `${timestamp}|${operator}|${site}`;
+}
+
+function groupSubmissionRecords(records = []) {
+  const grouped = new Map();
+
+  for (const record of records) {
+    const key = submissionGroupKey(record);
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        id: key,
+        timestamp: record.record_timestamp || record.created_at,
+        operator_id: record.operator_id,
+        operator_name: record.operator_name,
+        site_name: record.site_name,
+        records: [],
+      });
+    }
+    grouped.get(key).records.push(record);
+  }
+
+  return [...grouped.values()].map((submission) => ({
+    ...submission,
+    records: [...submission.records].sort((a, b) => String(a.machine_name || "").localeCompare(String(b.machine_name || ""))),
+  }));
 }
 
 function LatestMachineResponseList({ records = [], machines = [] }) {
@@ -1177,6 +1285,10 @@ function formatRangeText(minimum, maximum) {
 function TrendMultiMachineChart({
   seriesItems = [],
   emptyMessage = "Select equipment with at least 2 submissions.",
+  activePointKey = "",
+  onPointFocus = null,
+  chartKey = "trend",
+  chartLabel = "Selected machine trend comparison chart",
 }) {
   const chartCanvasRef = useRef(null);
   const [chartSize, setChartSize] = useState({ width: 960, height: 240 });
@@ -1224,18 +1336,18 @@ function TrendMultiMachineChart({
   const dataMax = Math.max(...values);
   const rawRange = dataMax - dataMin;
   const rangePadding = rawRange === 0
-    ? Math.max(Math.abs(dataMax) * 0.05, 1)
-    : rawRange * 0.1;
+    ? Math.max(Math.abs(dataMax) * 0.08, 1)
+    : rawRange * 0.22;
   const min = dataMin - rangePadding;
   const max = dataMax + rangePadding;
   const range = max - min;
   const width = chartSize.width;
   const height = chartSize.height;
   const compactChart = width < 600;
-  const chartLeft = 10;
-  const chartRight = width - 10;
-  const chartTop = compactChart ? 24 : 12;
-  const chartBottom = height - (compactChart ? 18 : 14);
+  const chartLeft = compactChart ? 18 : 28;
+  const chartRight = width - (compactChart ? 18 : 28);
+  const chartTop = compactChart ? 28 : 30;
+  const chartBottom = height - (compactChart ? 22 : 26);
   const entryAxisSeries = prepared.reduce(
     (longest, series) => series.points.length > longest.points.length ? series : longest,
     prepared[0]
@@ -1267,7 +1379,7 @@ function TrendMultiMachineChart({
           viewBox={`0 0 ${width} ${height}`}
           preserveAspectRatio="none"
           role="img"
-          aria-label="Selected machine trend comparison chart"
+          aria-label={chartLabel}
         >
           <defs>
             <filter id="trend-point-shadow" x="-100%" y="-100%" width="300%" height="300%">
@@ -1289,20 +1401,63 @@ function TrendMultiMachineChart({
               const y = yForValue(point.reading);
               return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
             }).join(" ");
+            const firstPoint = series.points[0];
+            const lastPoint = series.points[series.points.length - 1];
+            const areaPath = `${path} L${xForPoint(lastPoint, series.points).toFixed(2)},${chartBottom.toFixed(2)} L${xForPoint(firstPoint, series.points).toFixed(2)},${chartBottom.toFixed(2)} Z`;
             return (
               <g key={series.id} className={`trend-series-group series-${series.seriesIndex % 8}`}>
+                <path className={`trend-series-area series-${series.seriesIndex % 8}`} d={areaPath} />
                 <path className={`trend-series-line series-${series.seriesIndex % 8}`} d={path} />
-                {series.points.map((point) => (
-                  <circle
-                    key={`${series.id}-${point.id || point.pointIndex}`}
-                    className={`trend-series-point series-${series.seriesIndex % 8}`}
-                    cx={xForPoint(point, series.points)}
-                    cy={yForValue(point.reading)}
-                    r="4"
-                  >
-                    <title>{`${series.machine?.machine_name || "Machine"}: ${formatNumber(point.reading)} • ${formatDateTime(point.record_timestamp)}`}</title>
-                  </circle>
-                ))}
+                {series.points.map((point) => {
+                  const pointKey = `${chartKey}:${series.id}:${point.id || point.record_timestamp || point.pointIndex}`;
+                  const pointLabel = `${series.machine?.machine_name || "Machine"}: ${formatNumber(point.reading)} • ${formatDateTime(point.record_timestamp)}`;
+                  const pointX = xForPoint(point, series.points);
+                  const pointY = yForValue(point.reading);
+                  const isActive = activePointKey === pointKey;
+                  const valueLabel = formatNumber(point.reading);
+                  const badgeWidth = Math.max(42, valueLabel.length * 7 + 18);
+                  const badgeX = Math.min(chartRight - badgeWidth / 2, Math.max(chartLeft + badgeWidth / 2, pointX));
+                  const badgeY = pointY < chartTop + 38 ? pointY + 30 : pointY - 24;
+                  const focusPoint = () => onPointFocus?.({
+                    key: pointKey,
+                    seriesId: String(series.id),
+                    seriesIndex: series.seriesIndex,
+                    machine: series.machine,
+                    meta: series.meta,
+                    point,
+                  });
+                  return (
+                    <g key={pointKey} className={isActive ? "trend-point-group active" : "trend-point-group"}>
+                      <circle
+                        className={`trend-series-point-halo series-${series.seriesIndex % 8}`}
+                        cx={pointX}
+                        cy={pointY}
+                        r="8"
+                        aria-hidden="true"
+                      />
+                      <circle
+                        className={`trend-series-point series-${series.seriesIndex % 8}`}
+                        cx={pointX}
+                        cy={pointY}
+                        r="4.8"
+                        tabIndex="0"
+                        role="button"
+                        aria-label={`${pointLabel}. Show submission details.`}
+                        onMouseEnter={focusPoint}
+                        onFocus={focusPoint}
+                        onClick={focusPoint}
+                      >
+                        <title>{pointLabel}</title>
+                      </circle>
+                      {isActive && (
+                        <g className={`trend-point-value-badge series-${series.seriesIndex % 8}`} transform={`translate(${badgeX}, ${badgeY})`} aria-hidden="true">
+                          <rect x={-badgeWidth / 2} y="-11" width={badgeWidth} height="22" rx="11" />
+                          <text x="0" y="1">{valueLabel}</text>
+                        </g>
+                      )}
+                    </g>
+                  );
+                })}
               </g>
             );
           })}
@@ -1318,6 +1473,60 @@ function TrendMultiMachineChart({
         ))}
       </div>
     </div>
+  );
+}
+
+function TrendPointDetails({ selection = null }) {
+  if (!selection?.point) {
+    return (
+      <section className="trend-point-detail empty">
+        <strong>Point details</strong>
+        <p>Hover over a circle in the graph to inspect that submission.</p>
+      </section>
+    );
+  }
+
+  const { machine, meta, point, seriesIndex = 0 } = selection;
+  const detailItems = recordDetailItems(point, machine);
+  const highlightedFieldId = String(point.trend_field_id || "");
+  const additionalDetailItems = detailItems.filter((item) => (
+    String(item.id) !== highlightedFieldId && String(item.id) !== "reading_value"
+  ));
+  const operatorName = point.operator_name || "Unknown operator";
+  const siteName = point.site_name || machine?.site_name || "—";
+
+  return (
+    <section className="trend-point-detail" aria-live="polite">
+      <header className="trend-point-detail-head">
+        <span className={`trend-series-swatch series-${seriesIndex % 8}`} />
+        <div>
+          <small>Selected record</small>
+          <strong className="trend-animated-data">{machine?.machine_name || point.machine_name || "Machine"}</strong>
+          <em>{meta?.label || point.trend_field_label || "Reading"}</em>
+        </div>
+        <b className="trend-animated-data">{formatNumber(point.reading_value)}</b>
+      </header>
+
+      <div className="trend-record-context">
+        <span className="trend-operator-avatar">{personInitials(operatorName)}</span>
+        <span className="trend-record-person">
+          <small>Input by</small>
+          <strong className="trend-animated-data">{operatorName}</strong>
+        </span>
+        <span className="trend-record-site">{siteName}</span>
+        <time className="trend-animated-data">{formatDateTime(point.record_timestamp)}</time>
+      </div>
+
+      {!!additionalDetailItems.length && <small className="trend-additional-label">Additional data</small>}
+      <div className="trend-point-detail-values">
+        {additionalDetailItems.map((item, itemIndex) => (
+          <div key={item.id} className={`detail-tone-${itemIndex % 6}`}>
+            <span>{item.label}</span>
+            <strong className="trend-animated-data"><ProofValue value={item.value} proof={item.proof} /></strong>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1756,9 +1965,10 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
   const [selectedMachineIds, setSelectedMachineIds] = useState([]);
   const [seriesTrendMap, setSeriesTrendMap] = useState({});
   const [machineTrendMap, setMachineTrendMap] = useState({});
+  const [focusedTrendPoint, setFocusedTrendPoint] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("Choose an equipment category and parameter, then select equipment below.");
-  const trendLimit = "80";
+  const [message, setMessage] = useState("Choose an equipment category, then select equipment below.");
+  const trendLimit = "20";
 
   const equipmentCategories = useMemo(
     () => equipmentCategoriesForMachines(machines),
@@ -1784,7 +1994,6 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     () => trendOptionsForMachines(trendMachines),
     [trendMachines]
   );
-  const selectedDetailLabel = detailOptions.find((option) => option.value === selectedDetail)?.label || "Numeric detail";
 
   async function loadMachines(site = selectedArea) {
     const query = site ? `?site=${encodeURIComponent(site)}` : "";
@@ -1846,21 +2055,32 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     return buildTrendDataFromRecords(machine, data.records || [], detail);
   }
 
-  async function loadSelectedSeries(machineIds = selectedMachineIds, machineList = machines, detail = selectedDetail) {
+  async function loadSelectedSeries(machineIds = selectedMachineIds, machineList = machines, options = detailOptions) {
     if (!machineIds.length) {
       setSeriesTrendMap({});
       return {};
     }
 
-    const entries = await Promise.all(machineIds.map(async (machineId) => {
+    const machineEntries = await Promise.all(machineIds.map(async (machineId) => {
       try {
-        return [String(machineId), await loadTrendForMachine(machineId, trendLimit, machineList, detail)];
+        const machine = machineList.find((item) => String(item.id) === String(machineId));
+        if (!machine) return [String(machineId), null, []];
+        const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machineId)}&limit=${encodeURIComponent(trendLimit)}`);
+        return [String(machineId), machine, data.records || []];
       } catch {
-        return [String(machineId), { field: null, trends: [], warnings: [], stats: null }];
+        return [String(machineId), null, []];
       }
     }));
 
-    const nextMap = Object.fromEntries(entries);
+    const nextMap = Object.fromEntries(options.map((option) => [
+      option.value,
+      Object.fromEntries(machineEntries.map(([machineId, machine, records]) => [
+        machineId,
+        machine
+          ? buildTrendDataFromRecords(machine, records, option.value)
+          : { field: null, trends: [], warnings: [], stats: null },
+      ])),
+    ]));
     setSeriesTrendMap(nextMap);
     return nextMap;
   }
@@ -1873,7 +2093,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
 
     const entries = await Promise.all(machineList.map(async (machine) => {
       try {
-        const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machine.id)}&limit=24`);
+        const data = await fetchJson(`/api/records?machine_config_id=${encodeURIComponent(machine.id)}&limit=20`);
         return [String(machine.id), buildTrendDataFromRecords(machine, data.records || [], detail)];
       } catch {
         return [String(machine.id), { field: null, trends: [], warnings: [], stats: null }];
@@ -1893,21 +2113,21 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
         equipmentCategory,
         options,
       } = await loadMachines(selectedArea);
-      const detail = options.some((option) => option.value === selectedDetail) ? selectedDetail : options[0]?.value || "";
+      const detail = options[0]?.value || "";
       const visibleIds = new Set(activeMachines.map((machine) => String(machine.id)));
       const selectedIds = selectedMachineIds.filter((id) => visibleIds.has(String(id)));
       if (trendView === "operator") {
         await loadOperatorRecords(selectedArea);
         setMessage(selectedOperator
-          ? `Showing ${options.find((option) => option.value === detail)?.label || "numeric parameter"} submissions made by ${selectedOperator}.`
+          ? `Showing ${options.length} parameter chart${options.length === 1 ? "" : "s"} for submissions made by ${selectedOperator}.`
           : `Choose an operator for ${selectedArea}.`);
       } else {
         await Promise.all([
           loadGridSummaries(categoryMachines, detail),
-          loadSelectedSeries(selectedIds, machineList, detail),
+          loadSelectedSeries(selectedIds, machineList, options),
         ]);
         setMessage(selectedIds.length
-          ? `Showing ${options.find((option) => option.value === detail)?.label || "numeric detail"} across the selected ${equipmentCategory} equipment.`
+          ? `Showing ${options.length} parameter chart${options.length === 1 ? "" : "s"} for the selected ${equipmentCategory} equipment.`
           : `Choose ${equipmentCategory || "equipment"} from the cards below.`);
       }
     } catch (error) {
@@ -1936,8 +2156,8 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     setSeriesTrendMap({});
     setMachineTrendMap({});
     setMessage(nextView === "operator"
-      ? "Choose an operator and parameter to see only that person's submissions."
-      : "Choose a category and parameter, then select machines below.");
+      ? "Choose an operator to see that person's parameter charts."
+      : "Choose a category, then select machines below.");
   }
 
   function selectEquipmentCategory(category) {
@@ -1958,7 +2178,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
     ));
     setSeriesTrendMap({});
     setMachineTrendMap({});
-    setMessage(`Showing ${category || "equipment"}. Choose a parameter and equipment below.`);
+    setMessage(`Showing ${category || "equipment"}. Choose equipment below to build its parameter charts.`);
   }
 
   function clearSelectedMachines() {
@@ -2016,12 +2236,12 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
   }, [trendView, visibleMachines, selectedDetail]);
 
   useEffect(() => {
-    if (trendView !== "machine" || !selectedMachineIds.length || !selectedDetail) {
+    if (trendView !== "machine" || !selectedMachineIds.length || !detailOptions.length) {
       setSeriesTrendMap({});
       return;
     }
-    loadSelectedSeries(selectedMachineIds, machines, selectedDetail).catch((error) => setMessage(error.message));
-  }, [trendView, selectedMachineIds, selectedDetail, machines]);
+    loadSelectedSeries(selectedMachineIds, machines, detailOptions).catch((error) => setMessage(error.message));
+  }, [trendView, selectedMachineIds, machines, detailOptions]);
 
   useEffect(() => {
     if (trendView !== "operator") return;
@@ -2036,68 +2256,47 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
 
     setSelectedMachineIds(matchingIds);
     setMessage(selectedOperator
-      ? `${selectedOperator} has ${selectedDetailLabel} submissions for ${matchingIds.length} machine${matchingIds.length === 1 ? "" : "s"}.`
+      ? `${selectedOperator} has submissions for ${matchingIds.length} machine${matchingIds.length === 1 ? "" : "s"} across ${detailOptions.length} parameter chart${detailOptions.length === 1 ? "" : "s"}.`
       : `No operators found for ${selectedArea}.`);
   }, [
     trendView,
     selectedOperator,
-    selectedDetail,
-    selectedDetailLabel,
     selectedArea,
     trendMachines,
     operatorRecords,
+    detailOptions,
   ]);
 
-  const machineSeriesItems = selectedMachineIds.map((machineId) => {
-    const machine = machines.find((item) => String(item.id) === String(machineId));
-    if (!machine) return null;
-    const data = seriesTrendMap[String(machineId)] || { field: null, trends: [], warnings: [], stats: null };
-    const latest = [...(data.trends || [])].reverse().find((item) => (
-      item.reading_value !== null
-      && item.reading_value !== undefined
-      && item.reading_value !== ""
-      && Number.isFinite(Number(item.reading_value))
-    )) || null;
-    const stats = data.stats || {};
-    const meta = data.field ? getMachineReadingMeta(machine, data.field) : { label: selectedDetailLabel, unit: "" };
-    return {
-      id: String(machineId),
-      machine,
-      data,
-      latest,
-      stats,
-      meta,
-      latestValue: latest?.reading_value ?? stats.avg_reading,
-    };
-  }).filter(Boolean);
-
-  const operatorMachineTrendMap = useMemo(() => {
-    if (trendView !== "operator" || !selectedOperator || !selectedDetail) return {};
+  const operatorParameterTrendMap = useMemo(() => {
+    if (trendView !== "operator" || !selectedOperator || !detailOptions.length) return {};
 
     const operatorKey = normalizedPersonName(selectedOperator);
-    return Object.fromEntries(trendMachines.map((machine) => {
-      const records = operatorRecords.filter((record) => (
-        normalizedPersonName(record.operator_name) === operatorKey
-        && recordMatchesMachine(record, machine)
-      ));
-      return [String(machine.id), buildTrendDataFromRecords(machine, records, selectedDetail)];
-    }));
+    return Object.fromEntries(detailOptions.map((option) => [
+      option.value,
+      Object.fromEntries(trendMachines.map((machine) => {
+        const records = operatorRecords.filter((record) => (
+          normalizedPersonName(record.operator_name) === operatorKey
+          && recordMatchesMachine(record, machine)
+        ));
+        return [String(machine.id), buildTrendDataFromRecords(machine, records, option.value)];
+      })),
+    ]));
   }, [
     trendView,
     selectedOperator,
-    selectedDetail,
+    detailOptions,
     trendMachines,
     operatorRecords,
   ]);
 
-  const operatorSeriesItems = useMemo(() => {
-    if (trendView !== "operator" || !selectedOperator || !selectedDetail) return [];
-
-    return selectedMachineIds.map((machineId) => {
+  const parameterCharts = detailOptions.map((option) => {
+    const trendMap = trendView === "operator"
+      ? operatorParameterTrendMap[option.value] || {}
+      : seriesTrendMap[option.value] || {};
+    const seriesItems = selectedMachineIds.map((machineId) => {
       const machine = machines.find((item) => String(item.id) === String(machineId));
       if (!machine) return null;
-
-      const data = operatorMachineTrendMap[String(machineId)]
+      const data = trendMap[String(machineId)]
         || { field: null, trends: [], warnings: [], stats: null };
       const latest = [...(data.trends || [])].reverse().find((item) => (
         item.reading_value !== null
@@ -2108,8 +2307,7 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
       const stats = data.stats || {};
       const meta = data.field
         ? getMachineReadingMeta(machine, data.field)
-        : { label: selectedDetailLabel, unit: "" };
-
+        : { label: option.label, unit: "" };
       return {
         id: String(machineId),
         machine,
@@ -2119,31 +2317,57 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
         meta,
         latestValue: latest?.reading_value ?? stats.avg_reading,
       };
-    }).filter((item) => item && item.data?.trends?.some((row) => (
-      row.reading_value !== null
-      && row.reading_value !== undefined
-      && row.reading_value !== ""
-      && Number.isFinite(Number(row.reading_value))
-    )));
-  }, [
-    trendView,
-    selectedOperator,
-    selectedDetail,
-    selectedMachineIds,
-    machines,
-    operatorMachineTrendMap,
-    selectedDetailLabel,
-  ]);
+    }).filter(Boolean);
 
-  const seriesItems = trendView === "operator" ? operatorSeriesItems : machineSeriesItems;
-  const gridTrendMap = trendView === "operator" ? operatorMachineTrendMap : machineTrendMap;
+    return {
+      id: option.value,
+      label: option.label,
+      seriesItems,
+      availableSeriesCount: seriesItems.filter((item) => item.data?.trends?.some((row) => (
+        row.reading_value !== null
+        && row.reading_value !== undefined
+        && row.reading_value !== ""
+        && Number.isFinite(Number(row.reading_value))
+      ))).length,
+    };
+  });
+
+  const allSeriesItems = parameterCharts.flatMap((chart) => chart.seriesItems);
+  const selectedMachineItems = selectedMachineIds
+    .map((machineId) => machines.find((machine) => String(machine.id) === String(machineId)))
+    .filter(Boolean);
+  const gridTrendMap = trendView === "operator"
+    ? operatorParameterTrendMap[selectedDetail] || {}
+    : machineTrendMap;
   const gridMachines = trendView === "operator"
     ? trendMachines.filter((machine) => operatorRecords.some((record) => (
       normalizedPersonName(record.operator_name) === normalizedPersonName(selectedOperator)
       && recordMatchesMachine(record, machine)
     )))
     : visibleMachines;
-  const totalWarnings = seriesItems.reduce((sum, item) => sum + Number(item.stats?.warning_count || 0), 0);
+  const totalWarnings = allSeriesItems.reduce((sum, item) => sum + Number(item.stats?.warning_count || 0), 0);
+  const visibleTrendSelections = parameterCharts.flatMap((chart) => (
+    chart.seriesItems.flatMap((series, seriesIndex) => (
+      (series.data?.trends || [])
+        .filter((point) => Number.isFinite(Number(point.reading_value)))
+        .map((point, pointIndex) => ({
+          key: `${chart.id}:${series.id}:${point.id || point.record_timestamp || pointIndex}`,
+          seriesId: String(series.id),
+          seriesIndex,
+          machine: series.machine,
+          meta: series.meta,
+          point,
+        }))
+    ))
+  ));
+  const latestTrendSelection = [...visibleTrendSelections].sort((a, b) => (
+    new Date(b.point.record_timestamp).getTime() - new Date(a.point.record_timestamp).getTime()
+    || Number(b.point.id || 0) - Number(a.point.id || 0)
+  ))[0] || null;
+  const focusedVisibleSelection = focusedTrendPoint
+    ? visibleTrendSelections.find((selection) => selection.key === focusedTrendPoint.key)
+    : null;
+  const activeTrendSelection = focusedVisibleSelection || latestTrendSelection;
 
   return (
     <main className="factory-os-page factory-trends-page">
@@ -2193,13 +2417,6 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
                         ))}
                       </select>
                     </label>
-                    <label className="trend-filter-control detail-filter-control operator-parameter-control">
-                      <span>Parameter</span>
-                      <select value={selectedDetail} onChange={(event) => setSelectedDetail(event.target.value)} disabled={loading || !detailOptions.length} aria-label="Select operator parameter">
-                        {!detailOptions.length && <option value="">No numeric parameters</option>}
-                        {detailOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
-                    </label>
                   </>
                 )}
                 {trendView === "machine" && (
@@ -2222,13 +2439,6 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
                         className="trend-category-dropdown"
                       />
                     </div>
-                    <label className="trend-filter-control detail-filter-control">
-                      <span>Parameter</span>
-                      <select value={selectedDetail} onChange={(event) => setSelectedDetail(event.target.value)} disabled={loading || !detailOptions.length} aria-label="Select detail">
-                        {!detailOptions.length && <option value="">No numeric parameters</option>}
-                        {detailOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
-                    </label>
                   </>
                 )}
                 <button className="trend-refresh-button" type="button" onClick={refreshAll} disabled={loading}>
@@ -2236,51 +2446,72 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
                 </button>
               </div>
             </div>
-            <TrendMultiMachineChart
-              seriesItems={seriesItems}
-              emptyMessage={trendView === "operator"
-                ? "Choose an operator with at least 2 submissions for the selected parameter."
-                : "Select equipment with at least 2 submissions."}
-            />
+            <div className={`trend-parameter-grid ${parameterCharts.length === 1 ? "layout-single" : parameterCharts.length === 2 ? "layout-double" : "layout-multiple"}`}>
+              {!parameterCharts.length ? (
+                <div className="trend-parameter-grid-empty">No numeric parameters are configured for these machines yet.</div>
+              ) : parameterCharts.map((chart) => (
+                <article className="trend-parameter-card" key={chart.id}>
+                  <header className="trend-parameter-card-head">
+                    <div>
+                      <small>Parameter</small>
+                      <h3>{chart.label}</h3>
+                    </div>
+                    <span>{chart.availableSeriesCount} {chart.availableSeriesCount === 1 ? "machine" : "machines"}</span>
+                  </header>
+                  <TrendMultiMachineChart
+                    chartKey={chart.id}
+                    chartLabel={`${chart.label} trend comparison chart`}
+                    seriesItems={chart.seriesItems}
+                    activePointKey={activeTrendSelection?.key || ""}
+                    onPointFocus={setFocusedTrendPoint}
+                    emptyMessage={trendView === "operator"
+                      ? `Not enough ${chart.label} records from ${selectedOperator || "this operator"} yet.`
+                      : `Select machines with at least 2 ${chart.label} records.`}
+                  />
+                </article>
+              ))}
+            </div>
           </div>
 
           <aside className="factory-trends-stats-panel trends-compare-stats-panel">
+            <TrendPointDetails key={activeTrendSelection?.key || "empty"} selection={activeTrendSelection} />
+
             <div className="trend-side-header-row">
               <div>
                 <span className="trend-side-label">
                   {trendView === "operator" ? "Operator machines" : "Selected machines"}
                 </span>
-                <strong>{seriesItems.length}</strong>
+                <strong>{selectedMachineItems.length}</strong>
               </div>
-              <button className="ghost-button small" type="button" onClick={clearSelectedMachines} disabled={!seriesItems.length}>Clear</button>
+              <button className="ghost-button small" type="button" onClick={clearSelectedMachines} disabled={!selectedMachineItems.length}>Clear</button>
             </div>
 
             <div className="trend-compare-series-list">
-              {!seriesItems.length ? (
+              {!selectedMachineItems.length ? (
                 <p className="empty-state">
                   {trendView === "operator"
-                    ? `Choose an operator, then select that person's machines below. The graph will use ${selectedDetailLabel}.`
-                    : `Select machine cards below. The graph will use ${selectedDetailLabel}.`}
+                    ? "Choose an operator to load that person's machine and parameter charts."
+                    : "Select machine cards below to compare every configured numeric parameter."}
                 </p>
-              ) : seriesItems.map((item, index) => (
-                <article key={item.id} className="trend-compare-series-card">
+              ) : selectedMachineItems.map((machine, index) => {
+                const parameterCount = normalizeFields(machine.fields).filter((field) => field.type === "number").length;
+                return (
+                <article key={machine.id} className="trend-compare-series-card trend-selected-machine-card">
                   <div className="trend-compare-series-head">
                     <span className={`trend-series-swatch series-${index % 8}`} />
                     <div>
-                      <strong>{item.machine.machine_name}</strong>
+                      <strong>{machine.machine_name}</strong>
                       <small>
                         {trendView === "operator" ? `${selectedOperator} • ` : ""}
-                        {item.machine.site_name || "—"} • {item.meta.label || selectedDetailLabel}
+                        {machine.site_name || "—"}
                       </small>
                     </div>
-                    <button className="ghost-button small" type="button" onClick={() => toggleMachine(item.id)}>×</button>
+                    <button className="ghost-button small" type="button" onClick={() => toggleMachine(machine.id)}>×</button>
                   </div>
-                  <div className="trend-compare-current-grid">
-                    <article><span>Latest</span><strong>{formatNumber(item.latestValue)}</strong></article>
-                    <article><span>Average</span><strong>{formatNumber(item.stats.avg_reading)}</strong></article>
-                  </div>
+                  <span className="trend-selected-parameter-count">{parameterCount} parameter{parameterCount === 1 ? "" : "s"}</span>
                 </article>
-              ))}
+                );
+              })}
             </div>
           </aside>
         </section>
@@ -2305,11 +2536,6 @@ function TrendsPage({ user = null, setPage = null, onLogout = null, standalone =
           )}
         </section>
 
-        <div className="factory-trends-footer">
-          {message} {gridMachines.length
-            ? `• ${trendView === "operator" ? selectedOperator : selectedEquipmentCategory} • ${gridMachines.length} equipment • Parameter: ${selectedDetailLabel}`
-            : ""}
-        </div>
       </section>
     </main>
   );
@@ -2322,7 +2548,24 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({ search: "", machine: "", site: "", date: "" });
   const [currentPage, setCurrentPage] = useState(1);
+  const [previewedSubmissionId, setPreviewedSubmissionId] = useState("");
+  const previewCloseTimerRef = useRef(null);
   const pageSize = 8;
+
+  function openSubmissionPreview(submissionId) {
+    window.clearTimeout(previewCloseTimerRef.current);
+    setPreviewedSubmissionId(submissionId);
+  }
+
+  function closeSubmissionPreview() {
+    window.clearTimeout(previewCloseTimerRef.current);
+    setPreviewedSubmissionId("");
+  }
+
+  function scheduleSubmissionPreviewClose() {
+    window.clearTimeout(previewCloseTimerRef.current);
+    previewCloseTimerRef.current = window.setTimeout(() => setPreviewedSubmissionId(""), 420);
+  }
 
   function updateFilter(field, value) {
     setFilters((current) => ({ ...current, [field]: value }));
@@ -2383,100 +2626,52 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
     return machines.find((machine) => String(machine.id) === recordMachineId) || machines.find((machine) => String(machine.machine_name || "").trim().toLowerCase() === recordMachineName) || null;
   }
 
-  function fieldsForRecord(record) {
-    const machine = machineForRecord(record);
-    return machine ? normalizeFields(machine.fields) : [];
-  }
+  const submissions = useMemo(() => groupSubmissionRecords(records), [records]);
 
-  function logFieldInfo(record, column) {
-    const field = fieldsForRecord(record).find(
-      (item) => slugText(visibleVariableName(item, record.machine_name)) === column.key
-    );
-
-    if (field) {
-      return {
-        field,
-        value: valueFromRecordField(record, field),
-        proof: field.type === "image" ? proofForField(record, field.id) : null,
-      };
-    }
-
-    const responseFields = record.response_fields && typeof record.response_fields === "object" ? record.response_fields : {};
-    const directKey = Object.keys(responseFields).find((keyName) => slugText(keyName) === column.key);
-
-    return {
-      field: null,
-      value: directKey ? responseFields[directKey] : "",
-      proof: null,
-    };
-  }
-
-  function valueForLogField(record, column) {
-    const { value } = logFieldInfo(record, column);
-    return value === null || value === undefined || value === "" ? "—" : String(value);
-  }
-
-  function renderLogField(record, column) {
-    const { value, proof } = logFieldInfo(record, column);
-    return <ProofValue value={value} proof={proof} />;
-  }
-
-  const logColumns = useMemo(() => {
-    const columns = [];
-    const seen = new Set();
-    for (const machine of machines) {
-      for (const field of normalizeFields(machine.fields)) {
-        const label = visibleVariableName(field, machine.machine_name);
-        const key = slugText(label);
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        columns.push({ key, label, type: field.type });
-      }
-    }
-    if (!columns.length) {
-      for (const record of records) {
-        const fields = record.response_fields && typeof record.response_fields === "object" ? Object.keys(record.response_fields) : [];
-        for (const keyName of fields) {
-          const key = slugText(keyName);
-          if (!key || seen.has(key)) continue;
-          seen.add(key);
-          columns.push({ key, label: keyName, type: "text" });
-        }
-      }
-    }
-    return columns;
-  }, [machines, records]);
-
-  const filteredRecords = useMemo(() => {
+  const filteredSubmissions = useMemo(() => {
     const search = filters.search.trim().toLowerCase();
-    return records.filter((record) => {
-      const siteMatch = !filters.site || record.site_name === filters.site;
-      const dateMatch = !filters.date || recordDateKey(record.record_timestamp) === filters.date;
-      const machineMatch = !filters.machine || (() => {
+    return submissions.filter((submission) => {
+      const siteMatch = !filters.site || submission.site_name === filters.site;
+      const dateMatch = !filters.date || recordDateKey(submission.timestamp) === filters.date;
+      const machineMatch = !filters.machine || submission.records.some((record) => {
         if (!selectedMachineOption) return true;
         const recordMachineId = record.machine_config_id === null || record.machine_config_id === undefined ? "" : String(record.machine_config_id);
         const recordMachineName = String(record.machine_name || "").trim().toLowerCase();
         return ((selectedMachineOption.id && recordMachineId === selectedMachineOption.id) || (selectedMachineOption.name && recordMachineName === selectedMachineOption.name.trim().toLowerCase()));
-      })();
-      const dynamicValues = logColumns.map((column) => valueForLogField(record, column));
-      const haystack = [record.operator_name, record.site_name, record.machine_name, record.reading_value, JSON.stringify(record.response_fields || {}), ...dynamicValues].join(" ").toLowerCase();
+      });
+      const haystack = submission.records.map((record) => [
+        record.operator_name,
+        record.site_name,
+        record.machine_name,
+        record.reading_value,
+        record.product,
+        record.batch_number,
+        record.remarks,
+        JSON.stringify(record.response_fields || {}),
+      ].join(" ")).join(" ").toLowerCase();
       return machineMatch && siteMatch && dateMatch && (!search || haystack.includes(search));
     });
-  }, [records, filters, selectedMachineOption, machines, logColumns]);
+  }, [submissions, filters, selectedMachineOption]);
 
   const hasFilters = Object.values(filters).some(Boolean);
   const bellCount = 0;
-  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(filteredSubmissions.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * pageSize;
-  const paginatedRecords = filteredRecords.slice(pageStart, pageStart + pageSize);
-  const pageEnd = Math.min(filteredRecords.length, pageStart + pageSize);
+  const paginatedSubmissions = filteredSubmissions.slice(pageStart, pageStart + pageSize);
+  const pageEnd = Math.min(filteredSubmissions.length, pageStart + pageSize);
+  const previewedSubmission = filteredSubmissions.find((submission) => submission.id === previewedSubmissionId) || null;
+  const previewedSubmissionIndex = previewedSubmission
+    ? Math.max(0, filteredSubmissions.findIndex((submission) => submission.id === previewedSubmission.id))
+    : 0;
 
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
 
   useEffect(() => { loadLogs(); }, []);
+
+  useEffect(() => () => window.clearTimeout(previewCloseTimerRef.current), []);
 
   function pageNumbers() {
     const pages = [];
@@ -2550,39 +2745,101 @@ function LogsPage({ user = null, setPage = null, onLogout = null, standalone = f
 
             {message && <p className="message">{message}</p>}
 
-            <div className="logs-table-spacer" aria-hidden="true" />
-            <div className="logs-table-wrap">
-              <table className="logs-table">
-                <thead>
-                  <tr>
-                    <th>When</th><th>Operator</th><th>Site</th><th>Machine</th>
-                    {logColumns.map((column) => <th key={column.key} className={`logs-variable-head ${variableToneClass(column.label)}`}>{column.label}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {!paginatedRecords.length ? (
-                    <tr><td colSpan={4 + logColumns.length} className="logs-empty-cell">No submissions found for the current filters.</td></tr>
-                  ) : paginatedRecords.map((record) => (
-                    <tr key={record.id}>
-                      <td><div className="logs-when-cell"><span className="logs-cell-icon small">◷</span><span>{formatDateTime(record.record_timestamp)}</span></div></td>
-                      <td className="logs-operator-name">{record.operator_name || "—"}</td>
-                      <td>{record.site_name || "—"}</td>
-                      <td>{record.machine_name || "—"}</td>
-                      {logColumns.map((column) => (
-                        <td key={`${record.id}-${column.key}`}>
-                          <span className={`logs-variable-value ${variableToneClass(column.label)}`}>
-                            {renderLogField(record, column)}
-                          </span>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="logs-submission-list">
+              {!paginatedSubmissions.length ? (
+                <p className="logs-submission-empty">No submissions found for the current filters.</p>
+              ) : paginatedSubmissions.map((submission, submissionIndex) => {
+                const isPreviewed = previewedSubmissionId === submission.id;
+                const machineNames = [...new Set(submission.records.map((record) => record.machine_name).filter(Boolean))];
+                const toneClass = `tone-${(pageStart + submissionIndex) % 6}`;
+                return (
+                  <article
+                    className={`logs-submission-card ${toneClass} ${isPreviewed ? "previewed" : ""}`}
+                    key={submission.id}
+                    onMouseEnter={() => openSubmissionPreview(submission.id)}
+                    onMouseLeave={scheduleSubmissionPreviewClose}
+                  >
+                    <button
+                      type="button"
+                      className="logs-submission-summary"
+                      aria-expanded={isPreviewed}
+                      onFocus={() => openSubmissionPreview(submission.id)}
+                      onClick={() => isPreviewed ? closeSubmissionPreview() : openSubmissionPreview(submission.id)}
+                    >
+                      <span className="logs-submission-time"><i>◷</i><strong>{formatDateTime(submission.timestamp)}</strong></span>
+                      <span className="logs-submission-person">
+                        <i className="logs-operator-avatar">{personInitials(submission.operator_name)}</i>
+                        <span><small>Input by</small><strong>{submission.operator_name || "—"}</strong></span>
+                      </span>
+                      <span className="logs-submission-site"><small>Area</small><strong>{submission.site_name || "—"}</strong></span>
+                      <span className="logs-submission-machines">
+                        {machineNames.slice(0, 3).map((machineName) => <i key={machineName}>{machineName}</i>)}
+                        {machineNames.length > 3 && <i>+{machineNames.length - 3}</i>}
+                      </span>
+                      <span className="logs-submission-count"><strong>{submission.records.length}</strong><small>{submission.records.length === 1 ? "record" : "records"}</small></span>
+                      <span className="logs-submission-view" aria-hidden="true">Hover</span>
+                    </button>
+                  </article>
+                );
+              })}
             </div>
 
+            {previewedSubmission && (
+              <div className="logs-submission-hover-layer" aria-hidden="false">
+                <div className="logs-hover-backdrop" aria-hidden="true" />
+                <article
+                  className={`logs-submission-preview tone-${previewedSubmissionIndex % 6}`}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={`Submission from ${previewedSubmission.operator_name || "operator"}`}
+                  onMouseEnter={() => openSubmissionPreview(previewedSubmission.id)}
+                  onMouseLeave={scheduleSubmissionPreviewClose}
+                >
+                  <header className="logs-preview-head">
+                    <div className="logs-preview-identity">
+                      <span className="logs-preview-avatar">{personInitials(previewedSubmission.operator_name)}</span>
+                      <div>
+                        <small>Input by</small>
+                        <h2>{previewedSubmission.operator_name || "—"}</h2>
+                        <p>{formatDateTime(previewedSubmission.timestamp)}</p>
+                      </div>
+                    </div>
+                    <div className="logs-preview-head-actions">
+                      <span className="logs-preview-site">{previewedSubmission.site_name || "—"}</span>
+                      <span>{previewedSubmission.records.length} {previewedSubmission.records.length === 1 ? "record" : "records"}</span>
+                      <button type="button" onClick={closeSubmissionPreview} aria-label="Close submission details">×</button>
+                    </div>
+                  </header>
+                  <div className="logs-submission-details">
+                    {previewedSubmission.records.map((record, recordIndex) => {
+                      const machine = machineForRecord(record);
+                      const detailItems = recordDetailItems(record, machine);
+                      return (
+                        <section className={`logs-entry-machine machine-tone-${recordIndex % 6}`} key={record.id}>
+                          <header>
+                            <div><small>Machine</small><strong>{record.machine_name || "—"}</strong></div>
+                            <span>Record #{record.id}</span>
+                          </header>
+                          <div className="logs-entry-values">
+                            {!detailItems.length ? (
+                              <p className="empty-state">No field values were saved for this machine.</p>
+                            ) : detailItems.map((item, itemIndex) => (
+                              <div key={item.id} className={`detail-tone-${itemIndex % 6}`}>
+                                <span>{item.label}</span>
+                                <strong><ProofValue value={item.value} proof={item.proof} /></strong>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
+                </article>
+              </div>
+            )}
+
             <div className="logs-table-footer">
-              <span>Showing {filteredRecords.length ? pageStart + 1 : 0} to {pageEnd} of {filteredRecords.length.toLocaleString("en-US")} records</span>
+              <span>Showing {filteredSubmissions.length ? pageStart + 1 : 0} to {pageEnd} of {filteredSubmissions.length.toLocaleString("en-US")} submissions</span>
               <div className="logs-pagination">
                 <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safePage <= 1}>‹</button>
                 {pageNumbers().map((item, index) => item === "…" ? <span key={`ellipsis-${index}`} className="ellipsis">…</span> : <button key={item} type="button" className={item === safePage ? "active" : ""} onClick={() => setCurrentPage(item)}>{item}</button>)}
@@ -2644,7 +2901,7 @@ function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLo
   return (
     <>
       <FactoryTopNav activePage="register" user={adminUser || user} setPage={setPage} onLogout={onLogout} standalone={standalone} />
-      <main className="admin-page app-gradient page-pad compact-mobile-page">
+      <main className="admin-page register-admin-page app-gradient page-pad compact-mobile-page">
       <section className="admin-grid register-grid">
         <form className="input-form glass-card compact-form" onSubmit={handleCreateUser}>
           <p className="eyebrow">Admin Register</p><h1>Register Anyone</h1>
@@ -2657,7 +2914,7 @@ function RegisterAdminPage({ adminUser = null, user = null, setPage = null, onLo
         </form>
         <section className="glass-card dashboard-summary">
           <p className="eyebrow">Accounts</p><div className="registered-header-row"><h2>Registered People</h2><button className={deleteMode ? "delete-user-button active-delete" : "delete-user-button"} type="button" onClick={() => setDeleteMode((current) => !current)}>{deleteMode ? "Done" : "Delete"}</button></div>
-          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div className="registered-person-main"><strong>{user.operator_name}</strong><span>{user.site_name} · {user.auth_method === "pin" ? "PIN" : "PIN not set"}</span>{deletingId === user.id && <small>Deleting...</small>}</div></article>)}</div>
+          <div className={deleteMode ? "user-list compact-users delete-mode" : "user-list compact-users"}>{!users.length && <p className="empty-state">No registered people yet.</p>}{users.map((user) => <article key={user.id} className={deleteMode ? "registered-person-row can-delete" : "registered-person-row"} onClick={() => deleteMode && deletingId !== user.id ? handleDeleteUser(user) : undefined} role={deleteMode ? "button" : undefined} tabIndex={deleteMode ? 0 : undefined}><div className="registered-person-main"><strong>{user.operator_name}</strong><span>{user.site_name}</span>{deletingId === user.id && <small>Deleting...</small>}</div></article>)}</div>
         </section>
       </section>
       </main>
@@ -3450,7 +3707,6 @@ function AuthPage({ onAuthenticated, onRegister }) {
         <div className="brand-mark">CT</div>
         <p className="eyebrow">Confirmation Test</p>
         <h1>Enter Your PIN</h1>
-        <p className="login-subtitle">Enter your unique 6-digit PIN to continue.</p>
         <form className="pin-only-login" onSubmit={submitPinLogin}>
           <label className="pin-field pin-login-field">
             <span className="sr-only">6-Digit PIN</span>

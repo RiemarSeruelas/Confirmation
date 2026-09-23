@@ -1680,8 +1680,7 @@ app.get("/api/dashboard/trends", async (req, res) => {
 
     const machineConfigId = Number(req.query.machine_config_id || 0);
     const machineNameQuery = cleanText(req.query.machine_name);
-    const requestedLimit = Number(req.query.limit || 80);
-    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 5), 300) : 80;
+    const limit = 20;
     const params = [];
     const where = [];
     let machineConfig = null;
