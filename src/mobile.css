@@ -946,7 +946,7 @@
     max-width: 100%;
     min-height: 0;
     box-sizing: border-box;
-    grid-template-rows: auto clamp(300px, 43vh, 340px);
+    grid-template-rows: auto auto;
     align-content: start;
     gap: 6px;
     padding: 8px;
@@ -991,7 +991,7 @@
     grid-template-columns: minmax(0, 1.15fr) repeat(2, minmax(0, 1fr));
     grid-template-areas:
       "mode area equipment"
-      "parameter parameter refresh";
+      "refresh refresh refresh";
     gap: 3px;
     align-items: center;
   }
@@ -1000,7 +1000,7 @@
     grid-template-columns: minmax(0, 1.15fr) repeat(2, minmax(0, 1fr));
     grid-template-areas:
       "mode operator operator"
-      "parameter parameter refresh";
+      "refresh refresh refresh";
   }
 
   .factory-trends-page .trend-mode-actions {
@@ -1058,6 +1058,36 @@
     width: 100%;
     align-self: center;
   }
+
+  .factory-trends-page .trend-parameter-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-auto-rows: 270px;
+    gap: 7px;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .factory-trends-page .trend-parameter-card {
+    width: 100%;
+    max-width: none;
+    height: 270px;
+    grid-template-rows: 38px minmax(0, 1fr);
+    gap: 4px;
+    padding: 5px;
+    border-radius: 9px;
+    box-shadow: var(--mobile-shadow);
+  }
+
+  .factory-trends-page .trend-parameter-grid.layout-single .trend-parameter-card,
+  .factory-trends-page .trend-parameter-grid.layout-double .trend-parameter-card,
+  .factory-trends-page .trend-parameter-grid.layout-multiple .trend-parameter-card {
+    max-width: none;
+  }
+
+  .factory-trends-page .trend-parameter-card-head small { font-size: 7px; }
+  .factory-trends-page .trend-parameter-card-head h3 { font-size: 11px; }
+  .factory-trends-page .trend-parameter-card-head > span { padding: 2px 5px; font-size: 7px; }
 
   .factory-trends-page .trend-filter-control {
     min-width: 0;
@@ -1220,6 +1250,28 @@
   .factory-trends-page .trend-point-detail-head strong,
   .factory-trends-page .trend-point-detail-head b {
     font-size: 10px;
+  }
+
+  .factory-trends-page .trend-point-detail-head b {
+    min-width: 44px;
+    padding: 4px 5px;
+  }
+
+  .factory-trends-page .trend-record-context {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    padding: 4px;
+  }
+
+  .factory-trends-page .trend-operator-avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 8px;
+  }
+
+  .factory-trends-page .trend-record-person strong,
+  .factory-trends-page .trend-record-context time,
+  .factory-trends-page .trend-record-site {
+    font-size: 8px;
   }
 
   .factory-trends-page .trend-point-detail-meta {
@@ -1504,7 +1556,7 @@
   }
 
   .login-card h1 {
-    font-size: 22px;
+    font-size: 18px;
   }
 
   .login-card .login-subtitle {
@@ -1694,6 +1746,17 @@
     grid-template-columns: 1fr;
   }
 
+  .register-admin-page,
+  .operator-register-page {
+    display: grid;
+    place-items: center;
+  }
+
+  .register-admin-page .admin-grid.register-grid,
+  .operator-register-page .form-layout.single {
+    align-self: center;
+  }
+
   .admin-page {
     padding: 8px var(--mobile-edge) max(16px, env(safe-area-inset-bottom));
   }
@@ -1713,30 +1776,30 @@
   }
 
   .register-grid .only-basic-register {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 4px;
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 
   .register-grid .only-basic-register label {
     min-width: 0;
-    gap: 2px;
-    font-size: 8px;
+    gap: 4px;
+    font-size: 9px;
   }
 
   .register-grid .input-form input,
   .register-grid .input-form select {
     width: 100%;
     min-width: 0;
-    min-height: 28px;
-    height: 28px;
-    padding: 3px 5px;
+    min-height: 36px;
+    height: 36px;
+    padding: 5px 7px;
     border-radius: 7px;
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .register-grid .pin-field input {
-    min-height: 30px;
-    height: 30px;
+    min-height: 38px;
+    height: 38px;
     font-size: 10px;
   }
 
@@ -1930,6 +1993,7 @@
   }
 
   .logs-submission-list {
+    grid-template-columns: 1fr;
     gap: 4px;
     padding: 0;
     overflow: visible;
@@ -1945,8 +2009,8 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, .8fr) 38px;
     grid-template-areas:
       "time time count"
-      "person site chevron"
-      "machines machines chevron";
+      "person site view"
+      "machines machines view";
     gap: 3px 6px;
     padding: 5px;
   }
@@ -1957,7 +2021,7 @@
   .logs-submission-site { grid-area: site; }
   .logs-submission-machines { grid-area: machines; gap: 3px; }
   .logs-submission-count { grid-area: count; }
-  .logs-submission-chevron { grid-area: chevron; align-self: center; }
+  .logs-submission-view { grid-area: view; align-self: center; }
   .logs-submission-summary strong { font-size: 9px; }
   .logs-submission-summary small { font-size: 6.5px; }
   .logs-submission-machines i { max-width: 92px; padding: 2px 4px; font-size: 7px; }
@@ -1999,6 +2063,32 @@
     padding: 3px;
     border-radius: 5px;
   }
+
+  .logs-submission-hover-layer {
+    align-items: center;
+    padding: max(10px, env(safe-area-inset-top)) 8px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .logs-submission-preview {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+    padding: 7px;
+    border-radius: 12px;
+  }
+
+  .logs-preview-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 2px 2px 7px;
+  }
+
+  .logs-preview-identity { gap: 6px; }
+  .logs-preview-avatar { width: 34px; height: 34px; border-radius: 10px; font-size: 9px; }
+  .logs-preview-head h2 { font-size: 13px; }
+  .logs-preview-head p { font-size: 8px; }
+  .logs-preview-head-actions { display: grid; justify-items: end; gap: 4px; }
+  .logs-preview-head-actions > span { font-size: 8px; }
 
   /* Native camera remains full-screen and touch friendly. */
   .modal-backdrop {
@@ -2108,7 +2198,7 @@
   }
 
   .factory-trends-page .factory-trends-chart-panel {
-    grid-template-rows: auto 300px;
+    grid-template-rows: auto auto;
   }
 
   .logs-filters-grid,
